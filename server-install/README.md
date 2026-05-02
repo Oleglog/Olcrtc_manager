@@ -22,8 +22,9 @@ What the installer does:
   room on first start,
 - captures the auto-generated room ID from `journalctl` and pins it into the
   service environment so the same room is reused across restarts,
-- supports an optional outbound SOCKS5 proxy (useful when the VPS IP is
-  blocked by wb_stream / jazz / telemost) and an optional `-debug` flag,
+- supports an optional outbound SOCKS5 proxy (NO_AUTH or RFC 1929
+  USER/PASSWORD), useful when the VPS IP is blocked by
+  wb_stream / jazz / telemost, and an optional `-debug` flag,
 - prints the credentials you need to fill into the Android app.
 
 Default provider is **`wb_stream`**.
@@ -54,7 +55,7 @@ sudo ./server-install/install.sh
 
 ```bash
 curl -fsSL -o /tmp/olcrtc.tgz \
-    https://github.com/Oleglog/olcrtc_FORK/releases/latest/download/olcrtc-server-installer-0.1.1.tgz
+    https://github.com/Oleglog/olcrtc_FORK/releases/latest/download/olcrtc-server-installer-0.1.2.tgz
 rm -rf /tmp/olcrtc-server-installer-*
 tar -xzf /tmp/olcrtc.tgz -C /tmp
 sudo /tmp/olcrtc-server-installer-*/install.sh
@@ -107,13 +108,14 @@ The installer is idempotent — re-running keeps the existing key, room ID,
 proxy and debug settings unless you ask otherwise:
 
 ```bash
-sudo ./install.sh                       # update binary / unit file, keep everything
-sudo ./install.sh --regenerate          # keep key, get a new room ID
-sudo ./install.sh --regenerate-key      # rotate everything (key + room)
-sudo ./install.sh --socks-proxy host:port  # route outbound through SOCKS5
-sudo ./install.sh --socks-proxy ""      # remove existing SOCKS5 proxy
-sudo ./install.sh --debug               # enable -debug logging
-sudo ./install.sh --no-debug            # disable -debug logging
+sudo ./install.sh                                   # update binary / unit file, keep everything
+sudo ./install.sh --regenerate                      # keep key, get a new room ID
+sudo ./install.sh --regenerate-key                  # rotate everything (key + room)
+sudo ./install.sh --socks-proxy host:port           # route outbound through SOCKS5 (NO_AUTH)
+sudo ./install.sh --socks-proxy user:pass@h:port    # route outbound through SOCKS5 (USER/PASSWORD)
+sudo ./install.sh --socks-proxy ""                  # remove existing SOCKS5 proxy
+sudo ./install.sh --debug                           # enable -debug logging
+sudo ./install.sh --no-debug                        # disable -debug logging
 ```
 
 Rotating the key invalidates every existing client; you will need to update
@@ -126,20 +128,30 @@ residential / Russian IP to register a guest session. Yandex Telemost is
 more permissive but can still throttle or rotate sessions on suspicious IPs.
 
 If your VPS gets `i/o timeout` connecting to `stream.wb.ru` (or similar),
-rent a residential SOCKS5 proxy with **IP whitelisting** (the upstream
-`olcrtc` SOCKS5 client only supports `NO_AUTH` — username/password
-authentication is NOT supported, so you must whitelist your VPS IP on the
-proxy provider side). Then:
+or is blocked by wb_stream / jazz, rent a residential SOCKS5 proxy. Both
+`NO_AUTH` (IP-whitelisted) and `RFC 1929 USER/PASSWORD` are supported —
+use whichever your provider gives you:
 
 ```bash
+# IP-whitelisted proxy (no credentials):
 sudo ./install.sh --socks-proxy 1.2.3.4:1080
+
+# Username/password proxy (RFC 1929):
+sudo ./install.sh --socks-proxy alice:hunter2@1.2.3.4:1080
+
+# Optional `socks5://` / `socks5h://` scheme is accepted and stripped:
+sudo ./install.sh --socks-proxy socks5://alice:hunter2@1.2.3.4:1080
 ```
 
-This writes `OLCRTC_SOCKS_PROXY=1.2.3.4:1080` into `/etc/olcrtc/env` and the
-service restarts with `-socks-proxy 1.2.3.4 -socks-proxy-port 1080`. All
-requests to wb_stream / jazz / telemost — including the initial guest
-registration — will go out through the proxy. The WebRTC media path itself
-still goes peer-to-peer over UDP (it does not use the SOCKS proxy).
+This writes `OLCRTC_SOCKS_PROXY=...` into `/etc/olcrtc/env`. The launcher
+splits credentials from `host:port` and invokes the binary with
+`-socks-proxy <host> -socks-proxy-port <port>` (and
+`-socks-proxy-user` / `-socks-proxy-pass` when credentials are present).
+All requests to wb_stream / jazz / telemost — including the initial guest
+registration HTTP call — go out through the proxy, so the upstream
+providers see the proxy's IP rather than the VPS's. The WebRTC media
+path itself still goes peer-to-peer over UDP (SOCKS5 cannot tunnel UDP
+via CONNECT).
 
 ## Debug logging
 
