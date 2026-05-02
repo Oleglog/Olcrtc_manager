@@ -1,0 +1,3 @@
+# Built locally by build-from-source.sh OR auto-downloaded from GitHub Releases
+# by install.sh. Never commit the binaries to master — they live in Releases.
+bin/
