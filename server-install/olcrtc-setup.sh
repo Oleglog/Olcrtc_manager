@@ -37,7 +37,17 @@ KEY_FILE=$CONFIG_DIR/key.hex
 set_env_value() {
     local key="$1" value="$2"
     if grep -qE "^${key}=" "$ENV_FILE" 2>/dev/null; then
-        sed -i -E "s|^${key}=.*|${key}=${value}|" "$ENV_FILE"
+        # Build a clean temp file to avoid sed issues with special characters
+        local tmpfile
+        tmpfile="$(mktemp)"
+        while IFS= read -r line || [ -n "$line" ]; do
+            case "$line" in
+                "${key}="*) echo "${key}=${value}" ;;
+                *) echo "$line" ;;
+            esac
+        done < "$ENV_FILE" > "$tmpfile"
+        cat "$tmpfile" > "$ENV_FILE"
+        rm -f "$tmpfile"
     else
         echo "${key}=${value}" >> "$ENV_FILE"
     fi
