@@ -55,7 +55,7 @@ sudo ./server-install/install.sh
 
 ```bash
 curl -fsSL -o /tmp/olcrtc.tgz \
-    https://github.com/Oleglog/olcrtc_FORK/releases/latest/download/olcrtc-server-installer-0.1.2.tgz
+    https://github.com/Oleglog/olcrtc_FORK/releases/latest/download/olcrtc-server-installer-0.1.3.tgz
 rm -rf /tmp/olcrtc-server-installer-*
 tar -xzf /tmp/olcrtc.tgz -C /tmp
 sudo /tmp/olcrtc-server-installer-*/install.sh
@@ -147,11 +147,22 @@ This writes `OLCRTC_SOCKS_PROXY=...` into `/etc/olcrtc/env`. The launcher
 splits credentials from `host:port` and invokes the binary with
 `-socks-proxy <host> -socks-proxy-port <port>` (and
 `-socks-proxy-user` / `-socks-proxy-pass` when credentials are present).
-All requests to wb_stream / jazz / telemost — including the initial guest
-registration HTTP call — go out through the proxy, so the upstream
-providers see the proxy's IP rather than the VPS's. The WebRTC media
-path itself still goes peer-to-peer over UDP (SOCKS5 cannot tunnel UDP
-via CONNECT).
+
+What goes through the proxy and what does not:
+
+| Traffic | Routing |
+| --- | --- |
+| Provider HTTP API calls (wb_stream / jazz / telemost guest registration, room creation, polling) | through the SOCKS5 proxy |
+| Provider WebSocket signalling (jazz / telemost) | through the SOCKS5 proxy |
+| Client TCP traffic tunnelled from the Android device (browser, Telegram, anything else) | **direct from the VPS, NOT through the proxy** |
+| WebRTC media (UDP between VPS and Android) | direct, peer-to-peer (SOCKS5 cannot tunnel UDP via CONNECT) |
+
+Client TCP traffic is intentionally **not** routed through the proxy.
+The proxy exists to make the provider see a residential / RU IP for
+registration; if every outbound connection were forced through it, geo-
+restricted services (e.g. Telegram, which is blocked from RU IPs) would
+become unreachable from the tunnel. Each tunnelled TCP connection
+therefore exits straight from the VPS, with the VPS's geolocation.
 
 ## Debug logging
 
