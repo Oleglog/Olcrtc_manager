@@ -3,6 +3,8 @@ Description=olcRTC server (WebRTC tunnel through whitelisted services)
 Documentation=https://github.com/openlibrecommunity/olcrtc
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=10
 
 [Service]
 Type=exec
@@ -12,12 +14,7 @@ Group=olcrtc
 StateDirectory=olcrtc
 StateDirectoryMode=0750
 WorkingDirectory=/var/lib/olcrtc
-ExecStart=/usr/local/bin/olcrtc \
-    -mode srv \
-    -provider ${OLCRTC_PROVIDER} \
-    -id ${OLCRTC_ROOM_ID} \
-    -key ${OLCRTC_KEY} \
-    -dns ${OLCRTC_DNS}
+ExecStart=/usr/local/bin/olcrtc-launcher
 
 # Hardening
 ProtectSystem=strict
@@ -38,8 +35,6 @@ ProtectControlGroups=true
 # Restart policy
 Restart=on-failure
 RestartSec=5s
-StartLimitIntervalSec=300
-StartLimitBurst=10
 
 # Logging
 StandardOutput=journal
