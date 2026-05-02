@@ -44,7 +44,7 @@ olcRTC — это VPN-туннель необычной конструкции. 
 
 - **SOCKS5 USER/PASSWORD аутентификация** ([RFC 1929](https://www.rfc-editor.org/rfc/rfc1929)) — обязательна для коммерческих residential-прокси, у которых нет IP-whitelist
 - **Split-routing** для прокси (с v0.1.3): провайдерская сигнализация идёт через прокси, клиентский трафик — напрямую с VPS, чтобы не упираться в РФ-блокировку Telegram и других сервисов
-- **systemd-инсталлер** (`server-install/install.sh`) для разворачивания на любом Linux VPS за одну команду
+- **systemd-инсталлер и менеджер** (`server-install/olcrtc-setup.sh`) — установка одной командой + интерактивное меню управления сервером, генерация URI-профиля и QR-кода для импорта в Android-приложение
 - **Релизные тарболлы** с прекомпилированными бинарниками для linux/amd64 и linux/arm64
 - **Подробная документация** по компонентам и безопасности
 
@@ -54,16 +54,16 @@ olcRTC — это VPN-туннель необычной конструкции. 
 
 ```bash
 curl -fsSL -o /tmp/olcrtc.tgz \
-    https://github.com/Oleglog/olcrtc_FORK/releases/latest/download/olcrtc-server-installer-0.1.3.tgz
+    https://github.com/Oleglog/olcrtc_FORK/releases/latest/download/olcrtc-server-installer-0.2.0.tgz
 rm -rf /tmp/olcrtc-server-installer-*
 tar -xzf /tmp/olcrtc.tgz -C /tmp
-sudo /tmp/olcrtc-server-installer-*/install.sh
+sudo /tmp/olcrtc-server-installer-*/olcrtc-setup.sh
 ```
 
 С residential-прокси (если IP VPS заблокирован у wb_stream/jazz):
 
 ```bash
-sudo /tmp/olcrtc-server-installer-*/install.sh \
+sudo /tmp/olcrtc-server-installer-*/olcrtc-setup.sh \
     --socks-proxy USER:PASS@HOST:PORT
 ```
 
@@ -72,7 +72,7 @@ sudo /tmp/olcrtc-server-installer-*/install.sh \
 ```bash
 git clone https://github.com/Oleglog/olcrtc_FORK
 cd olcrtc_FORK
-sudo ./server-install/install.sh
+sudo ./server-install/olcrtc-setup.sh
 ```
 
 #### Способ 3 — собрать из исходников и установить
@@ -81,10 +81,13 @@ sudo ./server-install/install.sh
 git clone https://github.com/Oleglog/olcrtc_FORK
 cd olcrtc_FORK
 ./server-install/build-from-source.sh   # собирает amd64 + arm64 в server-install/bin
-sudo ./server-install/install.sh        # инсталлер увидит локальные бинарники
+sudo ./server-install/olcrtc-setup.sh   # инсталлер увидит локальные бинарники
 ```
 
-В конце инсталлер напечатает плашку с **Provider**, **Room ID** и **Encryption key** — эти три значения нужно ввести в Android-приложение.
+В конце инсталлер напечатает:
+- Плашку с **Provider**, **Room ID**, **Encryption key** и **Name**
+- **URI-профиль** для импорта в Android-приложение: `olcrtc://<provider>@room/<room_id>?key=<key>#<name>`
+- **QR-код** этого URI прямо в терминале — отсканируйте его из Android-приложения
 
 Подробности и все опции инсталлера — в [`server-install/README.md`](server-install/README.md).
 
@@ -173,13 +176,16 @@ Wildberries Stream и SaluteJazz блокируют большинство IP-а
 
 ```bash
 # IP-whitelisted прокси (без логина):
-sudo ./server-install/install.sh --socks-proxy 1.2.3.4:1080
+sudo ./server-install/olcrtc-setup.sh --socks-proxy 1.2.3.4:1080
 
 # С логином/паролем (RFC 1929):
-sudo ./server-install/install.sh --socks-proxy alice:hunter2@1.2.3.4:1080
+sudo ./server-install/olcrtc-setup.sh --socks-proxy alice:hunter2@1.2.3.4:1080
 
 # Поддерживаются схемы socks5:// и socks5h://:
-sudo ./server-install/install.sh --socks-proxy socks5://alice:hunter2@1.2.3.4:1080
+sudo ./server-install/olcrtc-setup.sh --socks-proxy socks5://alice:hunter2@1.2.3.4:1080
+
+# Или через интерактивное меню (если сервер уже установлен):
+sudo ./server-install/olcrtc-setup.sh   # → пункт 6
 ```
 
 Что идёт через прокси и что не идёт (с v0.1.3):
@@ -198,7 +204,7 @@ sudo ./server-install/install.sh --socks-proxy socks5://alice:hunter2@1.2.3.4:10
 
 | Путь                                       | Содержимое                                                                |
 |--------------------------------------------|---------------------------------------------------------------------------|
-| `/etc/olcrtc/env`                          | `OLCRTC_PROVIDER`, `OLCRTC_ROOM_ID`, `OLCRTC_KEY`, `OLCRTC_DNS`, `OLCRTC_DEBUG`, `OLCRTC_SOCKS_PROXY` |
+| `/etc/olcrtc/env`                          | `OLCRTC_PROVIDER`, `OLCRTC_ROOM_ID`, `OLCRTC_KEY`, `OLCRTC_DNS`, `OLCRTC_DEBUG`, `OLCRTC_SOCKS_PROXY`, `OLCRTC_NAME` |
 | `/etc/olcrtc/key.hex`                      | 64-символьный hex-ключ шифрования                                         |
 | `/var/lib/olcrtc/`                         | Per-process state                                                         |
 | `/etc/systemd/system/olcrtc-server.service` | systemd unit                                                             |
@@ -212,6 +218,36 @@ sudo grep -E '^OLCRTC_(PROVIDER|ROOM_ID|KEY)=' /etc/olcrtc/env
 ```
 
 ### Управление сервисом
+
+#### Интерактивный менеджер
+
+Если сервер уже установлен, запустите скрипт без аргументов — откроется текстовое меню:
+
+```bash
+sudo ./server-install/olcrtc-setup.sh
+```
+
+```
+============================================================
+  olcRTC Server Manager
+  Provider: wb_stream | Room: abc123xyz | IP: 1.2.3.4
+============================================================
+
+  1) Статус сервиса
+  2) Показать URI / QR-код
+  3) Сменить провайдера
+  4) Пересоздать room ID  (--regenerate)
+  5) Ротация ключа + room ID  (--regenerate-key)
+  6) Настроить SOCKS5-прокси
+  7) Убрать SOCKS5-прокси
+  8) Включить / выключить debug-логирование
+  9) Переименовать соединение (name)
+  0) Выход
+```
+
+Через меню можно получить URI и QR-код для импорта профиля в Android-приложение, сменить провайдера, ротировать ключи, настроить прокси и т.д.
+
+#### Команды systemd
 
 ```bash
 sudo systemctl status olcrtc-server      # статус
@@ -235,7 +271,8 @@ sudo userdel olcrtc 2>/dev/null || true
 
 | Версия         | Изменения                                                                                                  |
 |----------------|------------------------------------------------------------------------------------------------------------|
-| **server-v0.1.3** | Split-routing: провайдер через прокси, клиентский трафик direct. Recommended.                            |
+| **server-v0.2.0** | `olcrtc-setup.sh`: инсталлятор + интерактивный менеджер, URI-профиль, QR-код, `OLCRTC_NAME`, `--id` для Telemost. Recommended. |
+| server-v0.1.3 | Split-routing: провайдер через прокси, клиентский трафик direct.                            |
 | server-v0.1.2  | SOCKS5 USER/PASSWORD auth (RFC 1929). **Архитектурный баг**: клиентский трафик тоже шёл через прокси.      |
 | server-v0.1.1  | SOCKS5 NO_AUTH only.                                                                                        |
 | server-v0.1.0  | Первый релиз.                                                                                              |
@@ -291,7 +328,7 @@ Compared to upstream [openlibrecommunity/olcrtc](https://github.com/openlibrecom
 
 - **SOCKS5 USER/PASSWORD authentication** ([RFC 1929](https://www.rfc-editor.org/rfc/rfc1929)) — required for commercial residential proxies that don't support IP whitelisting
 - **Split routing** for the proxy (since v0.1.3): provider signalling goes through the proxy, client TCP traffic exits direct from the VPS — so geo-restricted services (Telegram from RU IPs) remain reachable
-- **systemd installer** (`server-install/install.sh`) — single-command deployment on any Linux VPS
+- **systemd installer & manager** (`server-install/olcrtc-setup.sh`) — single-command deployment + interactive management menu with URI profile and QR code generation for the Android app
 - **Release tarballs** with prebuilt binaries for linux/amd64 and linux/arm64
 - **Detailed documentation**
 
@@ -301,13 +338,13 @@ Compared to upstream [openlibrecommunity/olcrtc](https://github.com/openlibrecom
 
 ```bash
 curl -fsSL -o /tmp/olcrtc.tgz \
-    https://github.com/Oleglog/olcrtc_FORK/releases/latest/download/olcrtc-server-installer-0.1.3.tgz
+    https://github.com/Oleglog/olcrtc_FORK/releases/latest/download/olcrtc-server-installer-0.2.0.tgz
 rm -rf /tmp/olcrtc-server-installer-*
 tar -xzf /tmp/olcrtc.tgz -C /tmp
-sudo /tmp/olcrtc-server-installer-*/install.sh
+sudo /tmp/olcrtc-server-installer-*/olcrtc-setup.sh
 
 # With a residential SOCKS5 proxy (if your VPS IP is blocked by wb_stream / jazz):
-sudo /tmp/olcrtc-server-installer-*/install.sh --socks-proxy USER:PASS@HOST:PORT
+sudo /tmp/olcrtc-server-installer-*/olcrtc-setup.sh --socks-proxy USER:PASS@HOST:PORT
 ```
 
 #### Option 2 — from a git checkout
@@ -315,7 +352,7 @@ sudo /tmp/olcrtc-server-installer-*/install.sh --socks-proxy USER:PASS@HOST:PORT
 ```bash
 git clone https://github.com/Oleglog/olcrtc_FORK
 cd olcrtc_FORK
-sudo ./server-install/install.sh
+sudo ./server-install/olcrtc-setup.sh
 ```
 
 #### Option 3 — build binaries yourself, then install
@@ -324,10 +361,13 @@ sudo ./server-install/install.sh
 git clone https://github.com/Oleglog/olcrtc_FORK
 cd olcrtc_FORK
 ./server-install/build-from-source.sh   # builds amd64 + arm64 into server-install/bin
-sudo ./server-install/install.sh        # picks up local binaries
+sudo ./server-install/olcrtc-setup.sh   # picks up local binaries
 ```
 
-The installer prints **Provider**, **Room ID** and **Encryption key** at the end — feed those to the Android app.
+After installation, the script prints:
+- **Provider**, **Room ID**, **Encryption key** and **Name**
+- **URI profile** for import into the Android app: `olcrtc://<provider>@room/<room_id>?key=<key>#<name>`
+- **QR code** right in the terminal — scan it from the Android app
 
 Full installer documentation: [`server-install/README.md`](server-install/README.md).
 
@@ -392,10 +432,13 @@ WB Stream and SaluteJazz block most datacenter IPs and require a residential / R
 
 ```bash
 # IP-whitelisted proxy:
-sudo ./server-install/install.sh --socks-proxy 1.2.3.4:1080
+sudo ./server-install/olcrtc-setup.sh --socks-proxy 1.2.3.4:1080
 
 # Username/password (RFC 1929):
-sudo ./server-install/install.sh --socks-proxy alice:hunter2@1.2.3.4:1080
+sudo ./server-install/olcrtc-setup.sh --socks-proxy alice:hunter2@1.2.3.4:1080
+
+# Or via interactive menu (if server is already installed):
+sudo ./server-install/olcrtc-setup.sh   # → option 6
 ```
 
 What goes through the proxy (since v0.1.3):
@@ -412,7 +455,7 @@ This is critical: if client TCP went through the RU proxy, geo-blocked services 
 
 | Path                                          | Contents                                                                                              |
 |-----------------------------------------------|-------------------------------------------------------------------------------------------------------|
-| `/etc/olcrtc/env`                             | `OLCRTC_PROVIDER`, `OLCRTC_ROOM_ID`, `OLCRTC_KEY`, `OLCRTC_DNS`, `OLCRTC_DEBUG`, `OLCRTC_SOCKS_PROXY` |
+| `/etc/olcrtc/env`                             | `OLCRTC_PROVIDER`, `OLCRTC_ROOM_ID`, `OLCRTC_KEY`, `OLCRTC_DNS`, `OLCRTC_DEBUG`, `OLCRTC_SOCKS_PROXY`, `OLCRTC_NAME` |
 | `/etc/olcrtc/key.hex`                         | 64-char hex encryption key                                                                            |
 | `/var/lib/olcrtc/`                            | Runtime state                                                                                         |
 | `/etc/systemd/system/olcrtc-server.service`   | systemd unit                                                                                          |
@@ -424,6 +467,18 @@ sudo grep -E '^OLCRTC_(PROVIDER|ROOM_ID|KEY)=' /etc/olcrtc/env
 ```
 
 ### Service management
+
+#### Interactive manager
+
+If the server is already installed, run the script without arguments to open the management menu:
+
+```bash
+sudo ./server-install/olcrtc-setup.sh
+```
+
+The menu lets you view status, get URI/QR code for the Android app, switch providers, rotate keys, configure proxy, toggle debug logging, and rename the connection.
+
+#### systemd commands
 
 ```bash
 sudo systemctl status olcrtc-server
@@ -446,7 +501,8 @@ sudo userdel olcrtc 2>/dev/null || true
 
 | Version           | Changes                                                                                          |
 |-------------------|--------------------------------------------------------------------------------------------------|
-| **server-v0.1.3** | Split routing: provider through proxy, client traffic direct. Recommended.                        |
+| **server-v0.2.0** | `olcrtc-setup.sh`: installer + interactive manager, URI profile, QR code, `OLCRTC_NAME`, `--id` for Telemost. Recommended. |
+| server-v0.1.3 | Split routing: provider through proxy, client traffic direct.                        |
 | server-v0.1.2     | SOCKS5 USER/PASSWORD auth. **Architectural bug**: client traffic also went through proxy.         |
 | server-v0.1.1     | SOCKS5 NO_AUTH only.                                                                              |
 | server-v0.1.0     | Initial release.                                                                                  |
