@@ -50,22 +50,13 @@ olcRTC — это VPN-туннель необычной конструкции. 
 
 ### Быстрый старт (сервер на VPS)
 
-#### Способ 1 — из тарболла (самый простой)
+#### Способ 1 — одна команда (самый простой)
 
 ```bash
-curl -fsSL -o /tmp/olcrtc.tgz \
-    https://github.com/Oleglog/olcrtc_FORK/releases/latest/download/olcrtc-server-installer-0.2.0.tgz
-rm -rf /tmp/olcrtc-server-installer-*
-tar -xzf /tmp/olcrtc.tgz -C /tmp
-sudo /tmp/olcrtc-server-installer-*/olcrtc-setup.sh
+curl -fsSL https://raw.githubusercontent.com/Oleglog/olcrtc_FORK/master/server-install/olcrtc-setup.sh | sudo bash
 ```
 
-С residential-прокси (если IP VPS заблокирован у wb_stream/jazz):
-
-```bash
-sudo /tmp/olcrtc-server-installer-*/olcrtc-setup.sh \
-    --socks-proxy USER:PASS@HOST:PORT
-```
+Скрипт самодостаточен: скачает бинарник, создаст systemd-сервис, сгенерирует ключ и запустит туннель.
 
 #### Способ 2 — из клона репозитория
 
@@ -334,18 +325,13 @@ Compared to upstream [openlibrecommunity/olcrtc](https://github.com/openlibrecom
 
 ### Quick start (server on VPS)
 
-#### Option 1 — from a release tarball
+#### Option 1 — one command (simplest)
 
 ```bash
-curl -fsSL -o /tmp/olcrtc.tgz \
-    https://github.com/Oleglog/olcrtc_FORK/releases/latest/download/olcrtc-server-installer-0.2.0.tgz
-rm -rf /tmp/olcrtc-server-installer-*
-tar -xzf /tmp/olcrtc.tgz -C /tmp
-sudo /tmp/olcrtc-server-installer-*/olcrtc-setup.sh
-
-# With a residential SOCKS5 proxy (if your VPS IP is blocked by wb_stream / jazz):
-sudo /tmp/olcrtc-server-installer-*/olcrtc-setup.sh --socks-proxy USER:PASS@HOST:PORT
+curl -fsSL https://raw.githubusercontent.com/Oleglog/olcrtc_FORK/master/server-install/olcrtc-setup.sh | sudo bash
 ```
+
+The script is self-contained: downloads the binary, creates the systemd service, generates the key, and starts the tunnel.
 
 #### Option 2 — from a git checkout
 

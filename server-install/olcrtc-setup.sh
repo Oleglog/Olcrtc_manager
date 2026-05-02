@@ -499,46 +499,15 @@ run_install() {
             ;;
     esac
 
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    SRC_BIN="$SCRIPT_DIR/bin/$BIN_NAME"
-    SRC_UNIT="$SCRIPT_DIR/systemd/olcrtc-server.service"
-    SRC_LAUNCHER="$SCRIPT_DIR/systemd/olcrtc-launcher"
-
     RELEASE_TAG="server-v$INSTALLER_VERSION"
     RELEASE_URL_BASE="https://github.com/Oleglog/olcrtc_FORK/releases/download/$RELEASE_TAG"
 
-    # Download binary if not bundled
-    if [ ! -f "$SRC_BIN" ]; then
-        if ! command -v curl >/dev/null 2>&1; then
-            echo "[!] Binary not bundled and curl is not installed. Install curl or download" >&2
-            echo "    $BIN_NAME from $RELEASE_URL_BASE/$BIN_NAME and place it in $SCRIPT_DIR/bin/" >&2
-            exit 1
-        fi
-        install -d -m 0755 "$SCRIPT_DIR/bin"
-        echo "[*] Binary not bundled. Downloading $BIN_NAME from $RELEASE_TAG release..."
-        if ! curl -fsSL "$RELEASE_URL_BASE/$BIN_NAME" -o "$SRC_BIN.tmp"; then
-            echo "[!] Failed to download $BIN_NAME from $RELEASE_URL_BASE/" >&2
-            echo "[!] Check that release '$RELEASE_TAG' exists, or build from source: see server-install/build-from-source.sh" >&2
-            rm -f "$SRC_BIN.tmp"
-            exit 1
-        fi
-        mv "$SRC_BIN.tmp" "$SRC_BIN"
-        echo "[*] Downloaded to $SRC_BIN"
+    # Try bundled binary first (git checkout / tarball), then download
+    SCRIPT_DIR=""
+    if [ -n "${BASH_SOURCE[0]:-}" ] && [ "${BASH_SOURCE[0]}" != "bash" ]; then
+        SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)" || true
     fi
-
-    if [ ! -x "$SRC_BIN" ]; then
-        chmod +x "$SRC_BIN" 2>/dev/null || true
-    fi
-
-    if [ ! -f "$SRC_BIN" ]; then
-        echo "[!] Missing binary: $SRC_BIN" >&2; exit 1
-    fi
-    if [ ! -f "$SRC_UNIT" ]; then
-        echo "[!] Missing systemd unit: $SRC_UNIT" >&2; exit 1
-    fi
-    if [ ! -f "$SRC_LAUNCHER" ]; then
-        echo "[!] Missing launcher script: $SRC_LAUNCHER" >&2; exit 1
-    fi
+    SRC_BIN="${SCRIPT_DIR:+$SCRIPT_DIR/bin/$BIN_NAME}"
 
     echo "[*] olcRTC server installer v$INSTALLER_VERSION"
     echo "[*] Detected architecture: $ARCH ($BIN_NAME)"
@@ -549,15 +518,150 @@ run_install() {
         useradd --system --no-create-home --shell /usr/sbin/nologin --home-dir "$STATE_DIR" olcrtc
     fi
 
-    # Install binaries
-    echo "[*] Installing binaries..."
-    install -m 0755 -o root -g root "$SRC_BIN" /usr/local/bin/olcrtc
-    install -m 0755 -o root -g root "$SRC_LAUNCHER" /usr/local/bin/olcrtc-launcher
-
     # Prepare directories
     echo "[*] Preparing $CONFIG_DIR and $STATE_DIR..."
     install -d -m 0750 -o root -g olcrtc "$CONFIG_DIR"
     install -d -m 0750 -o olcrtc -g olcrtc "$STATE_DIR"
+
+    # Install binary: bundled → existing → download
+    if [ -n "$SRC_BIN" ] && [ -f "$SRC_BIN" ]; then
+        echo "[*] Installing bundled binary..."
+        install -m 0755 -o root -g root "$SRC_BIN" /usr/local/bin/olcrtc
+    elif [ -f /usr/local/bin/olcrtc ]; then
+        echo "[*] Keeping existing /usr/local/bin/olcrtc"
+    else
+        if ! command -v curl >/dev/null 2>&1; then
+            echo "[!] curl is required to download the binary." >&2
+            exit 1
+        fi
+        echo "[*] Downloading $BIN_NAME from $RELEASE_TAG release..."
+        if ! curl -fsSL "$RELEASE_URL_BASE/$BIN_NAME" -o /usr/local/bin/olcrtc.tmp; then
+            echo "[!] Failed to download $BIN_NAME from $RELEASE_URL_BASE/" >&2
+            echo "[!] Check that release '$RELEASE_TAG' exists, or build from source." >&2
+            rm -f /usr/local/bin/olcrtc.tmp
+            exit 1
+        fi
+        mv /usr/local/bin/olcrtc.tmp /usr/local/bin/olcrtc
+        echo "[*] Downloaded to /usr/local/bin/olcrtc"
+    fi
+    chmod 0755 /usr/local/bin/olcrtc
+
+    # Install embedded launcher script
+    echo "[*] Installing olcrtc-launcher..."
+    cat > /usr/local/bin/olcrtc-launcher <<'LAUNCHER'
+#!/usr/bin/env bash
+# olcRTC server launcher — reads /etc/olcrtc/env and translates to CLI flags.
+set -euo pipefail
+
+if [ -z "${OLCRTC_PROVIDER:-}" ] || [ -z "${OLCRTC_ROOM_ID:-}" ] || [ -z "${OLCRTC_KEY:-}" ]; then
+    echo "olcrtc-launcher: missing required env (OLCRTC_PROVIDER / OLCRTC_ROOM_ID / OLCRTC_KEY)" >&2
+    exit 64
+fi
+
+ARGS=(
+    -mode srv
+    -provider "$OLCRTC_PROVIDER"
+    -id "$OLCRTC_ROOM_ID"
+    -key "$OLCRTC_KEY"
+    -dns "${OLCRTC_DNS:-1.1.1.1:53}"
+)
+
+if [ -n "${OLCRTC_DEBUG:-}" ] && [ "$OLCRTC_DEBUG" != "0" ] && [ "$OLCRTC_DEBUG" != "false" ]; then
+    ARGS+=(-debug)
+fi
+
+if [ -n "${OLCRTC_SOCKS_PROXY:-}" ]; then
+    proxy="$OLCRTC_SOCKS_PROXY"
+    proxy="${proxy#socks5://}"
+    proxy="${proxy#socks5h://}"
+
+    proxy_user=""
+    proxy_pass=""
+    if [[ "$proxy" == *"@"* ]]; then
+        creds="${proxy%@*}"
+        proxy="${proxy##*@}"
+        if [[ "$creds" == *":"* ]]; then
+            proxy_user="${creds%%:*}"
+            proxy_pass="${creds#*:}"
+        else
+            proxy_user="$creds"
+        fi
+    fi
+
+    if [[ "$proxy" != *":"* ]]; then
+        echo "olcrtc-launcher: OLCRTC_SOCKS_PROXY must contain host:port (got '$proxy')" >&2
+        exit 66
+    fi
+    proxy_host="${proxy%:*}"
+    proxy_port="${proxy##*:}"
+    if ! [[ "$proxy_port" =~ ^[0-9]+$ ]]; then
+        echo "olcrtc-launcher: OLCRTC_SOCKS_PROXY port is not numeric ('$proxy_port')" >&2
+        exit 67
+    fi
+
+    ARGS+=(-socks-proxy "$proxy_host" -socks-proxy-port "$proxy_port")
+    if [ -n "$proxy_user" ]; then
+        ARGS+=(-socks-proxy-user "$proxy_user")
+    fi
+    if [ -n "$proxy_pass" ]; then
+        ARGS+=(-socks-proxy-pass "$proxy_pass")
+    fi
+fi
+
+exec /usr/local/bin/olcrtc "${ARGS[@]}"
+LAUNCHER
+    chmod 0755 /usr/local/bin/olcrtc-launcher
+    chown root:root /usr/local/bin/olcrtc-launcher
+
+    # Install embedded systemd unit
+    echo "[*] Installing systemd unit..."
+    cat > /etc/systemd/system/olcrtc-server.service <<'UNIT'
+[Unit]
+Description=olcRTC server (WebRTC tunnel through whitelisted services)
+Documentation=https://github.com/openlibrecommunity/olcrtc
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=exec
+EnvironmentFile=/etc/olcrtc/env
+User=olcrtc
+Group=olcrtc
+StateDirectory=olcrtc
+StateDirectoryMode=0750
+WorkingDirectory=/var/lib/olcrtc
+ExecStart=/usr/local/bin/olcrtc-launcher
+
+# Hardening
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+
+# Restart policy
+Restart=on-failure
+RestartSec=5s
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+    systemctl daemon-reload
 
     # Generate or reuse the encryption key
     if [ "$REGENERATE_KEY" -eq 1 ] || [ ! -s "$KEY_FILE" ]; then
@@ -568,11 +672,6 @@ run_install() {
         chmod 0640 "$KEY_FILE"
     fi
     KEY="$(cat "$KEY_FILE")"
-
-    # Install systemd unit
-    echo "[*] Installing systemd unit..."
-    install -m 0644 "$SRC_UNIT" /etc/systemd/system/olcrtc-server.service
-    systemctl daemon-reload
 
     # Read previous env to preserve untouched fields
     EXISTING_ROOM=""
@@ -688,7 +787,7 @@ EOF
   --- Управление сервисом ---
   Статус:   systemctl status olcrtc-server
   Логи:     journalctl -u olcrtc-server -f
-  Меню:     sudo $(realpath "$0")
+  Меню:     curl -fsSL https://raw.githubusercontent.com/Oleglog/olcrtc_FORK/master/server-install/olcrtc-setup.sh | sudo bash
 ==========================================================
 EOF
 }
