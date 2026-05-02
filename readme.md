@@ -250,6 +250,14 @@ sudo systemctl disable olcrtc-server     # не запускать при заг
 
 ### Удаление
 
+Одной командой:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Oleglog/olcrtc_FORK/master/server-install/olcrtc-uninstall.sh | sudo bash
+```
+
+Или через менеджер (пункт 11), или вручную:
+
 ```bash
 sudo systemctl disable --now olcrtc-server
 sudo rm -f /etc/systemd/system/olcrtc-server.service
@@ -474,6 +482,14 @@ sudo systemctl stop olcrtc-server
 ```
 
 ### Uninstall
+
+One command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Oleglog/olcrtc_FORK/master/server-install/olcrtc-uninstall.sh | sudo bash
+```
+
+Or via the manager (option 11), or manually:
 
 ```bash
 sudo systemctl disable --now olcrtc-server

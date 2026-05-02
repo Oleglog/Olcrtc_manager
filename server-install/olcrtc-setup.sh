@@ -33,6 +33,15 @@ STATE_DIR=/var/lib/olcrtc
 ENV_FILE=$CONFIG_DIR/env
 KEY_FILE=$CONFIG_DIR/key.hex
 
+# ── Helper: read from terminal even when piped via curl | bash ────────────────
+tty_read() {
+    if [ -t 0 ]; then
+        read "$@"
+    else
+        read "$@" < /dev/tty
+    fi
+}
+
 # ── Helper: update a single key in the env file ──────────────────────────────
 set_env_value() {
     local key="$1" value="$2"
@@ -264,22 +273,24 @@ run_menu() {
         echo "  7) Убрать SOCKS5-прокси"
         echo "  8) Включить / выключить debug-логирование"
         echo "  9) Переименовать соединение (name)"
+        echo " 10) Обновить бинарник olcRTC"
+        echo " 11) Удалить olcRTC полностью"
         echo "  0) Выход"
         echo ""
-        read -rp "Выберите пункт: " choice
+        tty_read -rp "Выберите пункт: " choice
 
         case "$choice" in
         1)  # Статус сервиса
             echo ""
             systemctl --no-pager status olcrtc-server || true
             echo ""
-            read -rp "[Enter для продолжения]"
+            tty_read -rp "[Enter для продолжения]"
             ;;
 
         2)  # Показать URI / QR-код
             show_uri_qr "$cur_provider" "$cur_room" "$cur_key" "$cur_name"
             echo ""
-            read -rp "[Enter для продолжения]"
+            tty_read -rp "[Enter для продолжения]"
             ;;
 
         3)  # Сменить провайдера
@@ -290,22 +301,22 @@ run_menu() {
             echo "  2) jazz"
             echo "  3) telemost"
             echo ""
-            read -rp "  Выберите провайдера [1-3]: " pchoice
+            tty_read -rp "  Выберите провайдера [1-3]: " pchoice
             local new_provider=""
             case "$pchoice" in
                 1) new_provider="wb_stream" ;;
                 2) new_provider="jazz" ;;
                 3) new_provider="telemost" ;;
-                *) echo "  [!] Неверный выбор"; read -rp "[Enter для продолжения]"; continue ;;
+                *) echo "  [!] Неверный выбор"; tty_read -rp "[Enter для продолжения]"; continue ;;
             esac
 
             set_env_value "OLCRTC_PROVIDER" "$new_provider"
 
             if [ "$new_provider" = "telemost" ]; then
-                read -rp "  Введите Room ID для Telemost: " new_room
+                tty_read -rp "  Введите Room ID для Telemost: " new_room
                 if [ -z "$new_room" ]; then
                     echo "  [!] Room ID не может быть пустым"
-                    read -rp "[Enter для продолжения]"
+                    tty_read -rp "[Enter для продолжения]"
                     continue
                 fi
                 set_env_value "OLCRTC_ROOM_ID" "$new_room"
@@ -320,7 +331,7 @@ run_menu() {
 
             if [ "$ROOM_ID" = "any" ]; then
                 if ! wait_for_room_id; then
-                    read -rp "[Enter для продолжения]"
+                    tty_read -rp "[Enter для продолжения]"
                     continue
                 fi
             fi
@@ -335,7 +346,7 @@ run_menu() {
             echo "  Провайдер изменён на: $new_provider"
             show_uri_qr "$new_provider" "$cur_room" "$cur_key" "$cur_name"
             echo ""
-            read -rp "[Enter для продолжения]"
+            tty_read -rp "[Enter для продолжения]"
             ;;
 
         4)  # Пересоздать room ID
@@ -345,10 +356,10 @@ run_menu() {
             systemctl restart olcrtc-server.service
 
             if [ "$cur_provider" = "telemost" ]; then
-                read -rp "  Введите новый Room ID для Telemost: " new_room
+                tty_read -rp "  Введите новый Room ID для Telemost: " new_room
                 if [ -z "$new_room" ]; then
                     echo "  [!] Room ID не может быть пустым"
-                    read -rp "[Enter для продолжения]"
+                    tty_read -rp "[Enter для продолжения]"
                     continue
                 fi
                 set_env_value "OLCRTC_ROOM_ID" "$new_room"
@@ -356,7 +367,7 @@ run_menu() {
                 systemctl restart olcrtc-server.service
             else
                 if ! wait_for_room_id; then
-                    read -rp "[Enter для продолжения]"
+                    tty_read -rp "[Enter для продолжения]"
                     continue
                 fi
             fi
@@ -366,15 +377,15 @@ run_menu() {
             echo "  Room ID обновлён: $cur_room"
             show_uri_qr "$cur_provider" "$cur_room" "$cur_key" "$cur_name"
             echo ""
-            read -rp "[Enter для продолжения]"
+            tty_read -rp "[Enter для продолжения]"
             ;;
 
         5)  # Ротация ключа + room ID
             echo ""
-            read -rp "  Все существующие клиенты потеряют подключение. Продолжить? [y/N] " confirm
+            tty_read -rp "  Все существующие клиенты потеряют подключение. Продолжить? [y/N] " confirm
             if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
                 echo "  Отменено."
-                read -rp "[Enter для продолжения]"
+                tty_read -rp "[Enter для продолжения]"
                 continue
             fi
 
@@ -392,10 +403,10 @@ run_menu() {
             systemctl restart olcrtc-server.service
 
             if [ "$cur_provider" = "telemost" ]; then
-                read -rp "  Введите новый Room ID для Telemost: " new_room
+                tty_read -rp "  Введите новый Room ID для Telemost: " new_room
                 if [ -z "$new_room" ]; then
                     echo "  [!] Room ID не может быть пустым"
-                    read -rp "[Enter для продолжения]"
+                    tty_read -rp "[Enter для продолжения]"
                     continue
                 fi
                 set_env_value "OLCRTC_ROOM_ID" "$new_room"
@@ -403,7 +414,7 @@ run_menu() {
                 systemctl restart olcrtc-server.service
             else
                 if ! wait_for_room_id; then
-                    read -rp "[Enter для продолжения]"
+                    tty_read -rp "[Enter для продолжения]"
                     continue
                 fi
             fi
@@ -414,22 +425,22 @@ run_menu() {
             echo "  Ключ и Room ID обновлены."
             show_uri_qr "$cur_provider" "$cur_room" "$cur_key" "$cur_name"
             echo ""
-            read -rp "[Enter для продолжения]"
+            tty_read -rp "[Enter для продолжения]"
             ;;
 
         6)  # Настроить SOCKS5-прокси
             echo ""
-            read -rp "  Введите адрес прокси [user:pass@]host:port: " new_proxy
+            tty_read -rp "  Введите адрес прокси [user:pass@]host:port: " new_proxy
             if [ -z "$new_proxy" ] || [[ "$new_proxy" != *":"* ]]; then
                 echo "  [!] Неверный формат. Ожидается [user:pass@]host:port"
-                read -rp "[Enter для продолжения]"
+                tty_read -rp "[Enter для продолжения]"
                 continue
             fi
             set_env_value "OLCRTC_SOCKS_PROXY" "$new_proxy"
             systemctl restart olcrtc-server.service
             echo "  Прокси установлен: $new_proxy"
             echo ""
-            read -rp "[Enter для продолжения]"
+            tty_read -rp "[Enter для продолжения]"
             ;;
 
         7)  # Убрать SOCKS5-прокси
@@ -437,7 +448,7 @@ run_menu() {
             systemctl restart olcrtc-server.service
             echo "  Прокси удалён"
             echo ""
-            read -rp "[Enter для продолжения]"
+            tty_read -rp "[Enter для продолжения]"
             ;;
 
         8)  # Включить / выключить debug
@@ -450,16 +461,16 @@ run_menu() {
             fi
             systemctl restart olcrtc-server.service
             echo ""
-            read -rp "[Enter для продолжения]"
+            tty_read -rp "[Enter для продолжения]"
             ;;
 
         9)  # Переименовать соединение
             echo ""
             echo "  Текущее имя: $cur_name"
-            read -rp "  Введите новое имя: " new_name
+            tty_read -rp "  Введите новое имя: " new_name
             if [ -z "$new_name" ]; then
                 echo "  [!] Имя не может быть пустым"
-                read -rp "[Enter для продолжения]"
+                tty_read -rp "[Enter для продолжения]"
                 continue
             fi
             set_env_value "OLCRTC_NAME" "$new_name"
@@ -468,7 +479,55 @@ run_menu() {
             cur_provider="$(get_env_value OLCRTC_PROVIDER)"
             show_uri_qr "$cur_provider" "$cur_room" "$cur_key" "$new_name"
             echo ""
-            read -rp "[Enter для продолжения]"
+            tty_read -rp "[Enter для продолжения]"
+            ;;
+
+        10) # Обновить бинарник
+            local up_arch up_bin up_tag up_url
+            up_arch="$(uname -m)"
+            case "$up_arch" in
+                x86_64|amd64)  up_bin="olcrtc-linux-amd64" ;;
+                aarch64|arm64) up_bin="olcrtc-linux-arm64" ;;
+                *) echo "  [!] Неподдерживаемая архитектура: $up_arch"; tty_read -rp "[Enter для продолжения]"; continue ;;
+            esac
+            up_tag="server-v$INSTALLER_VERSION"
+            up_url="https://github.com/Oleglog/olcrtc_FORK/releases/download/$up_tag/$up_bin"
+            echo ""
+            echo "  Скачиваю $up_bin из релиза $up_tag..."
+            if ! curl -fsSL "$up_url" -o /usr/local/bin/olcrtc.tmp; then
+                echo "  [!] Не удалось скачать: $up_url"
+                rm -f /usr/local/bin/olcrtc.tmp
+                tty_read -rp "[Enter для продолжения]"
+                continue
+            fi
+            mv /usr/local/bin/olcrtc.tmp /usr/local/bin/olcrtc
+            chmod 0755 /usr/local/bin/olcrtc
+            systemctl restart olcrtc-server.service
+            echo "  Бинарник обновлён и сервис перезапущен."
+            echo ""
+            tty_read -rp "[Enter для продолжения]"
+            ;;
+
+        11) # Удалить olcRTC полностью
+            echo ""
+            tty_read -rp "  Удалить olcRTC сервер, все конфиги и ключи? Это необратимо! [y/N] " confirm
+            if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
+                echo "  Отменено."
+                tty_read -rp "[Enter для продолжения]"
+                continue
+            fi
+            echo "[*] Останавливаю и удаляю сервис..."
+            systemctl disable --now olcrtc-server 2>/dev/null || true
+            systemctl reset-failed olcrtc-server 2>/dev/null || true
+            rm -f /etc/systemd/system/olcrtc-server.service
+            systemctl daemon-reload
+            echo "[*] Удаляю файлы..."
+            rm -rf /etc/olcrtc /var/lib/olcrtc /usr/local/bin/olcrtc /usr/local/bin/olcrtc-launcher
+            echo "[*] Удаляю пользователя olcrtc..."
+            userdel olcrtc 2>/dev/null || true
+            echo ""
+            echo "  olcRTC полностью удалён."
+            exit 0
             ;;
 
         0)  # Выход
@@ -718,7 +777,7 @@ UNIT
             ROOM_ID="$SET_TELEMOST_ID"
         else
             # Interactive mode: ask user for room ID
-            read -rp "[?] Введите Room ID для Telemost: " ROOM_ID
+            tty_read -rp "[?] Введите Room ID для Telemost: " ROOM_ID
             if [ -z "$ROOM_ID" ]; then
                 echo "[!] Room ID не может быть пустым для Telemost" >&2
                 exit 1
