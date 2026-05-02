@@ -63,16 +63,7 @@ curl -fsSL https://raw.githubusercontent.com/Oleglog/olcrtc_FORK/master/server-i
 ```bash
 git clone https://github.com/Oleglog/olcrtc_FORK
 cd olcrtc_FORK
-sudo ./server-install/olcrtc-setup.sh
-```
-
-#### Способ 3 — собрать из исходников и установить
-
-```bash
-git clone https://github.com/Oleglog/olcrtc_FORK
-cd olcrtc_FORK
-./server-install/build-from-source.sh   # собирает amd64 + arm64 в server-install/bin
-sudo ./server-install/olcrtc-setup.sh   # инсталлер увидит локальные бинарники
+sudo bash ./server-install/olcrtc-setup.sh
 ```
 
 В конце инсталлер напечатает:
@@ -80,7 +71,84 @@ sudo ./server-install/olcrtc-setup.sh   # инсталлер увидит лок
 - **URI-профиль** для импорта в Android-приложение: `olcrtc://<provider>@room/<room_id>?key=<key>#<name>`
 - **QR-код** этого URI прямо в терминале — отсканируйте его из Android-приложения
 
-Подробности и все опции инсталлера — в [`server-install/README.md`](server-install/README.md).
+### Удаление
+
+Одной командой:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Oleglog/olcrtc_FORK/master/server-install/olcrtc-uninstall.sh | sudo bash
+```
+
+Или через менеджер (пункт 11), или вручную:
+
+```bash
+sudo systemctl disable --now olcrtc-server
+sudo rm -f /etc/systemd/system/olcrtc-server.service
+sudo systemctl daemon-reload
+sudo rm -rf /etc/olcrtc /var/lib/olcrtc /usr/local/bin/olcrtc /usr/local/bin/olcrtc-launcher
+sudo userdel olcrtc 2>/dev/null || true
+```
+
+### Управление сервисом
+
+#### Интерактивный менеджер
+
+Если сервер уже установлен, запустите скрипт без аргументов — откроется текстовое меню:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Oleglog/olcrtc_FORK/master/server-install/olcrtc-setup.sh | sudo bash
+```
+
+```
+============================================================
+  olcRTC Server Manager
+  Provider: wb_stream | Room: abc123xyz | IP: 1.2.3.4
+============================================================
+
+  1) Статус сервиса
+  2) Показать URI / QR-код
+  3) Сменить провайдера
+  4) Пересоздать room ID  (--regenerate)
+  5) Ротация ключа + room ID  (--regenerate-key)
+  6) Настроить SOCKS5-прокси
+  7) Убрать SOCKS5-прокси
+  8) Включить / выключить debug-логирование
+  9) Переименовать соединение (name)
+ 10) Обновить бинарник olcRTC
+ 11) Удалить olcRTC полностью
+  0) Выход
+```
+
+Через меню можно получить URI и QR-код для импорта профиля в Android-приложение, сменить провайдера, ротировать ключи, настроить прокси и т.д.
+
+#### Команды systemd
+
+```bash
+sudo systemctl status olcrtc-server      # статус
+sudo journalctl -u olcrtc-server -f      # live логи
+sudo systemctl restart olcrtc-server     # рестарт
+sudo systemctl stop olcrtc-server        # остановить
+sudo systemctl disable olcrtc-server     # не запускать при загрузке
+```
+
+### Конфигурация
+
+После установки конфигурация хранится тут:
+
+| Путь                                       | Содержимое                                                                |
+|--------------------------------------------|---------------------------------------------------------------------------|
+| `/etc/olcrtc/env`                          | `OLCRTC_PROVIDER`, `OLCRTC_ROOM_ID`, `OLCRTC_KEY`, `OLCRTC_DNS`, `OLCRTC_DEBUG`, `OLCRTC_SOCKS_PROXY`, `OLCRTC_NAME` |
+| `/etc/olcrtc/key.hex`                      | 64-символьный hex-ключ шифрования                                         |
+| `/var/lib/olcrtc/`                         | Per-process state                                                         |
+| `/etc/systemd/system/olcrtc-server.service` | systemd unit                                                             |
+| `/usr/local/bin/olcrtc`                    | Бинарник                                                                  |
+| `/usr/local/bin/olcrtc-launcher`           | Launcher-скрипт, который читает env и формирует флаги                     |
+
+Посмотреть текущие реквизиты:
+
+```bash
+sudo grep -E '^OLCRTC_(PROVIDER|ROOM_ID|KEY)=' /etc/olcrtc/env
+```
 
 ### Сборка из исходников
 
@@ -189,83 +257,6 @@ sudo ./server-install/olcrtc-setup.sh   # → пункт 6
 
 Это важно: если бы клиентский трафик тоже шёл через RU-прокси, то Telegram (заблокированный в РФ) не открывался бы. До v0.1.2 включительно был именно такой баг. С v0.1.3 — исправлено.
 
-### Конфигурация
-
-После установки конфигурация хранится тут:
-
-| Путь                                       | Содержимое                                                                |
-|--------------------------------------------|---------------------------------------------------------------------------|
-| `/etc/olcrtc/env`                          | `OLCRTC_PROVIDER`, `OLCRTC_ROOM_ID`, `OLCRTC_KEY`, `OLCRTC_DNS`, `OLCRTC_DEBUG`, `OLCRTC_SOCKS_PROXY`, `OLCRTC_NAME` |
-| `/etc/olcrtc/key.hex`                      | 64-символьный hex-ключ шифрования                                         |
-| `/var/lib/olcrtc/`                         | Per-process state                                                         |
-| `/etc/systemd/system/olcrtc-server.service` | systemd unit                                                             |
-| `/usr/local/bin/olcrtc`                    | Бинарник                                                                  |
-| `/usr/local/bin/olcrtc-launcher`           | Launcher-скрипт, который читает env и формирует флаги                     |
-
-Посмотреть текущие реквизиты:
-
-```bash
-sudo grep -E '^OLCRTC_(PROVIDER|ROOM_ID|KEY)=' /etc/olcrtc/env
-```
-
-### Управление сервисом
-
-#### Интерактивный менеджер
-
-Если сервер уже установлен, запустите скрипт без аргументов — откроется текстовое меню:
-
-```bash
-sudo ./server-install/olcrtc-setup.sh
-```
-
-```
-============================================================
-  olcRTC Server Manager
-  Provider: wb_stream | Room: abc123xyz | IP: 1.2.3.4
-============================================================
-
-  1) Статус сервиса
-  2) Показать URI / QR-код
-  3) Сменить провайдера
-  4) Пересоздать room ID  (--regenerate)
-  5) Ротация ключа + room ID  (--regenerate-key)
-  6) Настроить SOCKS5-прокси
-  7) Убрать SOCKS5-прокси
-  8) Включить / выключить debug-логирование
-  9) Переименовать соединение (name)
-  0) Выход
-```
-
-Через меню можно получить URI и QR-код для импорта профиля в Android-приложение, сменить провайдера, ротировать ключи, настроить прокси и т.д.
-
-#### Команды systemd
-
-```bash
-sudo systemctl status olcrtc-server      # статус
-sudo journalctl -u olcrtc-server -f      # live логи
-sudo systemctl restart olcrtc-server     # рестарт
-sudo systemctl stop olcrtc-server        # остановить
-sudo systemctl disable olcrtc-server     # не запускать при загрузке
-```
-
-### Удаление
-
-Одной командой:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Oleglog/olcrtc_FORK/master/server-install/olcrtc-uninstall.sh | sudo bash
-```
-
-Или через менеджер (пункт 11), или вручную:
-
-```bash
-sudo systemctl disable --now olcrtc-server
-sudo rm -f /etc/systemd/system/olcrtc-server.service
-sudo systemctl daemon-reload
-sudo rm -rf /etc/olcrtc /var/lib/olcrtc /usr/local/bin/olcrtc /usr/local/bin/olcrtc-launcher
-sudo userdel olcrtc 2>/dev/null || true
-```
-
 ### Релизы
 
 | Версия         | Изменения                                                                                                  |
@@ -346,16 +337,7 @@ The script is self-contained: downloads the binary, creates the systemd service,
 ```bash
 git clone https://github.com/Oleglog/olcrtc_FORK
 cd olcrtc_FORK
-sudo ./server-install/olcrtc-setup.sh
-```
-
-#### Option 3 — build binaries yourself, then install
-
-```bash
-git clone https://github.com/Oleglog/olcrtc_FORK
-cd olcrtc_FORK
-./server-install/build-from-source.sh   # builds amd64 + arm64 into server-install/bin
-sudo ./server-install/olcrtc-setup.sh   # picks up local binaries
+sudo bash ./server-install/olcrtc-setup.sh
 ```
 
 After installation, the script prints:
@@ -363,7 +345,59 @@ After installation, the script prints:
 - **URI profile** for import into the Android app: `olcrtc://<provider>@room/<room_id>?key=<key>#<name>`
 - **QR code** right in the terminal — scan it from the Android app
 
-Full installer documentation: [`server-install/README.md`](server-install/README.md).
+### Uninstall
+
+One command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Oleglog/olcrtc_FORK/master/server-install/olcrtc-uninstall.sh | sudo bash
+```
+
+Or via the manager (option 11), or manually:
+
+```bash
+sudo systemctl disable --now olcrtc-server
+sudo rm -f /etc/systemd/system/olcrtc-server.service
+sudo systemctl daemon-reload
+sudo rm -rf /etc/olcrtc /var/lib/olcrtc /usr/local/bin/olcrtc /usr/local/bin/olcrtc-launcher
+sudo userdel olcrtc 2>/dev/null || true
+```
+
+### Service management
+
+#### Interactive manager
+
+If the server is already installed, run the script without arguments to open the management menu:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Oleglog/olcrtc_FORK/master/server-install/olcrtc-setup.sh | sudo bash
+```
+
+The menu lets you view status, get URI/QR code for the Android app, switch providers, rotate keys, configure proxy, update the binary, toggle debug logging, rename the connection, or fully uninstall.
+
+#### systemd commands
+
+```bash
+sudo systemctl status olcrtc-server
+sudo journalctl -u olcrtc-server -f
+sudo systemctl restart olcrtc-server
+sudo systemctl stop olcrtc-server
+```
+
+### Configuration
+
+| Path                                          | Contents                                                                                              |
+|-----------------------------------------------|-------------------------------------------------------------------------------------------------------|
+| `/etc/olcrtc/env`                             | `OLCRTC_PROVIDER`, `OLCRTC_ROOM_ID`, `OLCRTC_KEY`, `OLCRTC_DNS`, `OLCRTC_DEBUG`, `OLCRTC_SOCKS_PROXY`, `OLCRTC_NAME` |
+| `/etc/olcrtc/key.hex`                         | 64-char hex encryption key                                                                            |
+| `/var/lib/olcrtc/`                            | Runtime state                                                                                         |
+| `/etc/systemd/system/olcrtc-server.service`   | systemd unit                                                                                          |
+
+Read your credentials:
+
+```bash
+sudo grep -E '^OLCRTC_(PROVIDER|ROOM_ID|KEY)=' /etc/olcrtc/env
+```
 
 ### Build from source
 
@@ -444,60 +478,6 @@ What goes through the proxy (since v0.1.3):
 | Tunnelled client TCP (Telegram, Google, etc.)          | **direct from VPS, NOT proxy**   |
 
 This is critical: if client TCP went through the RU proxy, geo-blocked services like Telegram would be unreachable. Pre-v0.1.3 had this bug. v0.1.3 fixes it.
-
-### Configuration
-
-| Path                                          | Contents                                                                                              |
-|-----------------------------------------------|-------------------------------------------------------------------------------------------------------|
-| `/etc/olcrtc/env`                             | `OLCRTC_PROVIDER`, `OLCRTC_ROOM_ID`, `OLCRTC_KEY`, `OLCRTC_DNS`, `OLCRTC_DEBUG`, `OLCRTC_SOCKS_PROXY`, `OLCRTC_NAME` |
-| `/etc/olcrtc/key.hex`                         | 64-char hex encryption key                                                                            |
-| `/var/lib/olcrtc/`                            | Runtime state                                                                                         |
-| `/etc/systemd/system/olcrtc-server.service`   | systemd unit                                                                                          |
-
-Read your credentials:
-
-```bash
-sudo grep -E '^OLCRTC_(PROVIDER|ROOM_ID|KEY)=' /etc/olcrtc/env
-```
-
-### Service management
-
-#### Interactive manager
-
-If the server is already installed, run the script without arguments to open the management menu:
-
-```bash
-sudo ./server-install/olcrtc-setup.sh
-```
-
-The menu lets you view status, get URI/QR code for the Android app, switch providers, rotate keys, configure proxy, toggle debug logging, and rename the connection.
-
-#### systemd commands
-
-```bash
-sudo systemctl status olcrtc-server
-sudo journalctl -u olcrtc-server -f
-sudo systemctl restart olcrtc-server
-sudo systemctl stop olcrtc-server
-```
-
-### Uninstall
-
-One command:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Oleglog/olcrtc_FORK/master/server-install/olcrtc-uninstall.sh | sudo bash
-```
-
-Or via the manager (option 11), or manually:
-
-```bash
-sudo systemctl disable --now olcrtc-server
-sudo rm -f /etc/systemd/system/olcrtc-server.service
-sudo systemctl daemon-reload
-sudo rm -rf /etc/olcrtc /var/lib/olcrtc /usr/local/bin/olcrtc /usr/local/bin/olcrtc-launcher
-sudo userdel olcrtc 2>/dev/null || true
-```
 
 ### Releases
 
