@@ -13,9 +13,40 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/client"
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 	"github.com/openlibrecommunity/olcrtc/internal/protect"
+	"github.com/openlibrecommunity/olcrtc/internal/provider"
+	"github.com/openlibrecommunity/olcrtc/internal/provider/jazz"
+	"github.com/openlibrecommunity/olcrtc/internal/provider/telemost"
+	"github.com/openlibrecommunity/olcrtc/internal/provider/wbstream"
 
 	_ "golang.org/x/mobile/bind" // ensure gomobile bind is available
 )
+
+// Provider name constants exposed to mobile callers. Use these strings (or
+// the matching string values) when calling Start.
+const (
+	ProviderTelemost = "telemost"
+	ProviderJazz     = "jazz"
+	ProviderWBStream = "wb_stream"
+)
+
+//nolint:gochecknoinits // mobile bindings rely on init() to register providers
+// because the cmd/olcrtc main binary is not invoked here.
+func init() {
+	provider.Register(ProviderTelemost, telemost.New)
+	provider.Register(ProviderJazz, jazz.New)
+	provider.Register(ProviderWBStream, wbstream.New)
+}
+
+func buildRoomURL(providerName, roomID string) string {
+	switch providerName {
+	case ProviderTelemost:
+		return "https://telemost.yandex.ru/j/" + roomID
+	case ProviderJazz, ProviderWBStream:
+		return roomID
+	default:
+		return roomID
+	}
+}
 
 // SocketProtector protects sockets from VPN routing on Android.
 // Implement this interface in Kotlin/Java and pass to SetProtector.
@@ -32,6 +63,7 @@ var (
 	errAlreadyRunning     = errors.New("olcRTC already running")
 	errRoomIDRequired     = errors.New("roomID is required")
 	errKeyHexRequired     = errors.New("keyHex is required")
+	errProviderRequired   = errors.New("provider is required (telemost|jazz|wb_stream)")
 	errNotRunning         = errors.New("olcRTC is not running")
 	errStoppedBeforeReady = errors.New("olcRTC stopped before becoming ready")
 	errStartTimedOut      = errors.New("olcRTC start timed out")
@@ -76,25 +108,28 @@ func SetDebug(enabled bool) {
 	log.SetFlags(log.Ltime)
 }
 
-// Start launches the olcRTC client in background.
-// roomID: Telemost room ID (e.g. "xxx-xxx-xxx")
+// StartWithProvider launches the olcRTC client in background with an explicit
+// provider name. providerName is one of: "telemost", "jazz", "wb_stream".
+// roomID: provider-specific room identifier
 // keyHex: 64-char hex encryption key
 // socksPort: local SOCKS5 proxy port (e.g. 10808)
 // socksUser/socksPass: SOCKS5 credentials (empty = no auth).
-func Start(roomID, keyHex string, socksPort int, socksUser, socksPass string) error {
+func StartWithProvider(providerName, roomID, keyHex string, socksPort int, socksUser, socksPass string) error {
 	mu.Lock()
 	defer mu.Unlock()
 
 	switch {
 	case cancel != nil:
 		return errAlreadyRunning
+	case providerName == "":
+		return errProviderRequired
 	case roomID == "":
 		return errRoomIDRequired
 	case keyHex == "":
 		return errKeyHexRequired
 	}
 
-	roomURL := "https://telemost.yandex.ru/j/" + roomID
+	roomURL := buildRoomURL(providerName, roomID)
 
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	cancel = cancelFunc
@@ -109,7 +144,7 @@ func Start(roomID, keyHex string, socksPort int, socksUser, socksPass string) er
 
 		err := client.RunWithReady(
 			ctx,
-			"telemost",
+			providerName,
 			roomURL,
 			keyHex,
 			fmt.Sprintf("127.0.0.1:%d", socksPort),
@@ -131,6 +166,12 @@ func Start(roomID, keyHex string, socksPort int, socksUser, socksPass string) er
 	}()
 
 	return nil
+}
+
+// Start preserves the original gomobile signature (Telemost-only) for backward
+// compatibility with callers that have not migrated to StartWithProvider.
+func Start(roomID, keyHex string, socksPort int, socksUser, socksPass string) error {
+	return StartWithProvider(ProviderTelemost, roomID, keyHex, socksPort, socksUser, socksPass)
 }
 
 // WaitReady blocks until the Telemost peers are connected and the local SOCKS5 listener is ready.
