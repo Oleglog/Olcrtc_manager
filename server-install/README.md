@@ -1,5 +1,7 @@
 # olcRTC server — systemd installer
 
+> [**Русский**](#russian) ниже • Full English documentation continues below
+
 One-shot installer that puts an [olcrtc](https://github.com/openlibrecommunity/olcrtc)
 server CLI on a Linux VPS with a hardened `systemd` service. The binaries
 themselves are not committed to this branch — they live in
@@ -227,3 +229,94 @@ For `telemost`, no API call is needed — the user-supplied ID is the room.
 - olcrtc itself is **WTFPL**.
 - The binaries and installer in this repository are derivative works of
   https://github.com/openlibrecommunity/olcrtc and inherit its license.
+
+---
+
+<a name="russian"></a>
+## Русский
+
+Этот скрипт ставит olcRTC-сервер на Linux VPS под `systemd` за одну команду.
+
+### Самый быстрый путь
+
+```bash
+curl -fsSL -o /tmp/olcrtc.tgz \
+    https://github.com/Oleglog/olcrtc_FORK/releases/latest/download/olcrtc-server-installer-0.1.3.tgz
+rm -rf /tmp/olcrtc-server-installer-*
+tar -xzf /tmp/olcrtc.tgz -C /tmp
+sudo /tmp/olcrtc-server-installer-*/install.sh
+```
+
+С residential SOCKS5-прокси (если IP VPS заблокирован у wb_stream / jazz / telemost):
+
+```bash
+sudo /tmp/olcrtc-server-installer-*/install.sh \
+    --socks-proxy USER:PASS@HOST:PORT
+```
+
+### Что произойдёт
+
+1. Скачается бинарник `olcrtc` (~20 МБ, под `linux/amd64` или `linux/arm64`)
+2. Создастся системный пользователь `olcrtc`
+3. Сгенерируется 256-битный ключ шифрования в `/etc/olcrtc/key.hex`
+4. Запишется конфиг в `/etc/olcrtc/env`
+5. Зарегистрируется hardened `systemd`-юнит `olcrtc-server.service`
+6. Wildberries Stream / SaluteJazz / Telemost создадут комнату при первом старте
+7. Инсталлер выведет на экран **Provider**, **Room ID** и **Encryption key** — эти три значения нужно ввести в Android-приложение
+
+### Сменить провайдера
+
+```bash
+sudo ./install.sh --provider wb_stream      # по умолчанию, надёжнее всего
+sudo ./install.sh --provider jazz           # SaluteJazz
+sudo ./install.sh --provider telemost       # Yandex Telemost
+```
+
+### Повторный запуск (идемпотентность)
+
+Инсталлер можно запускать сколько угодно раз — он не трогает ключ/комнату/прокси, если ты не попросишь явно:
+
+```bash
+sudo ./install.sh                             # обновить бинарник/юнит, всё остальное сохранить
+sudo ./install.sh --regenerate                # сменить комнату (ключ остаётся)
+sudo ./install.sh --regenerate-key            # сменить и ключ, и комнату
+sudo ./install.sh --socks-proxy host:port     # включить SOCKS5 (NO_AUTH)
+sudo ./install.sh --socks-proxy u:p@h:port    # включить SOCKS5 (USER/PASSWORD)
+sudo ./install.sh --socks-proxy ""            # выключить SOCKS5
+sudo ./install.sh --debug                     # включить verbose-логирование
+sudo ./install.sh --no-debug                  # выключить verbose-логирование
+```
+
+### Проверка после установки
+
+```bash
+sudo systemctl status olcrtc-server               # сервис должен быть active
+sudo journalctl -u olcrtc-server -n 50 --no-pager # должна быть строка "room created"
+sudo grep -E '^OLCRTC_(PROVIDER|ROOM_ID|KEY)=' /etc/olcrtc/env
+```
+
+Эти три значения (Provider, Room ID, Key) вводятся в Android-приложение в настройках профиля **olcRTC**.
+
+### Что идёт через прокси, что не идёт (с v0.1.3)
+
+| Трафик                                                       | Маршрут                          |
+|--------------------------------------------------------------|----------------------------------|
+| Регистрация в провайдере (HTTP API + WebSocket signalling)   | через прокси                     |
+| WebRTC media (UDP между VPS и Android)                        | напрямую (UDP не идёт через CONNECT) |
+| TCP-трафик клиента через туннель (Telegram, браузер и т.д.)  | **напрямую с VPS, минуя прокси** |
+
+Это важно: до v0.1.3 (включая v0.1.2) клиентский TCP-трафик тоже шёл через прокси, из-за чего Telegram и другие сервисы, заблокированные в РФ, не работали через туннель. **Используй v0.1.3 или выше.**
+
+### Удаление
+
+```bash
+sudo systemctl disable --now olcrtc-server
+sudo rm -f /etc/systemd/system/olcrtc-server.service
+sudo systemctl daemon-reload
+sudo rm -rf /etc/olcrtc /var/lib/olcrtc /usr/local/bin/olcrtc /usr/local/bin/olcrtc-launcher
+sudo userdel olcrtc 2>/dev/null || true
+```
+
+### Полная документация
+
+Английская версия выше содержит подробности по всем флагам, путям, формату конфига, сборке из исходников и устройству systemd-юнита. Русский раздел — это TL;DR.
