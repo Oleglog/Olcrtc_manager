@@ -17,7 +17,7 @@
 
 set -euo pipefail
 
-INSTALLER_VERSION="0.1.1"
+INSTALLER_VERSION="0.1.2"
 PROVIDER_DEFAULT="wb_stream"
 DNS_DEFAULT="1.1.1.1:53"
 
@@ -38,13 +38,17 @@ Options:
     --regenerate          Drop the saved room ID and create a new one.
     --regenerate-key      Drop the encryption key AND room ID, regenerate both.
                           Existing clients will need the new key + room ID.
-    --socks-proxy <host:port>
-                          Route the server's outbound traffic through a SOCKS5
-                          proxy. Useful when the VPS IP is blocked by
+    --socks-proxy <[user:pass@]host:port>
+                          Route ALL of the server's outbound traffic
+                          (provider HTTP API calls + tunnelled TCP) through a
+                          SOCKS5 proxy. Useful when the VPS IP is blocked by
                           wb_stream/jazz/telemost — point this at a residential
-                          (e.g. RU) SOCKS5 proxy that has IP-whitelisted your
-                          VPS. Upstream olcrtc supports ONLY NO_AUTH SOCKS5;
-                          authenticate via IP whitelist on the proxy side.
+                          (e.g. RU) SOCKS5 proxy. Both NO_AUTH and RFC 1929
+                          USER/PASSWORD are supported.
+                          Forms accepted:
+                            host:port                       (NO_AUTH)
+                            user:pass@host:port             (RFC 1929)
+                            socks5://[user:pass@]host:port  (same)
                           Pass "" to remove an existing setting.
     --debug               Enable verbose -debug logging in the systemd service
                           (helpful when diagnosing reconnects or DTLS issues).
@@ -55,6 +59,7 @@ Examples:
     sudo ./install.sh
     sudo ./install.sh --provider telemost --regenerate
     sudo ./install.sh --socks-proxy 1.2.3.4:1080
+    sudo ./install.sh --socks-proxy alice:hunter2@1.2.3.4:1080
     sudo ./install.sh --debug
     sudo ./install.sh --socks-proxy ""        # remove proxy
 EOF
@@ -255,7 +260,11 @@ fi
 
 PROXY_HUMAN="(direct, no proxy)"
 if [ -n "$SOCKS_PROXY" ]; then
-    PROXY_HUMAN="$SOCKS_PROXY (NO_AUTH SOCKS5)"
+    if [[ "$SOCKS_PROXY" == *"@"* ]]; then
+        PROXY_HUMAN="${SOCKS_PROXY##*@} (SOCKS5 with USER/PASSWORD auth)"
+    else
+        PROXY_HUMAN="$SOCKS_PROXY (SOCKS5 NO_AUTH)"
+    fi
 fi
 
 cat <<EOF

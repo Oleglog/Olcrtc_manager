@@ -12,11 +12,15 @@
 #   OLCRTC_KEY               required: 64-char hex encryption key
 #   OLCRTC_DNS               optional: DNS resolver (default 1.1.1.1:53)
 #   OLCRTC_DEBUG             optional: set to 1 to enable -debug verbose logging
-#   OLCRTC_SOCKS_PROXY       optional: SOCKS5 proxy "host:port" used for outbound
-#                                       traffic. Useful when the VPS's own IP is
-#                                       blocked by wb_stream/jazz/telemost — point
-#                                       this at a residential/RU SOCKS5 proxy that
-#                                       has whitelisted the VPS IP (NO_AUTH only).
+#   OLCRTC_SOCKS_PROXY       optional: SOCKS5 proxy used for outbound traffic.
+#                                       Accepted forms:
+#                                         host:port
+#                                         user:pass@host:port    (RFC 1929)
+#                                         socks5://[user:pass@]host:port
+#                                         socks5h://[user:pass@]host:port
+#                                       Useful when the VPS's own IP is
+#                                       blocked by wb_stream/jazz/telemost —
+#                                       point this at a residential proxy.
 
 set -euo pipefail
 
@@ -39,15 +43,25 @@ fi
 
 if [ -n "${OLCRTC_SOCKS_PROXY:-}" ]; then
     proxy="$OLCRTC_SOCKS_PROXY"
-    # Strip optional scheme prefix "socks5://" if present.
+    # Strip optional scheme prefix.
     proxy="${proxy#socks5://}"
     proxy="${proxy#socks5h://}"
+
+    proxy_user=""
+    proxy_pass=""
     if [[ "$proxy" == *"@"* ]]; then
-        echo "olcrtc-launcher: OLCRTC_SOCKS_PROXY contains user:pass@ — upstream olcrtc only supports NO_AUTH SOCKS5. Use IP whitelisting on the proxy side instead." >&2
-        exit 65
+        creds="${proxy%@*}"
+        proxy="${proxy##*@}"
+        if [[ "$creds" == *":"* ]]; then
+            proxy_user="${creds%%:*}"
+            proxy_pass="${creds#*:}"
+        else
+            proxy_user="$creds"
+        fi
     fi
+
     if [[ "$proxy" != *":"* ]]; then
-        echo "olcrtc-launcher: OLCRTC_SOCKS_PROXY must be in form host:port (got '$proxy')" >&2
+        echo "olcrtc-launcher: OLCRTC_SOCKS_PROXY must contain host:port (got '$proxy')" >&2
         exit 66
     fi
     proxy_host="${proxy%:*}"
@@ -56,7 +70,14 @@ if [ -n "${OLCRTC_SOCKS_PROXY:-}" ]; then
         echo "olcrtc-launcher: OLCRTC_SOCKS_PROXY port is not numeric ('$proxy_port')" >&2
         exit 67
     fi
+
     ARGS+=(-socks-proxy "$proxy_host" -socks-proxy-port "$proxy_port")
+    if [ -n "$proxy_user" ]; then
+        ARGS+=(-socks-proxy-user "$proxy_user")
+    fi
+    if [ -n "$proxy_pass" ]; then
+        ARGS+=(-socks-proxy-pass "$proxy_pass")
+    fi
 fi
 
 exec /usr/local/bin/olcrtc "${ARGS[@]}"

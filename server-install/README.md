@@ -14,8 +14,9 @@ Pre-built statically-linked binaries of the
   room on first start,
 - captures the auto-generated room ID from `journalctl` and pins it into the
   service environment so the same room is reused across restarts,
-- supports an optional outbound SOCKS5 proxy (useful when the VPS IP is
-  blocked by wb_stream / jazz / telemost) and an optional `-debug` flag,
+- supports an optional outbound SOCKS5 proxy (NO_AUTH or RFC 1929
+  USER/PASSWORD), useful when the VPS IP is blocked by
+  wb_stream / jazz / telemost, and an optional `-debug` flag,
 - prints the credentials you need to fill into the Android app.
 
 Default provider is **`wb_stream`**.
@@ -104,21 +105,40 @@ Wildberries Stream and SaluteJazz block many datacenter IPs and require a
 residential / Russian IP to register a guest session. Yandex Telemost is
 more permissive but can still throttle or rotate sessions on suspicious IPs.
 
-If your VPS gets `i/o timeout` connecting to `stream.wb.ru` (or similar),
-rent a residential SOCKS5 proxy with **IP whitelisting** (the upstream
-`olcrtc` SOCKS5 client only supports `NO_AUTH` — username/password
-authentication is NOT supported, so you must whitelist your VPS IP on the
-proxy provider side). Then:
+If your VPS gets `i/o timeout` connecting to `stream.wb.ru`, or
+`SOCKS5 connect failed: 2` ("connection not allowed by ruleset") errors in
+`journalctl`, rent a residential SOCKS5 proxy and point the installer at it:
 
 ```bash
+# NO_AUTH proxy (IP-whitelisted on the provider side)
 sudo ./install.sh --socks-proxy 1.2.3.4:1080
+
+# RFC 1929 USER/PASSWORD auth (most cheap residential providers require this)
+sudo ./install.sh --socks-proxy alice:hunter2@1.2.3.4:1080
+
+# Same, with explicit scheme
+sudo ./install.sh --socks-proxy socks5://alice:hunter2@1.2.3.4:1080
 ```
 
-This writes `OLCRTC_SOCKS_PROXY=1.2.3.4:1080` into `/etc/olcrtc/env` and the
-service restarts with `-socks-proxy 1.2.3.4 -socks-proxy-port 1080`. All
-requests to wb_stream / jazz / telemost — including the initial guest
-registration — will go out through the proxy. The WebRTC media path itself
-still goes peer-to-peer over UDP (it does not use the SOCKS proxy).
+What goes through the proxy:
+
+- Provider HTTP API calls — `POST stream.wb.ru/auth/...`,
+  `POST jazz.sber.ru/...`, `POST telemost.yandex.ru/...`, so the provider
+  sees the proxy IP, not the VPS IP, during the initial registration.
+- All TCP that clients tunnel through the WebRTC peer (DNS, outbound HTTPS).
+
+What does NOT go through the proxy:
+
+- The WebRTC media path itself — ICE candidate exchange + the actual
+  RTP/SCTP UDP. SOCKS5 only supports TCP CONNECT, so peer-to-peer UDP
+  keeps using the VPS's own IP. As long as the **signalling** (HTTP API
+  + WebSocket) goes through the proxy, the provider sees the room as
+  legitimate.
+
+If you bought a proxy that requires authentication and supplied creds in
+the `user:pass@host:port` form, the launcher passes them to the
+binary as `-socks-proxy-user` / `-socks-proxy-pass` (RFC 1929
+USER/PASSWORD sub-negotiation).
 
 ## Debug logging
 
