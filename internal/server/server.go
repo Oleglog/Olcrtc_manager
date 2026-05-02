@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"strconv"
@@ -20,6 +19,7 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 	"github.com/openlibrecommunity/olcrtc/internal/mux"
 	"github.com/openlibrecommunity/olcrtc/internal/names"
+	"github.com/openlibrecommunity/olcrtc/internal/protect"
 	"github.com/openlibrecommunity/olcrtc/internal/provider"
 	"github.com/pion/webrtc/v4"
 )
@@ -57,6 +57,8 @@ type Server struct {
 	resolver       *net.Resolver
 	socksProxyAddr string
 	socksProxyPort int
+	socksProxyUser string
+	socksProxyPass string
 }
 
 // ConnectRequest is a message from the client to establish a new connection.
@@ -75,6 +77,7 @@ func Run(
 	dnsServer,
 	socksProxyAddr string,
 	socksProxyPort int,
+	socksProxyUser, socksProxyPass string,
 ) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -82,6 +85,19 @@ func Run(
 	cipher, err := setupCipher(keyHex)
 	if err != nil {
 		return fmt.Errorf("setupCipher failed: %w", err)
+	}
+
+	// Install the SOCKS5 config globally so all HTTP clients used by
+	// providers (jazz/wb_stream/telemost API calls) and outbound dials
+	// route through the same proxy.
+	if socksProxyAddr != "" {
+		protect.SetSocks5(protect.Socks5Config{
+			Addr: net.JoinHostPort(socksProxyAddr, strconv.Itoa(socksProxyPort)),
+			User: socksProxyUser,
+			Pass: socksProxyPass,
+		})
+	} else {
+		protect.SetSocks5(protect.Socks5Config{})
 	}
 
 	s := &Server{
@@ -92,6 +108,8 @@ func Run(
 		dnsServer:      dnsServer,
 		socksProxyAddr: socksProxyAddr,
 		socksProxyPort: socksProxyPort,
+		socksProxyUser: socksProxyUser,
+		socksProxyPass: socksProxyPass,
 	}
 
 	if s.dnsServer == "" {
@@ -256,45 +274,6 @@ func (s *Server) handlePeerReconnect(peerID int, dc *webrtc.DataChannel) {
 	}
 }
 
-func (s *Server) socks5Connect(conn net.Conn, targetAddr string, targetPort int) error {
-	if _, err := conn.Write([]byte{5, 1, 0}); err != nil {
-		return fmt.Errorf("failed to write socks5 auth: %w", err)
-	}
-
-	resp := make([]byte, 2)
-	if _, err := io.ReadFull(conn, resp); err != nil {
-		return fmt.Errorf("failed to read socks5 auth resp: %w", err)
-	}
-	if resp[0] != 5 || resp[1] != 0 {
-		return ErrSocks5AuthFailed
-	}
-
-	addrLen := len(targetAddr)
-	if addrLen > 255 {
-		addrLen = 255
-		targetAddr = targetAddr[:255]
-	}
-
-	req := make([]byte, 0, 7+addrLen)
-	req = append(req, 5, 1, 0, 3, byte(addrLen))
-	req = append(req, []byte(targetAddr)...)
-	req = append(req, byte(targetPort>>8), byte(targetPort)) //nolint:gosec
-
-	if _, err := conn.Write(req); err != nil {
-		return fmt.Errorf("failed to write socks5 connect req: %w", err)
-	}
-
-	resp = make([]byte, 10)
-	if _, err := io.ReadFull(conn, resp); err != nil {
-		return fmt.Errorf("failed to read socks5 connect resp: %w", err)
-	}
-	if resp[0] != 5 || resp[1] != 0 {
-		return fmt.Errorf("%w: %d", ErrSocks5ConnectFailed, resp[1])
-	}
-
-	return nil
-}
-
 func (s *Server) onData(data []byte) {
 	plaintext, err := s.cipher.Decrypt(data)
 	if err != nil {
@@ -457,32 +436,28 @@ func (s *Server) handleConnect(ctx context.Context, sid uint16, req ConnectReque
 
 func (s *Server) dial(req ConnectRequest) (net.Conn, error) {
 	addr := net.JoinHostPort(req.Addr, strconv.Itoa(req.Port))
-	if s.socksProxyAddr == "" {
-		dialer := &net.Dialer{
-			Timeout:   10 * time.Second,
-			KeepAlive: 30 * time.Second,
-			Resolver:  s.resolver,
-		}
-		conn, err := dialer.Dial("tcp4", addr)
+
+	if s.socksProxyAddr != "" {
+		// Routing through SOCKS5: let protect.DialContext handle the
+		// handshake (incl. RFC 1929 USER/PASSWORD when configured) and
+		// the proxy resolves DNS server-side.
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		conn, err := protect.DialContext(ctx, "tcp", addr)
 		if err != nil {
-			return nil, fmt.Errorf("dial failed: %w", err)
+			return nil, fmt.Errorf("dial through socks5 proxy failed: %w", err)
 		}
 		return conn, nil
 	}
 
-	proxyAddr := net.JoinHostPort(s.socksProxyAddr, strconv.Itoa(s.socksProxyPort))
 	dialer := &net.Dialer{
 		Timeout:   10 * time.Second,
 		KeepAlive: 30 * time.Second,
+		Resolver:  s.resolver,
 	}
-	conn, err := dialer.Dial("tcp4", proxyAddr)
+	conn, err := dialer.Dial("tcp4", addr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to dial proxy: %w", err)
-	}
-
-	if err := s.socks5Connect(conn, req.Addr, req.Port); err != nil {
-		_ = conn.Close()
-		return nil, err
+		return nil, fmt.Errorf("dial failed: %w", err)
 	}
 	return conn, nil
 }
