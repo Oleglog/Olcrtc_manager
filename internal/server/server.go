@@ -434,21 +434,15 @@ func (s *Server) handleConnect(ctx context.Context, sid uint16, req ConnectReque
 	go s.pumpToMux(sid, conn)
 }
 
+// dial opens a TCP connection to req.Addr:req.Port for client tunnel
+// traffic. It always dials directly from the VPS (never via the
+// configured SOCKS5 proxy). The proxy exists to make provider HTTP/WS
+// signalling appear to come from a residential / RU IP; routing client
+// traffic through it would force every endpoint (Telegram, etc.) to see
+// the proxy's geolocation, breaking services that are geo-restricted
+// against that region.
 func (s *Server) dial(req ConnectRequest) (net.Conn, error) {
 	addr := net.JoinHostPort(req.Addr, strconv.Itoa(req.Port))
-
-	if s.socksProxyAddr != "" {
-		// Routing through SOCKS5: let protect.DialContext handle the
-		// handshake (incl. RFC 1929 USER/PASSWORD when configured) and
-		// the proxy resolves DNS server-side.
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		conn, err := protect.DialContext(ctx, "tcp", addr)
-		if err != nil {
-			return nil, fmt.Errorf("dial through socks5 proxy failed: %w", err)
-		}
-		return conn, nil
-	}
 
 	dialer := &net.Dialer{
 		Timeout:   10 * time.Second,

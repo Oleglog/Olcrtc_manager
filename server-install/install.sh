@@ -17,7 +17,7 @@
 
 set -euo pipefail
 
-INSTALLER_VERSION="0.1.2"
+INSTALLER_VERSION="0.1.3"
 PROVIDER_DEFAULT="wb_stream"
 DNS_DEFAULT="1.1.1.1:53"
 
@@ -39,12 +39,15 @@ Options:
     --regenerate-key      Drop the encryption key AND room ID, regenerate both.
                           Existing clients will need the new key + room ID.
     --socks-proxy <[user:pass@]host:port>
-                          Route ALL of the server's outbound traffic
-                          (provider HTTP API calls + tunnelled TCP) through a
-                          SOCKS5 proxy. Useful when the VPS IP is blocked by
-                          wb_stream/jazz/telemost — point this at a residential
-                          (e.g. RU) SOCKS5 proxy. Both NO_AUTH and RFC 1929
-                          USER/PASSWORD are supported.
+                          Route the server's PROVIDER signalling (HTTP +
+                          WebSocket) through a SOCKS5 proxy. Useful when the
+                          VPS IP is blocked by wb_stream / jazz / telemost —
+                          point this at a residential (e.g. RU) SOCKS5 proxy.
+                          Both NO_AUTH and RFC 1929 USER/PASSWORD are
+                          supported. Tunnelled client TCP traffic always
+                          exits direct from the VPS, never via the proxy
+                          (so geo-restricted services such as Telegram
+                          remain reachable).
                           Forms accepted:
                             host:port                       (NO_AUTH)
                             user:pass@host:port             (RFC 1929)
@@ -286,9 +289,9 @@ fi
 PROXY_HUMAN="(direct, no proxy)"
 if [ -n "$SOCKS_PROXY" ]; then
     if [[ "$SOCKS_PROXY" == *"@"* ]]; then
-        PROXY_HUMAN="${SOCKS_PROXY##*@} (SOCKS5 with USER/PASSWORD auth)"
+        PROXY_HUMAN="${SOCKS_PROXY##*@} (SOCKS5 USER/PASSWORD, provider signalling only)"
     else
-        PROXY_HUMAN="$SOCKS_PROXY (SOCKS5 NO_AUTH)"
+        PROXY_HUMAN="$SOCKS_PROXY (SOCKS5 NO_AUTH, provider signalling only)"
     fi
 fi
 
