@@ -13,7 +13,11 @@ func pumpPackets(stop <-chan struct{}, from <-chan []byte, to *kcpRuntime) {
 		case <-stop:
 			return
 		case pkt := <-from:
-			to.deliver(pkt)
+			// Strip the on-wire epoch header that kcpConn prepends;
+			// the real receive path does this before calling deliver().
+			if len(pkt) > epochHdrLen {
+				to.deliver(pkt[epochHdrLen:])
+			}
 		}
 	}
 }
@@ -66,13 +70,13 @@ func TestKCPLoopback(t *testing.T) {
 
 	cb, doneB, getRecv := buildReceiver(len(msgs))
 
-	rtA, err := startKCP(a2b, nil)
+	rtA, err := startKCP(a2b, nil, testEpochHdr(1))
 	if err != nil {
 		t.Fatalf("startKCP A: %v", err)
 	}
 	defer rtA.close()
 
-	rtB, err := startKCP(b2a, cb)
+	rtB, err := startKCP(b2a, cb, testEpochHdr(2))
 	if err != nil {
 		t.Fatalf("startKCP B: %v", err)
 	}
@@ -100,7 +104,17 @@ func TestKCPLoopback(t *testing.T) {
 }
 
 func TestVP8KeepaliveDoesNotLookLikeKCP(t *testing.T) {
-	if len(vp8Keepalive) >= 1 && vp8Keepalive[0] == kcpMagic {
-		t.Errorf("keepalive collides with kcp magic byte 0x%02x", kcpMagic)
+	if len(vp8Keepalive) >= 1 && vp8Keepalive[0] == kcpFrameMagic {
+		t.Errorf("keepalive collides with kcp magic byte 0x%02x", kcpFrameMagic)
 	}
+}
+
+func testEpochHdr(epoch uint32) [epochHdrLen]byte {
+	var hdr [epochHdrLen]byte
+	hdr[0] = kcpFrameMagic
+	hdr[1] = byte(epoch >> 24)
+	hdr[2] = byte(epoch >> 16) //nolint:gosec
+	hdr[3] = byte(epoch >> 8)  //nolint:gosec
+	hdr[4] = byte(epoch)       //nolint:gosec
+	return hdr
 }

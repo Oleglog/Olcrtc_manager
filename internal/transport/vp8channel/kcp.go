@@ -56,8 +56,8 @@ type kcpRuntime struct {
 	closeOnce sync.Once
 }
 
-func startKCP(out chan<- []byte, onData func([]byte)) (*kcpRuntime, error) {
-	c := newKCPConn(out, inboundQueueSize)
+func startKCP(out chan<- []byte, onData func([]byte), epochHdr [epochHdrLen]byte) (*kcpRuntime, error) {
+	c := newKCPConn(out, inboundQueueSize, epochHdr)
 
 	sess, err := kcp.NewConn3(kcpConvID, fakeUDPAddr(), nil, 0, 0, c)
 	if err != nil {

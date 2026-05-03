@@ -24,19 +24,25 @@ type kcpConn struct {
 	closed    chan struct{}
 	closeOnce sync.Once
 
+	// epochHdr is prepended to every outgoing KCP packet so that the peer
+	// can detect a session restart on our side (see transport.go for the
+	// layout). Stable for the lifetime of this kcpConn.
+	epochHdr [epochHdrLen]byte
+
 	mu        sync.Mutex
 	rDeadline time.Time
 	wDeadline time.Time
 }
 
-func newKCPConn(out chan<- []byte, inboundCap int) *kcpConn {
+func newKCPConn(out chan<- []byte, inboundCap int, epochHdr [epochHdrLen]byte) *kcpConn {
 	if inboundCap <= 0 {
 		inboundCap = 1024
 	}
 	return &kcpConn{
-		out:    out,
-		in:     make(chan []byte, inboundCap),
-		closed: make(chan struct{}),
+		out:      out,
+		in:       make(chan []byte, inboundCap),
+		closed:   make(chan struct{}),
+		epochHdr: epochHdr,
 	}
 }
 
@@ -80,8 +86,9 @@ func (c *kcpConn) ReadFrom(p []byte) (int, net.Addr, error) {
 }
 
 func (c *kcpConn) WriteTo(p []byte, _ net.Addr) (int, error) {
-	buf := make([]byte, len(p))
-	copy(buf, p)
+	buf := make([]byte, epochHdrLen+len(p))
+	copy(buf, c.epochHdr[:])
+	copy(buf[epochHdrLen:], p)
 
 	c.mu.Lock()
 	deadline := c.wDeadline
