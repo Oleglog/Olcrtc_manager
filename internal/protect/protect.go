@@ -61,7 +61,7 @@ func controlFunc(network, _ string, c syscall.RawConn) error {
 	}
 	var err error
 	controlErr := c.Control(func(fd uintptr) {
-		if !Protector(int(fd)) { //nolint:gosec
+		if !Protector(int(fd)) {
 			err = &net.OpError{Op: "protect", Net: network, Err: net.ErrClosed}
 		}
 	})

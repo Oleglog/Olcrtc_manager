@@ -74,6 +74,11 @@ func (j *jazzProvider) GetBufferedAmount() uint64 {
 }
 
 // AddVideoTrack adds a video track to the jazz connection.
-func (j *jazzProvider) AddVideoTrack(track *webrtc.TrackLocalStaticRTP) (*webrtc.RTPSender, error) {
+func (j *jazzProvider) AddVideoTrack(track webrtc.TrackLocal) error {
 	return j.peer.AddVideoTrack(track)
+}
+
+// SetVideoTrackHandler registers a callback for subscribed remote video tracks.
+func (j *jazzProvider) SetVideoTrackHandler(cb func(*webrtc.TrackRemote, *webrtc.RTPReceiver)) {
+	j.peer.SetVideoTrackHandler(cb)
 }

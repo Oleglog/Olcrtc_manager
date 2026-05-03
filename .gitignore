@@ -11,7 +11,7 @@
 *.ilk
 *.map
 *.exp
-
+CLAUDE.md
 # Precompiled Headers
 *.gch
 *.pch
@@ -246,3 +246,4 @@ go.work.sum
 build/
 GEMINI.md
 code/package-lock.json
+olcrtc

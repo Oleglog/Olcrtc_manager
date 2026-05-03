@@ -12,6 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -28,6 +30,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -46,43 +50,13 @@ jobs:
           name: olcrtc-cli-binaries
           path: build/
 
-  build-ui:
-    name: Build UI (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.25.x'
-          
-      - name: Install Linux Dependencies (Fyne)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc libgl1-mesa-dev xorg-dev libwayland-dev libx11-dev
-          
-      - name: Install Mage
-        run: go install github.com/magefile/mage@latest
-        
-      - name: Build UI
-        run: mage buildUI
-        
-      - name: Upload UI Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: olcrtc-ui-${{ runner.os }}
-          path: build/
-
   build-android:
     name: Build Android (AAR)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       
       - name: Set up Go
         uses: actions/setup-go@v5

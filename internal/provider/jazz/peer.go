@@ -22,6 +22,18 @@ import (
 const (
 	maxDataChannelMessageSize = 12288
 	sendDelay                 = 2 * time.Millisecond
+
+	keyRoomID    = "roomId"
+	keyEvent     = "event"
+	keyRequestID = "requestId"
+	keyPayload   = "payload"
+)
+
+var (
+	// ErrPublisherNotInitialized is returned when the publisher peer connection is not set up.
+	ErrPublisherNotInitialized = errors.New("publisher peer connection not initialized")
+	// ErrSubscriberMediaTimeout is returned when the subscriber media is not ready within the timeout period.
+	ErrSubscriberMediaTimeout = errors.New("subscriber media timeout")
 )
 
 // Peer represents a SaluteJazz WebRTC connection.
@@ -44,6 +56,13 @@ type Peer struct {
 	sendQueueClosed atomic.Bool
 	onEnded         func(string)
 	sessionCloseCh  chan struct{}
+	videoTrackMu    sync.RWMutex
+	videoTracks     []webrtc.TrackLocal
+	onVideoTrack    func(*webrtc.TrackRemote, *webrtc.RTPReceiver)
+	subscriberReady atomic.Bool
+	publisherReady  atomic.Bool
+	subscriberConn  chan struct{}
+	publisherConn   chan struct{}
 	wg              sync.WaitGroup
 	groupID         string
 }
@@ -83,50 +102,145 @@ func NewPeer(ctx context.Context, roomID, name string, onData func([]byte)) (*Pe
 		closeCh:        make(chan struct{}),
 		sessionCloseCh: make(chan struct{}),
 		sendQueue:      make(chan []byte, 5000),
+		subscriberConn: make(chan struct{}),
+		publisherConn:  make(chan struct{}),
 	}, nil
 }
 
-// Connect starts the WebRTC connection process.
-func (p *Peer) Connect(ctx context.Context) error {
-	p.closed.Store(false)
+func (p *Peer) resetMediaState() {
+	p.subscriberReady.Store(false)
+	p.publisherReady.Store(false)
+	p.subscriberConn = make(chan struct{})
+	p.publisherConn = make(chan struct{})
+}
 
-	config := webrtc.Configuration{
+func closeSignal(ch chan struct{}) {
+	select {
+	case <-ch:
+	default:
+		close(ch)
+	}
+}
+
+func (p *Peer) hasLocalVideoTracks() bool {
+	p.videoTrackMu.RLock()
+	defer p.videoTrackMu.RUnlock()
+	return len(p.videoTracks) > 0
+}
+
+func (p *Peer) videoTrackHandler() func(*webrtc.TrackRemote, *webrtc.RTPReceiver) {
+	p.videoTrackMu.RLock()
+	defer p.videoTrackMu.RUnlock()
+	return p.onVideoTrack
+}
+
+func (p *Peer) attachPendingVideoTracks() error {
+	p.videoTrackMu.RLock()
+	defer p.videoTrackMu.RUnlock()
+
+	for _, track := range p.videoTracks {
+		if _, err := p.pcPub.AddTrack(track); err != nil {
+			return fmt.Errorf("failed to add track: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func defaultWebRTCConfig() webrtc.Configuration {
+	return webrtc.Configuration{
 		ICEServers:   []webrtc.ICEServer{},
 		SDPSemantics: webrtc.SDPSemanticsUnifiedPlan,
 		BundlePolicy: webrtc.BundlePolicyMaxBundle,
 	}
+}
 
-	settingEngine := webrtc.SettingEngine{}
+func (p *Peer) buildAPI() *webrtc.API {
+	se := webrtc.SettingEngine{}
 	if protect.Protector != nil {
-		settingEngine.SetICEProxyDialer(protect.NewProxyDialer())
+		se.SetICEProxyDialer(protect.NewProxyDialer())
 	}
-	api := webrtc.NewAPI(webrtc.WithSettingEngine(settingEngine))
+	return webrtc.NewAPI(webrtc.WithSettingEngine(se))
+}
 
+func (p *Peer) createPeerConnections(api *webrtc.API, config webrtc.Configuration) error {
 	var err error
 	p.pcSub, err = api.NewPeerConnection(config)
 	if err != nil {
 		return fmt.Errorf("create subscriber pc: %w", err)
 	}
+	p.pcSub.OnConnectionStateChange(p.onSubscriberConnectionStateChange)
+	p.pcSub.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
+		if track.Kind() != webrtc.RTPCodecTypeVideo {
+			return
+		}
+		if cb := p.videoTrackHandler(); cb != nil {
+			cb(track, receiver)
+		}
+	})
 
 	p.pcPub, err = api.NewPeerConnection(config)
 	if err != nil {
 		return fmt.Errorf("create publisher pc: %w", err)
 	}
+	p.pcPub.OnConnectionStateChange(p.onPublisherConnectionStateChange)
+	return nil
+}
 
+func (p *Peer) createDataChannel() (chan struct{}, error) {
+	var err error
 	p.dc, err = p.pcPub.CreateDataChannel("_reliable", &webrtc.DataChannelInit{
 		Ordered: func() *bool { v := true; return &v }(),
 	})
 	if err != nil {
-		return fmt.Errorf("create datachannel: %w", err)
+		return nil, fmt.Errorf("create datachannel: %w", err)
 	}
-
 	dcReady := make(chan struct{})
 	p.setupDataChannelHandlers(dcReady)
+	return dcReady, nil
+}
+
+func (p *Peer) waitForReady(ctx context.Context, dcReady chan struct{}) error {
+	if dcReady != nil {
+		select {
+		case <-dcReady:
+			return nil
+		case <-time.After(30 * time.Second):
+			return provider.ErrDataChannelTimeout
+		case <-ctx.Done():
+			return fmt.Errorf("connect cancelled: %w", ctx.Err())
+		}
+	}
+	return p.waitForMediaReady(ctx, 30*time.Second)
+}
+
+// Connect starts the WebRTC connection process.
+func (p *Peer) Connect(ctx context.Context) error {
+	p.closed.Store(false)
+	p.resetMediaState()
+
+	api := p.buildAPI()
+	config := defaultWebRTCConfig()
+
+	if err := p.createPeerConnections(api, config); err != nil {
+		return err
+	}
+	if err := p.attachPendingVideoTracks(); err != nil {
+		return err
+	}
+
+	var dcReady chan struct{}
+	if p.onData != nil {
+		var err error
+		dcReady, err = p.createDataChannel()
+		if err != nil {
+			return err
+		}
+	}
 
 	if err := p.dialWebSocket(); err != nil {
 		return err
 	}
-
 	if err := p.sendJoin(); err != nil {
 		return err
 	}
@@ -137,14 +251,22 @@ func (p *Peer) Connect(ctx context.Context) error {
 		p.handleSignaling(ctx)
 	}()
 
+	return p.waitForReady(ctx, dcReady)
+}
+
+func (p *Peer) waitForMediaReady(ctx context.Context, timeout time.Duration) error {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
 	select {
-	case <-dcReady:
-		return nil
-	case <-time.After(30 * time.Second):
-		return provider.ErrDataChannelTimeout
+	case <-p.subscriberConn:
+	case <-timer.C:
+		return ErrSubscriberMediaTimeout
 	case <-ctx.Done():
 		return fmt.Errorf("connect cancelled: %w", ctx.Err())
 	}
+
+	return nil
 }
 
 func (p *Peer) dialWebSocket() error {
@@ -173,10 +295,10 @@ func (p *Peer) dialWebSocket() error {
 
 func (p *Peer) sendJoin() error {
 	joinMsg := map[string]any{
-		"roomId":    p.roomInfo.RoomID,
-		"event":     "join",
-		"requestId": uuid.New().String(),
-		"payload": map[string]any{
+		keyRoomID:    p.roomInfo.RoomID,
+		keyEvent:     "join",
+		keyRequestID: uuid.New().String(),
+		keyPayload: map[string]any{
 			"password":        p.roomInfo.Password,
 			"participantName": p.name,
 			"supportedFeatures": map[string]any{
@@ -224,10 +346,48 @@ func (p *Peer) setupDataChannelHandlers(dcReady chan struct{}) {
 			return
 		}
 
-		dc.OnMessage(func(msg webrtc.DataChannelMessage) {
-			p.handleIncomingMessage(msg.Data, "subscriber")
-		})
+		if p.onData != nil {
+			dc.OnMessage(func(msg webrtc.DataChannelMessage) {
+				p.handleIncomingMessage(msg.Data, "subscriber")
+			})
+		}
 	})
+}
+
+func (p *Peer) onSubscriberConnectionStateChange(state webrtc.PeerConnectionState) {
+	switch state {
+	case webrtc.PeerConnectionStateConnected:
+		p.subscriberReady.Store(true)
+		closeSignal(p.subscriberConn)
+	case webrtc.PeerConnectionStateDisconnected, webrtc.PeerConnectionStateFailed:
+		p.subscriberReady.Store(false)
+		if !p.closed.Load() {
+			p.queueReconnect()
+		}
+	case webrtc.PeerConnectionStateClosed:
+		p.subscriberReady.Store(false)
+	case webrtc.PeerConnectionStateUnknown,
+		webrtc.PeerConnectionStateNew,
+		webrtc.PeerConnectionStateConnecting:
+	}
+}
+
+func (p *Peer) onPublisherConnectionStateChange(state webrtc.PeerConnectionState) {
+	switch state {
+	case webrtc.PeerConnectionStateConnected:
+		p.publisherReady.Store(true)
+		closeSignal(p.publisherConn)
+	case webrtc.PeerConnectionStateDisconnected, webrtc.PeerConnectionStateFailed:
+		p.publisherReady.Store(false)
+		if !p.closed.Load() {
+			p.queueReconnect()
+		}
+	case webrtc.PeerConnectionStateClosed:
+		p.publisherReady.Store(false)
+	case webrtc.PeerConnectionStateUnknown,
+		webrtc.PeerConnectionStateNew,
+		webrtc.PeerConnectionStateConnecting:
+	}
 }
 
 func (p *Peer) handleIncomingMessage(data []byte, source string) {
@@ -261,8 +421,8 @@ func (p *Peer) handleSignaling(_ context.Context) {
 
 		p.updateWSDeadline()
 
-		event, _ := msg["event"].(string)
-		payload, _ := msg["payload"].(map[string]any)
+		event, _ := msg[keyEvent].(string)
+		payload, _ := msg[keyPayload].(map[string]any)
 
 		switch event {
 		case "join-response":
@@ -359,11 +519,11 @@ func (p *Peer) handleSubscriberOffer(payload map[string]any) {
 
 	p.wsMu.Lock()
 	_ = p.ws.WriteJSON(map[string]any{
-		"roomId":    p.roomInfo.RoomID,
-		"event":     "media-in",
+		keyRoomID:    p.roomInfo.RoomID,
+		keyEvent:     "media-in",
 		"groupId":   p.groupID,
-		"requestId": uuid.New().String(),
-		"payload": map[string]any{
+		keyRequestID: uuid.New().String(),
+		keyPayload: map[string]any{
 			"method": "rtc:answer",
 			"description": map[string]any{
 				"type": "answer",
@@ -391,11 +551,11 @@ func (p *Peer) sendPublisherOffer() {
 
 	p.wsMu.Lock()
 	_ = p.ws.WriteJSON(map[string]any{
-		"roomId":    p.roomInfo.RoomID,
-		"event":     "media-in",
+		keyRoomID:    p.roomInfo.RoomID,
+		keyEvent:     "media-in",
 		"groupId":   p.groupID,
-		"requestId": uuid.New().String(),
-		"payload": map[string]any{
+		keyRequestID: uuid.New().String(),
+		keyPayload: map[string]any{
 			"method": "rtc:offer",
 			"description": map[string]any{
 				"type": "offer",
@@ -534,21 +694,26 @@ func (p *Peer) Close() error {
 	return nil
 }
 
-var (
-	 // ErrPublisherNotInitialized is returned when the publisher peer connection is not set up.
-	ErrPublisherNotInitialized = errors.New("publisher peer connection not initialized")
-)
-
 // AddVideoTrack adds a video track to the publisher peer connection.
-func (p *Peer) AddVideoTrack(track *webrtc.TrackLocalStaticRTP) (*webrtc.RTPSender, error) {
+func (p *Peer) AddVideoTrack(track webrtc.TrackLocal) error {
+	p.videoTrackMu.Lock()
+	p.videoTracks = append(p.videoTracks, track)
+	p.videoTrackMu.Unlock()
+
 	if p.pcPub == nil {
-		return nil, ErrPublisherNotInitialized
+		return nil
 	}
-	sender, err := p.pcPub.AddTrack(track)
-	if err != nil {
-		return nil, fmt.Errorf("failed to add track: %w", err)
+	if _, err := p.pcPub.AddTrack(track); err != nil {
+		return fmt.Errorf("failed to add track: %w", err)
 	}
-	return sender, nil
+	return nil
+}
+
+// SetVideoTrackHandler registers a callback for remote video tracks.
+func (p *Peer) SetVideoTrackHandler(cb func(*webrtc.TrackRemote, *webrtc.RTPReceiver)) {
+	p.videoTrackMu.Lock()
+	defer p.videoTrackMu.Unlock()
+	p.onVideoTrack = cb
 }
 
 // SetReconnectCallback sets the callback for reconnection events.
@@ -581,6 +746,12 @@ func (p *Peer) WatchConnection(ctx context.Context) {
 
 // CanSend checks if data can be sent.
 func (p *Peer) CanSend() bool {
+	if p.onData == nil {
+		if p.hasLocalVideoTracks() {
+			return !p.closed.Load() && p.subscriberReady.Load() && p.publisherReady.Load()
+		}
+		return !p.closed.Load() && p.subscriberReady.Load()
+	}
 	if p.dc == nil || p.dc.ReadyState() != webrtc.DataChannelStateOpen {
 		return false
 	}

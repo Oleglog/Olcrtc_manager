@@ -13,7 +13,10 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/protect"
 )
 
-const apiBase = "https://bk.salutejazz.ru"
+const (
+	apiBase           = "https://bk.salutejazz.ru"
+	authTypeAnonymous = "ANONYMOUS"
+)
 
 // RoomInfo contains connection details for a SaluteJazz room.
 type RoomInfo struct {
@@ -31,8 +34,8 @@ func createRoom(ctx context.Context) (*RoomInfo, error) {
 	clientID := uuid.New().String()
 	headers := map[string]string{
 		"X-Jazz-ClientId":   clientID,
-		"X-Jazz-AuthType":   "ANONYMOUS",
-		"X-Client-AuthType": "ANONYMOUS",
+		"X-Jazz-AuthType":   authTypeAnonymous,
+		"X-Client-AuthType": authTypeAnonymous,
 		"Content-Type":      "application/json",
 	}
 
@@ -164,8 +167,8 @@ func joinRoom(ctx context.Context, roomID, password string) (*RoomInfo, error) {
 	clientID := uuid.New().String()
 	headers := map[string]string{
 		"X-Jazz-ClientId":   clientID,
-		"X-Jazz-AuthType":   "ANONYMOUS",
-		"X-Client-AuthType": "ANONYMOUS",
+		"X-Jazz-AuthType":   authTypeAnonymous,
+		"X-Client-AuthType": authTypeAnonymous,
 		"Content-Type":      "application/json",
 	}
 

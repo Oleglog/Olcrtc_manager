@@ -27,9 +27,9 @@ var (
 	goarch = envOr("GOARCH", runtime.GOARCH)
 )
 
-// Build builds both olcrtc CLI and UI binaries.
+// Build builds the olcrtc CLI binary.
 func Build() error {
-	mg.Deps(BuildCLI, BuildUI)
+	mg.Deps(BuildCLI)
 	return nil
 }
 
@@ -37,11 +37,6 @@ func Build() error {
 func BuildCLI() error {
 	mg.Deps(Deps)
 	return buildBinary("olcrtc", "./cmd/olcrtc", goos, goarch)
-}
-
-// BuildUI builds the Fyne desktop UI binary.
-func BuildUI() error {
-	return buildUIBinary(goos, goarch)
 }
 
 // Cross builds olcrtc for all supported platforms.
@@ -148,48 +143,10 @@ func buildBinary(name, pkg, os_, arch string) error {
 		flags += " -checklinkname=0"
 	}
 
-	return sh.RunWithV(env, goexe, "build",
-		"-trimpath",
-		"-ldflags", flags,
-		"-o", out,
-		pkg,
-	)
+	args := []string{"build", "-trimpath", "-ldflags", flags, "-o", out, pkg}
+
+	return sh.RunWithV(env, goexe, args...)
 }
-
-func buildUIBinary(os_, arch string) error {
-	if err := ensureBuildDir(); err != nil {
-		return err
-	}
-
-	ext := ""
-	if os_ == "windows" {
-		ext = ".exe"
-	}
-	outName := fmt.Sprintf("%s-%s-%s%s", "olcrtc-ui", os_, arch, ext)
-	absOut, err := filepath.Abs(filepath.Join(buildDir, outName))
-	if err != nil {
-		return err
-	}
-
-	fmt.Printf("building olcrtc-ui (%s/%s)\n", os_, arch)
-
-	cmd := exec.Command(goexe, "build",
-		"-trimpath",
-		"-ldflags", ldflags,
-		"-o", absOut,
-		".",
-	)
-	cmd.Dir = "ui"
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Env = append(os.Environ(),
-		"GOOS="+os_,
-		"GOARCH="+arch,
-	)
-
-	return cmd.Run()
-}
-
 
 func ensureBuildDir() error {
 	return os.MkdirAll(buildDir, 0o755)

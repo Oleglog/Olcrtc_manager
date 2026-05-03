@@ -12,18 +12,19 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/openlibrecommunity/olcrtc/internal/client"
+	"github.com/openlibrecommunity/olcrtc/internal/app/session"
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 	"github.com/openlibrecommunity/olcrtc/internal/names"
-	"github.com/openlibrecommunity/olcrtc/internal/provider"
-	"github.com/openlibrecommunity/olcrtc/internal/provider/jazz"
-	"github.com/openlibrecommunity/olcrtc/internal/provider/telemost"
-	"github.com/openlibrecommunity/olcrtc/internal/provider/wbstream"
-	"github.com/openlibrecommunity/olcrtc/internal/server"
 )
+
+// ErrDataDirRequired is returned when no data directory is specified.
+var ErrDataDirRequired = errors.New("data directory required (use -data data)")
 
 type config struct {
 	mode           string
+	link           string
+	transport      string
+	carrier        string
 	roomID         string
 	provider       string
 	socksPort      int
@@ -36,14 +37,19 @@ type config struct {
 	socksProxyPort int
 	socksProxyUser string
 	socksProxyPass string
+	videoWidth     int
+	videoHeight    int
+	videoFPS       int
+	videoBitrate   string
+	videoHW        string
+	videoQRSize     int
+	videoQRRecovery string
+	videoCodec      string
+	videoTileModule int
+	videoTileRS     int
+	vp8FPS          int
+	vp8BatchSize    int
 }
-
-var (
-	errRoomIDRequired      = errors.New("room ID required")
-	errModeRequired        = errors.New("specify -mode srv or -mode cnc")
-	errProviderRequired    = errors.New("provider required (use -provider telemost or -provider jazz)")
-	errUnsupportedProvider = errors.New("unsupported provider")
-)
 
 func main() {
 	if err := run(); err != nil {
@@ -53,15 +59,17 @@ func main() {
 }
 
 func run() error {
-	provider.Register("jazz", jazz.New)
-	provider.Register("telemost", telemost.New)
-	provider.Register("wb_stream", wbstream.New)
+	session.RegisterDefaults()
 
 	cfg := parseFlags()
 	configureLogging(cfg.debug)
 
-	if err := validateConfig(cfg); err != nil {
-		return err
+	if err := session.Validate(toSessionConfig(cfg)); err != nil {
+		return fmt.Errorf("validate config: %w", err)
+	}
+
+	if cfg.dataDir == "" {
+		return ErrDataDirRequired
 	}
 
 	dataDir, err := resolveDataDir(cfg.dataDir)
@@ -80,7 +88,9 @@ func run() error {
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 
 	errCh := make(chan error, 1)
-	go runMode(ctx, cfg, errCh)
+	go func() {
+		errCh <- session.Run(ctx, toSessionConfig(cfg))
+	}()
 
 	select {
 	case <-sigCh:
@@ -96,18 +106,36 @@ func parseFlags() config {
 	cfg := config{}
 
 	flag.StringVar(&cfg.mode, "mode", "", "Mode: srv or cnc")
+	flag.StringVar(&cfg.link, "link", "", "Link: direct (p2p connection type)")
+	flag.StringVar(&cfg.transport, "transport", "", "Transport: datachannel, videochannel, seichannel")
+	flag.StringVar(&cfg.carrier, "carrier", "", "Carrier: telemost, jazz, wbstream")
 	flag.StringVar(&cfg.roomID, "id", "", "Room ID")
-	flag.StringVar(&cfg.provider, "provider", "", "Provider: telemost or jazz (required)")
-	flag.IntVar(&cfg.socksPort, "socks-port", 1080, "SOCKS5 port (client only)")
-	flag.StringVar(&cfg.socksHost, "socks-host", "127.0.0.1", "SOCKS5 listen host (client only)")
+	flag.StringVar(&cfg.provider, "provider", "", "Deprecated alias for -carrier")
+	flag.IntVar(&cfg.socksPort, "socks-port", 0, "SOCKS5 port (client only)")
+	flag.StringVar(&cfg.socksHost, "socks-host", "", "SOCKS5 listen host (client only)")
 	flag.StringVar(&cfg.keyHex, "key", "", "Shared encryption key (hex)")
 	flag.BoolVar(&cfg.debug, "debug", false, "Enable verbose logging")
-	flag.StringVar(&cfg.dataDir, "data", "data", "Path to data directory")
-	flag.StringVar(&cfg.dnsServer, "dns", "1.1.1.1:53", "DNS server (default: Cloudflare 1.1.1.1)")
+	flag.StringVar(&cfg.dataDir, "data", "", "Path to data directory")
+	flag.StringVar(&cfg.dnsServer, "dns", "", "DNS server (e.g. 1.1.1.1:53)")
 	flag.StringVar(&cfg.socksProxyAddr, "socks-proxy", "", "SOCKS5 proxy address (server only)")
-	flag.IntVar(&cfg.socksProxyPort, "socks-proxy-port", 1080, "SOCKS5 proxy port (server only)")
-	flag.StringVar(&cfg.socksProxyUser, "socks-proxy-user", "", "SOCKS5 proxy username (RFC 1929 USER/PASSWORD auth, server only)")
-	flag.StringVar(&cfg.socksProxyPass, "socks-proxy-pass", "", "SOCKS5 proxy password (RFC 1929 USER/PASSWORD auth, server only)")
+	flag.IntVar(&cfg.socksProxyPort, "socks-proxy-port", 0, "SOCKS5 proxy port (server only)")
+	flag.StringVar(&cfg.socksProxyUser, "socks-proxy-user", "", "SOCKS5 proxy username (RFC 1929, server only)")
+	flag.StringVar(&cfg.socksProxyPass, "socks-proxy-pass", "", "SOCKS5 proxy password (RFC 1929, server only)")
+	flag.IntVar(&cfg.videoWidth, "video-w", 0, "Video logical width (videochannel only)")
+	flag.IntVar(&cfg.videoHeight, "video-h", 0, "Video logical height (videochannel only)")
+	flag.IntVar(&cfg.videoFPS, "video-fps", 0, "Video frames per second (videochannel only)")
+	flag.StringVar(&cfg.videoBitrate, "video-bitrate", "", "Video bitrate (videochannel only)")
+	flag.StringVar(&cfg.videoHW, "video-hw", "", "Hardware acceleration (none, nvenc)")
+	flag.IntVar(&cfg.videoQRSize, "video-qr-size", 0, "Video QR code fragment size (videochannel only)")
+	flag.StringVar(&cfg.videoQRRecovery, "video-qr-recovery", "low",
+		"QR error correction: low (7%), medium (15%), high (25%), highest (30%)")
+	flag.StringVar(&cfg.videoCodec, "video-codec", "qrcode", "Visual codec: qrcode or tile")
+	flag.IntVar(&cfg.videoTileModule, "video-tile-module", 0,
+		"Tile module size in pixels 1..270 (videochannel tile only, default 4)")
+	flag.IntVar(&cfg.videoTileRS, "video-tile-rs", 0,
+		"Tile Reed-Solomon parity percent 0..200 (videochannel tile only, default 20)")
+	flag.IntVar(&cfg.vp8FPS, "vp8-fps", 0, "VP8 frames per second (vp8channel only, default 25)")
+	flag.IntVar(&cfg.vp8BatchSize, "vp8-batch", 0, "VP8 frames per tick (vp8channel only, default 1)")
 	flag.Parse()
 
 	return cfg
@@ -116,30 +144,6 @@ func parseFlags() config {
 func configureLogging(debug bool) {
 	if debug {
 		logger.SetVerbose(true)
-	}
-}
-
-func validateConfig(cfg config) error {
-	available := provider.Available()
-	validProvider := false
-	for _, p := range available {
-		if cfg.provider == p {
-			validProvider = true
-			break
-		}
-	}
-
-	switch {
-	case cfg.provider == "":
-		return errProviderRequired
-	case !validProvider:
-		return fmt.Errorf("%w: %s (available: %v)", errUnsupportedProvider, cfg.provider, available)
-	case cfg.roomID == "" && cfg.provider != "jazz":
-		return errRoomIDRequired
-	case cfg.mode != "srv" && cfg.mode != "cnc":
-		return errModeRequired
-	default:
-		return nil
 	}
 }
 
@@ -166,56 +170,53 @@ func loadNames(dataDir string) error {
 	return nil
 }
 
-func runMode(ctx context.Context, cfg config, errCh chan<- error) {
-	roomURL := buildRoomURL(cfg.provider, cfg.roomID)
-
-	switch cfg.mode {
-	case "srv":
-		errCh <- server.Run(
-			ctx,
-			cfg.provider,
-			roomURL,
-			cfg.keyHex,
-			cfg.dnsServer,
-			cfg.socksProxyAddr,
-			cfg.socksProxyPort,
-			cfg.socksProxyUser,
-			cfg.socksProxyPass,
-		)
-	case "cnc":
-		errCh <- client.Run(
-			ctx,
-			cfg.provider,
-			roomURL,
-			cfg.keyHex,
-			fmt.Sprintf("%s:%d", cfg.socksHost, cfg.socksPort),
-			cfg.dnsServer,
-			"",
-			"",
-		)
+func toSessionConfig(cfg config) session.Config {
+	return session.Config{
+		Mode:            cfg.mode,
+		Link:            cfg.link,
+		Transport:       cfg.transport,
+		Carrier:         firstNonEmpty(cfg.carrier, cfg.provider),
+		RoomID:          cfg.roomID,
+		KeyHex:          cfg.keyHex,
+		SOCKSHost:       cfg.socksHost,
+		SOCKSPort:       cfg.socksPort,
+		DNSServer:       cfg.dnsServer,
+		SOCKSProxyAddr:  cfg.socksProxyAddr,
+		SOCKSProxyPort:  cfg.socksProxyPort,
+		SOCKSProxyUser:  cfg.socksProxyUser,
+		SOCKSProxyPass:  cfg.socksProxyPass,
+		VideoWidth:      cfg.videoWidth,
+		VideoHeight:     cfg.videoHeight,
+		VideoFPS:        cfg.videoFPS,
+		VideoBitrate:    cfg.videoBitrate,
+		VideoHW:         cfg.videoHW,
+		VideoQRSize:     cfg.videoQRSize,
+		VideoQRRecovery: cfg.videoQRRecovery,
+		VideoCodec:      cfg.videoCodec,
+		VideoTileModule: cfg.videoTileModule,
+		VideoTileRS:     cfg.videoTileRS,
+		VP8FPS:          cfg.vp8FPS,
+		VP8BatchSize:    cfg.vp8BatchSize,
 	}
 }
 
-func buildRoomURL(providerName, roomID string) string {
-	switch providerName {
-	case "telemost":
-		return "https://telemost.yandex.ru/j/" + roomID
-	case "jazz":
-		if roomID == "" {
-			return "any"
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
 		}
-		return roomID
-	case "wb_stream":
-		return roomID
-	default:
-		return roomID
 	}
+	return ""
 }
 
 func waitForShutdown(errCh <-chan error) error {
 	done := make(chan error, 1)
 	go func() {
-		done <- <-errCh
+		if err := <-errCh; err != nil {
+			done <- err
+		} else {
+			done <- nil
+		}
 	}()
 
 	select {

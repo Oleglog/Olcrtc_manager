@@ -24,8 +24,6 @@ var (
 	ErrSendQueueFull = errors.New("send queue full")
 	// ErrLiveKitNotConnected is returned when the LiveKit room is not connected.
 	ErrLiveKitNotConnected = errors.New("livekit room not connected")
-	// ErrVideoNotSupported is returned when video tracks are not supported by this provider.
-	ErrVideoNotSupported = errors.New("video tracks not supported yet in wbstream")
 )
 
 // Peer represents a WB Stream WebRTC connection using LiveKit.
@@ -41,6 +39,9 @@ type Peer struct {
 	closed          atomic.Bool
 	done            chan struct{}
 	cancel          context.CancelFunc
+	videoTrackMu    sync.RWMutex
+	videoTracks     []webrtc.TrackLocal
+	onVideoTrack    func(*webrtc.TrackRemote, *webrtc.RTPReceiver)
 	wg              sync.WaitGroup
 }
 
@@ -71,6 +72,18 @@ func (p *Peer) Connect(ctx context.Context) error {
 					p.onData(data)
 				}
 			},
+			OnTrackSubscribed: func(track *webrtc.TrackRemote, _ *lksdk.RemoteTrackPublication, _ *lksdk.RemoteParticipant) {
+				if track.Kind() != webrtc.RTPCodecTypeVideo {
+					return
+				}
+
+				p.videoTrackMu.RLock()
+				cb := p.onVideoTrack
+				p.videoTrackMu.RUnlock()
+				if cb != nil {
+					cb(track, nil)
+				}
+			},
 		},
 		OnDisconnected: func() {
 			if p.onEnded != nil {
@@ -85,8 +98,26 @@ func (p *Peer) Connect(ctx context.Context) error {
 	}
 
 	p.room = room
+	if err := p.publishPendingTracks(); err != nil {
+		return err
+	}
 	p.wg.Add(1)
 	go p.processSendQueue()
+
+	return nil
+}
+
+func (p *Peer) publishPendingTracks() error {
+	p.videoTrackMu.RLock()
+	defer p.videoTrackMu.RUnlock()
+
+	for _, track := range p.videoTracks {
+		if _, err := p.room.LocalParticipant.PublishTrack(track, &lksdk.TrackPublicationOptions{
+			Name: "videochannel",
+		}); err != nil {
+			return fmt.Errorf("failed to publish track: %w", err)
+		}
+	}
 
 	return nil
 }
@@ -201,17 +232,27 @@ func (p *Peer) GetBufferedAmount() uint64 {
 }
 
 // AddVideoTrack adds a video track to the LiveKit room.
-func (p *Peer) AddVideoTrack(track *webrtc.TrackLocalStaticRTP) (*webrtc.RTPSender, error) {
+func (p *Peer) AddVideoTrack(track webrtc.TrackLocal) error {
+	p.videoTrackMu.Lock()
+	p.videoTracks = append(p.videoTracks, track)
+	p.videoTrackMu.Unlock()
+
 	if p.room == nil || p.room.LocalParticipant == nil {
-		return nil, ErrLiveKitNotConnected
+		return nil
 	}
 
-	_, err := p.room.LocalParticipant.PublishTrack(track, &lksdk.TrackPublicationOptions{
-		Name: "video",
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to publish track: %w", err)
+	if _, err := p.room.LocalParticipant.PublishTrack(track, &lksdk.TrackPublicationOptions{
+		Name: "videochannel",
+	}); err != nil {
+		return fmt.Errorf("failed to publish track: %w", err)
 	}
 
-	return nil, ErrVideoNotSupported
+	return nil
+}
+
+// SetVideoTrackHandler registers a callback for remote video tracks.
+func (p *Peer) SetVideoTrackHandler(cb func(*webrtc.TrackRemote, *webrtc.RTPReceiver)) {
+	p.videoTrackMu.Lock()
+	defer p.videoTrackMu.Unlock()
+	p.onVideoTrack = cb
 }

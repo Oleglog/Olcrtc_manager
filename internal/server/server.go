@@ -3,55 +3,44 @@ package server
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"io"
 	"net"
 	"strconv"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/openlibrecommunity/olcrtc/internal/crypto"
+	"github.com/openlibrecommunity/olcrtc/internal/link"
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
-	"github.com/openlibrecommunity/olcrtc/internal/mux"
+	"github.com/openlibrecommunity/olcrtc/internal/muxconn"
 	"github.com/openlibrecommunity/olcrtc/internal/names"
 	"github.com/openlibrecommunity/olcrtc/internal/protect"
-	"github.com/openlibrecommunity/olcrtc/internal/provider"
-	"github.com/pion/webrtc/v4"
+	"github.com/xtaci/smux"
 )
 
 var (
+	// ErrKeyRequired is returned when no encryption key is provided.
+	ErrKeyRequired = errors.New("key required (use -key <hex>)")
 	// ErrKeySize is returned when the encryption key is not 32 bytes.
 	ErrKeySize = errors.New("key must be 32 bytes")
-	// ErrKeyStringLength is returned when the encryption key string length is not 32.
-	ErrKeyStringLength = errors.New("key string length must be 32")
 	// ErrSocks5AuthFailed is returned when SOCKS5 authentication fails.
 	ErrSocks5AuthFailed = errors.New("SOCKS5 auth failed")
 	// ErrSocks5ConnectFailed is returned when SOCKS5 connection fails.
 	ErrSocks5ConnectFailed = errors.New("SOCKS5 connect failed")
-	// ErrNoPeers is returned when no peers are available.
-	ErrNoPeers = errors.New("no peers available")
-	// ErrDialProxy is returned when dialing the proxy fails.
-	ErrDialProxy = errors.New("failed to dial proxy")
-	// ErrEncryptFailed is returned when encryption fails.
-	ErrEncryptFailed = errors.New("encrypt failed")
 )
 
-// Server handles incoming WebRTC connections and proxies their traffic.
+// Server handles incoming tunnel connections and proxies their traffic.
 type Server struct {
-	peers          []provider.Provider
+	ln             link.Link
 	cipher         *crypto.Cipher
-	mux            *mux.Multiplexer
-	connections    map[uint16]net.Conn
-	connMu         sync.RWMutex
-	streamPumps    map[uint16]net.Conn
-	pumpMu         sync.Mutex
-	peerIdx        atomic.Uint32
-	activeClients  atomic.Int32
+	conn           *muxconn.Conn
+	session        *smux.Session
+	sessMu         sync.RWMutex
+	reinstallMu    sync.Mutex
 	wg             sync.WaitGroup
 	dnsServer      string
 	resolver       *net.Resolver
@@ -71,13 +60,27 @@ type ConnectRequest struct {
 // Run starts the server with the specified parameters.
 func Run(
 	ctx context.Context,
-	providerName,
+	linkName,
+	transportName,
+	carrierName,
 	roomURL,
 	keyHex string,
 	dnsServer,
 	socksProxyAddr string,
 	socksProxyPort int,
 	socksProxyUser, socksProxyPass string,
+	videoWidth int,
+	videoHeight int,
+	videoFPS int,
+	videoBitrate string,
+	videoHW string,
+	videoQRSize int,
+	videoQRRecovery string,
+	videoCodec string,
+	videoTileModule int,
+	videoTileRS int,
+	vp8FPS int,
+	vp8BatchSize int,
 ) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -102,63 +105,45 @@ func Run(
 
 	s := &Server{
 		cipher:         cipher,
-		connections:    make(map[uint16]net.Conn),
-		streamPumps:    make(map[uint16]net.Conn),
-		peers:          make([]provider.Provider, 0),
 		dnsServer:      dnsServer,
 		socksProxyAddr: socksProxyAddr,
 		socksProxyPort: socksProxyPort,
 		socksProxyUser: socksProxyUser,
 		socksProxyPass: socksProxyPass,
 	}
-
-	if s.dnsServer == "" {
-		s.dnsServer = "1.1.1.1:53"
-	}
-
 	s.setupResolver()
-	s.setupMux()
 
-	const peerCount = 1
-	for i := range peerCount {
-		if err := s.addPeer(runCtx, providerName, roomURL, i, cancel); err != nil {
-			return fmt.Errorf("addPeer failed: %w", err)
-		}
+	if err := s.bringUpLink(
+		runCtx, linkName, transportName, carrierName, roomURL, cancel,
+		videoWidth, videoHeight, videoFPS, videoBitrate, videoHW,
+		videoQRSize, videoQRRecovery, videoCodec, videoTileModule, videoTileRS,
+		vp8FPS, vp8BatchSize,
+	); err != nil {
+		return err
 	}
 
-	err = s.runLoop(runCtx)
+	s.serve(runCtx)
 
+	s.shutdown()
 	s.wg.Wait()
 
-	return err
+	return nil
 }
 
 func setupCipher(keyHex string) (*crypto.Cipher, error) {
-	var key []byte
-	var err error
-
 	if keyHex == "" {
-		key = make([]byte, 32)
-		if _, err := rand.Read(key); err != nil {
-			return nil, fmt.Errorf("failed to generate key: %w", err)
-		}
-		log.Printf("Generated key: %x", key)
-	} else {
-		key, err = hex.DecodeString(keyHex)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decode key: %w", err)
-		}
-		if len(key) != 32 {
-			return nil, fmt.Errorf("%w, got %d", ErrKeySize, len(key))
-		}
+		return nil, ErrKeyRequired
 	}
 
-	keyStr := string(key)
-	if len(keyStr) != 32 {
-		return nil, fmt.Errorf("%w, got %d", ErrKeyStringLength, len(keyStr))
+	key, err := hex.DecodeString(keyHex)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode key: %w", err)
+	}
+	if len(key) != 32 {
+		return nil, fmt.Errorf("%w, got %d", ErrKeySize, len(key))
 	}
 
-	cipher, err := crypto.NewCipher(keyStr)
+	cipher, err := crypto.NewCipher(string(key))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create cipher: %w", err)
 	}
@@ -175,268 +160,258 @@ func (s *Server) setupResolver() {
 	}
 }
 
-func (s *Server) setupMux() {
-	s.mux = mux.New(0, func(frame []byte) error {
-		for {
-			canSend := true
-			for _, peer := range s.peers {
-				if !peer.CanSend() {
-					canSend = false
-					break
-				}
-			}
-			if canSend {
-				break
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
-
-		encrypted, err := s.cipher.Encrypt(frame)
-		if err != nil {
-			return fmt.Errorf("%w: %w", ErrEncryptFailed, err)
-		}
-		if len(s.peers) == 0 {
-			return ErrNoPeers
-		}
-		idx := s.peerIdx.Add(1) % uint32(len(s.peers)) //nolint:gosec
-		return s.peers[idx].Send(encrypted)
-	})
+// smuxConfig mirrors the client side. Both peers must agree on Version and
+// MaxFrameSize.
+func smuxConfig() *smux.Config {
+	cfg := smux.DefaultConfig()
+	cfg.Version = 2
+	cfg.MaxFrameSize = 32768
+	cfg.MaxReceiveBuffer = 16 * 1024 * 1024
+	cfg.MaxStreamBuffer = 1024 * 1024
+	cfg.KeepAliveInterval = 10 * time.Second
+	cfg.KeepAliveTimeout = 60 * time.Second
+	return cfg
 }
 
-func (s *Server) addPeer(
+func (s *Server) bringUpLink(
 	ctx context.Context,
-	providerName,
-	roomURL string,
-	peerID int,
+	linkName, transportName, carrierName, roomURL string,
 	cancel context.CancelFunc,
+	videoWidth, videoHeight, videoFPS int,
+	videoBitrate, videoHW string,
+	videoQRSize int,
+	videoQRRecovery string,
+	videoCodec string,
+	videoTileModule, videoTileRS int,
+	vp8FPS, vp8BatchSize int,
 ) error {
-	peer, err := provider.New(ctx, providerName, provider.Config{
-		RoomURL:   roomURL,
-		Name:      names.Generate(),
-		OnData:    s.onData,
-		DNSServer: s.dnsServer,
-		ProxyAddr: s.socksProxyAddr,
-		ProxyPort: s.socksProxyPort,
+	ln, err := link.New(ctx, linkName, link.Config{
+		Transport:       transportName,
+		Carrier:         carrierName,
+		RoomURL:         roomURL,
+		Name:            names.Generate(),
+		OnData:          s.onData,
+		DNSServer:       s.dnsServer,
+		ProxyAddr:       s.socksProxyAddr,
+		ProxyPort:       s.socksProxyPort,
+		VideoWidth:      videoWidth,
+		VideoHeight:     videoHeight,
+		VideoFPS:        videoFPS,
+		VideoBitrate:    videoBitrate,
+		VideoHW:         videoHW,
+		VideoQRSize:     videoQRSize,
+		VideoQRRecovery: videoQRRecovery,
+		VideoCodec:      videoCodec,
+		VideoTileModule: videoTileModule,
+		VideoTileRS:     videoTileRS,
+		VP8FPS:          vp8FPS,
+		VP8BatchSize:    vp8BatchSize,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create peer: %w", err)
+		return fmt.Errorf("failed to create link: %w", err)
 	}
+	s.ln = ln
 
-	peer.SetEndedCallback(func(reason string) {
-		logger.Infof("Server peer %d reported conference end: %s", peerID, reason)
+	ln.SetEndedCallback(func(reason string) {
+		logger.Infof("Server link reported conference end: %s", reason)
 		cancel()
 	})
-	s.peers = append(s.peers, peer)
+	ln.SetReconnectCallback(func() { s.handleReconnect() })
 
-	peer.SetReconnectCallback(func(dc *webrtc.DataChannel) {
-		s.handlePeerReconnect(peerID, dc)
-	})
-
-	logger.Infof("Connecting peer %d to %s...", peerID, providerName)
-	if err := peer.Connect(ctx); err != nil {
-		return fmt.Errorf("failed to connect peer: %w", err)
+	logger.Infof("Connecting link via %s/%s/%s...", linkName, transportName, carrierName)
+	if err := ln.Connect(ctx); err != nil {
+		return fmt.Errorf("failed to connect link: %w", err)
 	}
-	logger.Infof("Peer %d connected", peerID)
+	logger.Infof("Link connected")
+
+	s.installSession()
 
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		peer.WatchConnection(ctx)
+		ln.WatchConnection(ctx)
 	}()
 	return nil
 }
 
-func (s *Server) handlePeerReconnect(peerID int, dc *webrtc.DataChannel) {
-	logger.Infof("peer %d reconnect event: dc=%v", peerID, dc != nil)
-
-	s.connMu.Lock()
-	for sid, conn := range s.connections {
-		if conn != nil {
-			_ = conn.Close()
-		}
-		delete(s.connections, sid)
+func (s *Server) installSession() {
+	conn := muxconn.New(s.ln, s.cipher)
+	sess, err := smux.Server(conn, smuxConfig())
+	if err != nil {
+		logger.Warnf("smux server init failed: %v", err)
+		return
 	}
-	s.connMu.Unlock()
+	s.sessMu.Lock()
+	s.conn = conn
+	s.session = sess
+	s.sessMu.Unlock()
+}
 
-	if dc != nil {
-		s.mux.UpdateSendFunc(func(frame []byte) error {
-			encrypted, err := s.cipher.Encrypt(frame)
-			if err != nil {
-				return fmt.Errorf("%w: %w", ErrEncryptFailed, err)
-			}
-			if len(s.peers) == 0 {
-				return ErrNoPeers
-			}
-			idx := s.peerIdx.Add(1) % uint32(len(s.peers)) //nolint:gosec
-			return s.peers[idx].Send(encrypted)
-		})
-		s.mux.Reset()
+func (s *Server) handleReconnect() {
+	logger.Infof("server link reconnect - tearing down smux session")
+	s.sessMu.RLock()
+	current := s.session
+	s.sessMu.RUnlock()
+	s.reinstallSession(current)
+}
+
+func (s *Server) reinstallSession(dead *smux.Session) {
+	s.reinstallMu.Lock()
+	defer s.reinstallMu.Unlock()
+
+	s.sessMu.Lock()
+	if s.session != dead {
+		s.sessMu.Unlock()
+		return
 	}
+	if s.session != nil {
+		_ = s.session.Close()
+		s.session = nil
+	}
+	if s.conn != nil {
+		_ = s.conn.Close()
+		s.conn = nil
+	}
+	s.sessMu.Unlock()
+	s.installSession()
 }
 
 func (s *Server) onData(data []byte) {
-	plaintext, err := s.cipher.Decrypt(data)
-	if err != nil {
-		logger.Debugf("Decrypt error: %v", err)
-		return
-	}
-
-	if control, ok := mux.ParseControlFrame(plaintext); ok && control.Type == mux.ControlResetClient {
-		logger.Infof("Received reset signal from client (clientID=%d)", control.ClientID)
-		s.closeClientConnections(control.ClientID)
-	}
-
-	s.mux.HandleFrame(plaintext)
-}
-
-func (s *Server) closeClientConnections(clientID uint32) {
-	s.connMu.Lock()
-	defer s.connMu.Unlock()
-
-	for streamSid, conn := range s.connections {
-		stream := s.mux.GetStream(streamSid)
-		if stream != nil && stream.ClientID == clientID {
-			if conn != nil {
-				_ = conn.Close()
-			}
-			delete(s.connections, streamSid)
-		}
+	s.sessMu.RLock()
+	conn := s.conn
+	s.sessMu.RUnlock()
+	if conn != nil {
+		conn.Push(data)
 	}
 }
 
-func (s *Server) runLoop(ctx context.Context) error {
-	ticker := time.NewTicker(10 * time.Millisecond)
-	defer ticker.Stop()
-
+// serve drives the smux Accept loop, spawning a tunnel per inbound stream.
+// The loop tolerates session bounces (reconnects) by waiting until a fresh
+// session is installed instead of terminating the server.
+func (s *Server) serve(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			s.shutdown()
-			return nil
-		case <-ticker.C:
-			s.processMuxStreams(ctx)
+			return
+		default:
 		}
+
+		s.sessMu.RLock()
+		sess := s.session
+		s.sessMu.RUnlock()
+		if sess == nil {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(50 * time.Millisecond):
+				continue
+			}
+		}
+
+		stream, err := sess.AcceptStream()
+		if err != nil {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			logger.Infof("AcceptStream returned %v - reinstalling session", err)
+			s.reinstallSession(sess)
+			continue
+		}
+
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			s.handleStream(ctx, stream)
+		}()
 	}
 }
 
 func (s *Server) shutdown() {
-	s.connMu.Lock()
-	for _, conn := range s.connections {
-		if conn != nil {
-			_ = conn.Close()
+	s.sessMu.Lock()
+	if s.session != nil {
+		_ = s.session.Close()
+	}
+	if s.conn != nil {
+		_ = s.conn.Close()
+	}
+	s.sessMu.Unlock()
+	if s.ln != nil {
+		_ = s.ln.Close()
+	}
+}
+
+func (s *Server) handleStream(_ context.Context, stream *smux.Stream) {
+	defer func() { _ = stream.Close() }()
+
+	// Read the connect JSON. The client writes the whole JSON in one
+	// stream.Write so it usually arrives intact; tolerate fragmentation
+	// by reading incrementally up to a sane cap.
+	const maxConnReq = 4096
+	header := make([]byte, 0, 256)
+	tmp := make([]byte, 256)
+	_ = stream.SetReadDeadline(time.Now().Add(15 * time.Second))
+	for {
+		n, err := stream.Read(tmp)
+		if n > 0 {
+			header = append(header, tmp[:n]...)
+			if req, ok := parseConnectRequest(header); ok {
+				_ = stream.SetReadDeadline(time.Time{})
+				s.dispatch(stream, req)
+				return
+			}
+		}
+		if err != nil {
+			return
+		}
+		if len(header) > maxConnReq {
+			return
 		}
 	}
-	s.connMu.Unlock()
+}
 
-	for i, peer := range s.peers {
-		logger.Infof("closing peer %d", i)
-		_ = peer.Close()
+func parseConnectRequest(buf []byte) (ConnectRequest, bool) {
+	var req ConnectRequest
+	if err := json.Unmarshal(buf, &req); err != nil {
+		return req, false
 	}
-}
-
-func (s *Server) processMuxStreams(ctx context.Context) {
-	sids := s.mux.GetStreams()
-	for _, sid := range sids {
-		if s.mux.StreamClosed(sid) {
-			s.closeStreamConnection(sid)
-			continue
-		}
-
-		if s.hasConnection(sid) {
-			continue
-		}
-
-		data := s.mux.ReadStream(sid)
-		if len(data) == 0 {
-			continue
-		}
-
-		var req ConnectRequest
-		if err := json.Unmarshal(data, &req); err == nil && req.Cmd == "connect" {
-			logger.Infof("sid=%d connect %s:%d", sid, req.Addr, req.Port)
-			s.closeStreamConnection(sid)
-			go s.handleConnect(ctx, sid, req)
-		}
+	if req.Cmd != "connect" {
+		return req, false
 	}
+	return req, true
 }
 
-func (s *Server) hasConnection(sid uint16) bool {
-	s.connMu.RLock()
-	defer s.connMu.RUnlock()
-	return s.connections[sid] != nil
-}
-
-func (s *Server) closeStreamConnection(sid uint16) {
-	s.connMu.Lock()
-	conn := s.connections[sid]
-	if conn != nil {
-		_ = conn.Close()
-		delete(s.connections, sid)
-	}
-	s.connMu.Unlock()
-}
-
-func (s *Server) closeStreamConnectionIfCurrent(sid uint16, expected net.Conn) {
-	s.connMu.Lock()
-	conn := s.connections[sid]
-	if conn == expected {
-		_ = conn.Close()
-		delete(s.connections, sid)
-	}
-	s.connMu.Unlock()
-}
-
-func (s *Server) markStreamPump(sid uint16, conn net.Conn) bool {
-	s.pumpMu.Lock()
-	defer s.pumpMu.Unlock()
-	if current := s.streamPumps[sid]; current == conn {
-		return false
-	} else if current != nil {
-		_ = current.Close()
-	}
-	s.streamPumps[sid] = conn
-	return true
-}
-
-func (s *Server) unmarkStreamPump(sid uint16, conn net.Conn) {
-	s.pumpMu.Lock()
-	if s.streamPumps[sid] == conn {
-		delete(s.streamPumps, sid)
-	}
-	s.pumpMu.Unlock()
-}
-
-func (s *Server) handleConnect(ctx context.Context, sid uint16, req ConnectRequest) {
+func (s *Server) dispatch(stream *smux.Stream, req ConnectRequest) {
 	addr := net.JoinHostPort(req.Addr, strconv.Itoa(req.Port))
-
-	s.closeStreamConnection(sid)
+	logger.Infof("sid=%d connect %s", stream.ID(), addr)
 
 	dialStart := time.Now()
 	conn, err := s.dial(req)
 	dialElapsed := time.Since(dialStart)
 
 	if err != nil {
-		logger.Infof("sid=%d dial %s failed (%v): %v", sid, addr, dialElapsed, err)
-		_ = s.mux.CloseStream(sid)
+		logger.Infof("sid=%d dial %s failed (%v): %v", stream.ID(), addr, dialElapsed, err)
+		return
+	}
+	defer func() { _ = conn.Close() }()
+
+	logger.Infof("sid=%d connected %s in %v", stream.ID(), addr, dialElapsed)
+
+	if _, err := stream.Write([]byte{0x00}); err != nil {
 		return
 	}
 
-	s.connMu.Lock()
-	s.connections[sid] = conn
-	s.connMu.Unlock()
-
-	logger.Infof("sid=%d connected %s in %v", sid, addr, dialElapsed)
-
-	s.activeClients.Add(1)
-	_ = s.mux.SendData(sid, []byte{0x00})
-	s.startStreamPump(ctx, sid, conn)
-
-	go s.pumpToMux(sid, conn)
+	go func() {
+		_, _ = io.Copy(stream, conn)
+		_ = stream.Close()
+	}()
+	_, _ = io.Copy(conn, stream)
 }
 
 // dial opens a TCP connection to req.Addr:req.Port for client tunnel
 // traffic. It always dials directly from the VPS (never via the
-// configured SOCKS5 proxy). The proxy exists to make provider HTTP/WS
+// configured SOCKS5 proxy). The proxy exists to make carrier HTTP/WS
 // signalling appear to come from a residential / RU IP; routing client
 // traffic through it would force every endpoint (Telegram, etc.) to see
 // the proxy's geolocation, breaking services that are geo-restricted
@@ -456,84 +431,41 @@ func (s *Server) dial(req ConnectRequest) (net.Conn, error) {
 	return conn, nil
 }
 
-func (s *Server) pumpToMux(sid uint16, conn net.Conn) {
-	defer func() {
-		s.activeClients.Add(-1)
-		_ = s.mux.CloseStream(sid)
-		s.connMu.Lock()
-		delete(s.connections, sid)
-		s.connMu.Unlock()
-	}()
-
-	buf := make([]byte, 16384)
-	totalSent := uint64(0)
-	lastLog := time.Now()
-
-	for {
-		n, err := conn.Read(buf)
-		if err != nil {
-			if totalSent > 1024*1024 {
-				logger.Infof("sid=%d done total=%dMB", sid, totalSent/(1024*1024))
-			}
-			return
-		}
-
-		for !s.canSendData() {
-			time.Sleep(20 * time.Millisecond)
-		}
-
-		if err := s.mux.SendData(sid, buf[:n]); err != nil {
-			return
-		}
-
-		totalSent += uint64(n) //nolint:gosec
-		if time.Since(lastLog) > 5*time.Second {
-			logger.Infof("sid=%d sent=%dMB", sid, totalSent/(1024*1024))
-			lastLog = time.Now()
-		}
-	}
-}
-
-func (s *Server) startStreamPump(ctx context.Context, sid uint16, conn net.Conn) {
-	if !s.markStreamPump(sid, conn) {
-		return
+func (s *Server) socks5Connect(conn net.Conn, targetAddr string, targetPort int) error {
+	if _, err := conn.Write([]byte{5, 1, 0}); err != nil {
+		return fmt.Errorf("failed to write socks5 auth: %w", err)
 	}
 
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		defer s.unmarkStreamPump(sid, conn)
-
-		ticker := time.NewTicker(10 * time.Millisecond)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				data := s.mux.ReadStream(sid)
-				if len(data) > 0 {
-					if _, err := conn.Write(data); err != nil {
-						_ = s.mux.CloseStream(sid)
-						s.closeStreamConnectionIfCurrent(sid, conn)
-						return
-					}
-				}
-				if s.mux.StreamClosed(sid) {
-					s.closeStreamConnectionIfCurrent(sid, conn)
-					return
-				}
-			}
-		}
-	}()
-}
-
-func (s *Server) canSendData() bool {
-	for _, peer := range s.peers {
-		if !peer.CanSend() {
-			return false
-		}
+	resp := make([]byte, 2)
+	if _, err := io.ReadFull(conn, resp); err != nil {
+		return fmt.Errorf("failed to read socks5 auth resp: %w", err)
 	}
-	return true
+	if resp[0] != 5 || resp[1] != 0 {
+		return ErrSocks5AuthFailed
+	}
+
+	addrLen := len(targetAddr)
+	if addrLen > 255 {
+		addrLen = 255
+		targetAddr = targetAddr[:255]
+	}
+
+	req := make([]byte, 0, 7+addrLen)
+	req = append(req, 5, 1, 0, 3, byte(addrLen))
+	req = append(req, []byte(targetAddr)...)
+	req = append(req, byte(targetPort>>8), byte(targetPort)) //nolint:gosec
+
+	if _, err := conn.Write(req); err != nil {
+		return fmt.Errorf("failed to write socks5 connect req: %w", err)
+	}
+
+	resp = make([]byte, 10)
+	if _, err := io.ReadFull(conn, resp); err != nil {
+		return fmt.Errorf("failed to read socks5 connect resp: %w", err)
+	}
+	if resp[0] != 5 || resp[1] != 0 {
+		return fmt.Errorf("%w: %d", ErrSocks5ConnectFailed, resp[1])
+	}
+
+	return nil
 }

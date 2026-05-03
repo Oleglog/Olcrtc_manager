@@ -74,7 +74,11 @@ func (t *telemostProvider) GetBufferedAmount() uint64 {
 }
 
 // AddVideoTrack adds a video track to the telemost connection.
-func (t *telemostProvider) AddVideoTrack(track *webrtc.TrackLocalStaticRTP) (*webrtc.RTPSender, error) {
+func (t *telemostProvider) AddVideoTrack(track webrtc.TrackLocal) error {
 	return t.peer.AddVideoTrack(track)
 }
 
+// SetVideoTrackHandler registers a callback for subscribed remote video tracks.
+func (t *telemostProvider) SetVideoTrackHandler(cb func(*webrtc.TrackRemote, *webrtc.RTPReceiver)) {
+	t.peer.SetVideoTrackHandler(cb)
+}

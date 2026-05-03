@@ -74,7 +74,11 @@ func (w *wbStreamProvider) GetBufferedAmount() uint64 {
 }
 
 // AddVideoTrack adds a video track to the wbstream connection.
-func (w *wbStreamProvider) AddVideoTrack(track *webrtc.TrackLocalStaticRTP) (*webrtc.RTPSender, error) {
+func (w *wbStreamProvider) AddVideoTrack(track webrtc.TrackLocal) error {
 	return w.peer.AddVideoTrack(track)
 }
 
+// SetVideoTrackHandler registers a callback for subscribed remote video tracks.
+func (w *wbStreamProvider) SetVideoTrackHandler(cb func(*webrtc.TrackRemote, *webrtc.RTPReceiver)) {
+	w.peer.SetVideoTrackHandler(cb)
+}
