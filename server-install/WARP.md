@@ -87,8 +87,11 @@ chmod 600 /etc/olcrtc/warp-wg.conf
 **Вариант B — новые ключи через wgcf:**
 
 ```bash
-curl -fsSL https://github.com/ViRb3/wgcf/releases/latest/download/wgcf_linux_amd64 -o /usr/local/bin/wgcf
+# Узнать последнюю версию и скачать
+WGCF_VER=$(curl -fsSL https://api.github.com/repos/ViRb3/wgcf/releases/latest | grep -o '"tag_name":"[^"]*"' | cut -d'"' -f4)
+curl -fsSL "https://github.com/ViRb3/wgcf/releases/download/${WGCF_VER}/wgcf_${WGCF_VER#v}_linux_amd64" -o /usr/local/bin/wgcf
 chmod +x /usr/local/bin/wgcf
+
 cd /tmp && wgcf register --accept-tos && wgcf generate
 cp wgcf-profile.conf /etc/olcrtc/warp-wg.conf
 chmod 600 /etc/olcrtc/warp-wg.conf

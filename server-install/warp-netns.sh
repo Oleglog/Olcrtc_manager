@@ -275,9 +275,18 @@ do_install() {
     2)
         echo "[*] Устанавливаю wgcf..."
         local arch; arch="$(uname -m)"
-        local wgcf_bin="wgcf_linux_amd64"
-        [ "$arch" = "aarch64" ] || [ "$arch" = "arm64" ] && wgcf_bin="wgcf_linux_arm64"
-        curl -fsSL "https://github.com/ViRb3/wgcf/releases/latest/download/$wgcf_bin" -o /tmp/wgcf
+        local wgcf_arch="amd64"
+        { [ "$arch" = "aarch64" ] || [ "$arch" = "arm64" ]; } && wgcf_arch="arm64"
+        # Получаем последнюю версию через GitHub API
+        local wgcf_ver
+        wgcf_ver="$(curl -fsSL https://api.github.com/repos/ViRb3/wgcf/releases/latest | grep -o '"tag_name":"[^"]*"' | cut -d'"' -f4)"
+        wgcf_ver="${wgcf_ver#v}"  # убираем "v" из "v2.2.30"
+        if [ -z "$wgcf_ver" ]; then
+            die "Не удалось определить версию wgcf. Проверьте доступ к api.github.com"
+        fi
+        local wgcf_url="https://github.com/ViRb3/wgcf/releases/download/v${wgcf_ver}/wgcf_${wgcf_ver}_linux_${wgcf_arch}"
+        echo "    Версия: $wgcf_ver  Архитектура: $wgcf_arch"
+        curl -fsSL "$wgcf_url" -o /tmp/wgcf || die "Не удалось скачать wgcf: $wgcf_url"
         chmod +x /tmp/wgcf
         echo "[*] Регистрирую WARP-аккаунт..."
         (cd /tmp && ./wgcf register --accept-tos && ./wgcf generate) || die "wgcf не удался"
