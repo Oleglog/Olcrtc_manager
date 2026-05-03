@@ -108,6 +108,20 @@ do_up() {
 
     local ephost="${EP%:*}"
 
+    # Если endpoint — домен, а не IP, резолвим
+    if ! [[ "$ephost" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        local resolved
+        resolved="$(getent ahostsv4 "$ephost" 2>/dev/null | awk '{print $1; exit}')" || true
+        if [ -z "$resolved" ]; then
+            resolved="$(dig +short "$ephost" A 2>/dev/null | head -1)" || true
+        fi
+        if [ -z "$resolved" ]; then
+            die "Не удалось разрезолвить endpoint '$ephost'. Замените домен на IP в $CONF"
+        fi
+        echo "[*] Резолв: $ephost → $resolved"
+        ephost="$resolved"
+    fi
+
     echo "[1/7] Namespace..."
     ip netns add "$NS"
 
