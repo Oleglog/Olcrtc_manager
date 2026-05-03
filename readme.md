@@ -15,7 +15,7 @@ Tunnels TCP traffic over WebRTC through whitelisted Russian conferencing
 services (Yandex Telemost, SaluteJazz, Wildberries Stream) so it cannot be
 blocked without breaking the upstream service.
 
-This fork ([Oleglog/olcrtc_FORK](https://github.com/Oleglog/olcrtc_FORK))
+This fork ([Oleglog/Olcrtc_manager](https://github.com/Oleglog/Olcrtc_manager))
 adds a one-command systemd installer, interactive management menu, SOCKS5
 proxy support for signalling, multi-instance support, and pre-built binaries
 for `linux/amd64` and `linux/arm64`.
@@ -34,13 +34,13 @@ for `linux/amd64` and `linux/arm64`.
 One command, no git required:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Oleglog/olcrtc_FORK/master/server-install/olcrtc-setup.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/master/server-install/olcrtc-setup.sh | sudo bash
 ```
 
 Or from a checkout:
 ```bash
-git clone https://github.com/Oleglog/olcrtc_FORK
-cd olcrtc_FORK
+git clone https://github.com/Oleglog/Olcrtc_manager
+cd Olcrtc_manager
 sudo bash server-install/olcrtc-setup.sh
 ```
 
@@ -85,7 +85,7 @@ Menu items include:
 ### Uninstall
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Oleglog/olcrtc_FORK/master/server-install/olcrtc-uninstall.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/master/server-install/olcrtc-uninstall.sh | sudo bash
 ```
 
 See [`server-install/README.md`](server-install/README.md) for details.

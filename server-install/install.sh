@@ -119,7 +119,7 @@ SRC_LAUNCHER="$SCRIPT_DIR/systemd/olcrtc-launcher"
 # Tarball-based installs already include bin/$BIN_NAME, so this path is a no-op
 # for them. The release tag tracks the installer version.
 RELEASE_TAG="server-v$INSTALLER_VERSION"
-RELEASE_URL_BASE="https://github.com/Oleglog/olcrtc_FORK/releases/download/$RELEASE_TAG"
+RELEASE_URL_BASE="https://github.com/Oleglog/Olcrtc_manager/releases/download/$RELEASE_TAG"
 
 if [ ! -f "$SRC_BIN" ]; then
     if ! command -v curl >/dev/null 2>&1; then

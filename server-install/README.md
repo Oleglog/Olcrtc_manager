@@ -5,7 +5,7 @@
 One-shot installer that puts an [olcrtc](https://github.com/openlibrecommunity/olcrtc)
 server CLI on a Linux VPS with a hardened `systemd` service. The binaries
 themselves are not committed to this branch — they live in
-[GitHub Releases](https://github.com/Oleglog/olcrtc_FORK/releases) and the
+[GitHub Releases](https://github.com/Oleglog/Olcrtc_manager/releases) and the
 installer fetches them on demand. You can also build them locally from source
 with `./build-from-source.sh`.
 
@@ -59,8 +59,8 @@ the matching Release):
 
 ```bash
 # On your VPS, as root:
-git clone https://github.com/Oleglog/olcrtc_FORK
-cd olcrtc_FORK
+git clone https://github.com/Oleglog/Olcrtc_manager
+cd Olcrtc_manager
 sudo ./server-install/install.sh
 ```
 
@@ -68,7 +68,7 @@ sudo ./server-install/install.sh
 
 ```bash
 curl -fsSL -o /tmp/olcrtc.tgz \
-    https://github.com/Oleglog/olcrtc_FORK/releases/latest/download/olcrtc-server-installer-0.1.3.tgz
+    https://github.com/Oleglog/Olcrtc_manager/releases/latest/download/olcrtc-server-installer-0.1.3.tgz
 rm -rf /tmp/olcrtc-server-installer-*
 tar -xzf /tmp/olcrtc.tgz -C /tmp
 sudo /tmp/olcrtc-server-installer-*/install.sh
@@ -78,7 +78,7 @@ sudo /tmp/olcrtc-server-installer-*/install.sh
 build required):
 
 ```bash
-cd olcrtc_FORK
+cd Olcrtc_manager
 ./server-install/build-from-source.sh   # produces server-install/bin/olcrtc-linux-{amd64,arm64}
 sudo ./server-install/install.sh
 ```
@@ -294,7 +294,7 @@ For `telemost`, no API call is needed — the user-supplied ID is the room.
 
 ```bash
 curl -fsSL -o /tmp/olcrtc.tgz \
-    https://github.com/Oleglog/olcrtc_FORK/releases/latest/download/olcrtc-server-installer-0.1.3.tgz
+    https://github.com/Oleglog/Olcrtc_manager/releases/latest/download/olcrtc-server-installer-0.1.3.tgz
 rm -rf /tmp/olcrtc-server-installer-*
 tar -xzf /tmp/olcrtc.tgz -C /tmp
 sudo /tmp/olcrtc-server-installer-*/install.sh

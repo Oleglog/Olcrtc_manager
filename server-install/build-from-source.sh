@@ -16,7 +16,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUT_DIR="$SCRIPT_DIR/bin"
 
 if [ ! -f "$REPO_ROOT/cmd/olcrtc/main.go" ]; then
-    echo "[!] Run this from a checkout of Oleglog/olcrtc_FORK (or openlibrecommunity/olcrtc)" >&2
+    echo "[!] Run this from a checkout of Oleglog/Olcrtc_manager (or openlibrecommunity/olcrtc)" >&2
     echo "    expected $REPO_ROOT/cmd/olcrtc/main.go to exist" >&2
     exit 1
 fi

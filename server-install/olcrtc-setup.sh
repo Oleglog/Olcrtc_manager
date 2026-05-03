@@ -1282,7 +1282,7 @@ run_menu() {
                 *) echo "  [!] Неподдерживаемая архитектура: $up_arch"; tty_read -rp "[Enter для продолжения]"; continue ;;
             esac
             up_tag="server-v$INSTALLER_VERSION"
-            up_url="https://github.com/Oleglog/olcrtc_FORK/releases/download/$up_tag/$up_bin"
+            up_url="https://github.com/Oleglog/Olcrtc_manager/releases/download/$up_tag/$up_bin"
             echo ""
             echo "  Скачиваю $up_bin из релиза $up_tag..."
             if ! curl -fsSL "$up_url" -o /usr/local/bin/olcrtc.tmp; then
@@ -1363,7 +1363,7 @@ run_install() {
     esac
 
     RELEASE_TAG="server-v$INSTALLER_VERSION"
-    RELEASE_URL_BASE="https://github.com/Oleglog/olcrtc_FORK/releases/download/$RELEASE_TAG"
+    RELEASE_URL_BASE="https://github.com/Oleglog/Olcrtc_manager/releases/download/$RELEASE_TAG"
 
     # Try bundled binary first (git checkout / tarball), then download
     SCRIPT_DIR=""
@@ -1687,7 +1687,7 @@ EOF
   --- Управление сервисом ---
   Статус:   systemctl status olcrtc-server
   Логи:     journalctl -u olcrtc-server -f
-  Меню:     curl -fsSL https://raw.githubusercontent.com/Oleglog/olcrtc_FORK/master/server-install/olcrtc-setup.sh | sudo bash
+  Меню:     curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/master/server-install/olcrtc-setup.sh | sudo bash
 ==========================================================
 EOF
 }

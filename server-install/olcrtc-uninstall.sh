@@ -4,7 +4,7 @@
 #
 # Usage:
 #   sudo bash olcrtc-uninstall.sh
-#   curl -fsSL https://raw.githubusercontent.com/Oleglog/olcrtc_FORK/master/server-install/olcrtc-uninstall.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/master/server-install/olcrtc-uninstall.sh | sudo bash
 
 set -euo pipefail
 
