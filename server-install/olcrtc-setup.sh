@@ -70,7 +70,7 @@ set_env_value() {
 get_env_value() {
     local key="$1"
     local target_file="${2:-$ENV_FILE}"
-    grep -E "^${key}=" "$target_file" 2>/dev/null | tail -1 | cut -d= -f2-
+    grep -E "^${key}=" "$target_file" 2>/dev/null | tail -1 | cut -d= -f2- || true
 }
 
 # ── Helper: ensure qrencode is available ─────────────────────────────────────
@@ -529,7 +529,8 @@ fi
 is_installed() {
     [ -f /usr/local/bin/olcrtc ] && \
     [ -f /etc/systemd/system/olcrtc-server.service ] && \
-    [ -f "$ENV_FILE" ]
+    [ -f "$ENV_FILE" ] && return 0
+    return 1
 }
 
 # ══════════════════════════════════════════════════════════════════════════════

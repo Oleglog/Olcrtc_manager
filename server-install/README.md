@@ -232,7 +232,11 @@ the first additional instance is added and removed when the last one is deleted.
 Recommended — use the uninstall script (handles all instances):
 
 ```bash
+# From a checkout:
 sudo bash olcrtc-uninstall.sh
+
+# Or one-liner (no checkout needed):
+curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/master/server-install/olcrtc-uninstall.sh | sudo bash
 ```
 
 Manual (main instance only):
@@ -383,7 +387,11 @@ sudo bash olcrtc-setup.sh   # → пункт 20) Управление инста
 Рекомендуется использовать скрипт удаления (удаляет все инстансы):
 
 ```bash
+# Из checkout:
 sudo bash olcrtc-uninstall.sh
+
+# Или одной командой:
+curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/master/server-install/olcrtc-uninstall.sh | sudo bash
 ```
 
 Ручное удаление:
