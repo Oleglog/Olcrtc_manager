@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"runtime"
 	"sync"
 	"time"
 
@@ -81,14 +82,26 @@ func (c *Conn) Read(p []byte) (int, error) {
 // Write encrypts p and ships it to the link as a single message. Blocks while
 // the link signals back-pressure.
 func (c *Conn) Write(p []byte) (int, error) {
-	for {
+	// Spin briefly first - on a healthy link CanSend usually clears within
+	// well under a millisecond, so a 10ms sleep adds visible per-frame
+	// latency to interactive request/response traffic. Fall back to a
+	// modest sleep only if the link is truly congested.
+	const (
+		fastSpinAttempts = 200
+		slowPollDelay    = 2 * time.Millisecond
+	)
+	for attempt := 0; ; attempt++ {
 		if c.isClosed() {
 			return 0, ErrClosed
 		}
 		if c.ln.CanSend() {
 			break
 		}
-		time.Sleep(10 * time.Millisecond)
+		if attempt < fastSpinAttempts {
+			runtime.Gosched()
+			continue
+		}
+		time.Sleep(slowPollDelay)
 	}
 
 	enc, err := c.cipher.Encrypt(p)

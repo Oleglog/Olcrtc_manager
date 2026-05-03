@@ -65,11 +65,14 @@ func startKCP(out chan<- []byte, onData func([]byte)) (*kcpRuntime, error) {
 		return nil, fmt.Errorf("kcp new conn: %w", err)
 	}
 
-	// Aggressive ARQ tuning: nodelay=1, interval=10ms, fast resend=2, no
-	// congestion control. This is the standard "turbo" preset used by KCP
-	// tunnels on lossy networks (shadowsocks, kcptun) and is the whole point
-	// of choosing KCP over SCTP.
-	sess.SetNoDelay(1, 10, 2, 1)
+	// Aggressive ARQ tuning: nodelay=1, interval=5ms, fast resend=2, no
+	// congestion control. The 5ms tick (vs the kcptun-default 10ms) halves
+	// the worst-case scheduling latency in each direction, which matters a
+	// lot for interactive workloads (SOCKS5 + HTTP request needs ~3 RTTs
+	// before the first byte of the response shows up). Below 5ms the
+	// CPU cost of the KCP update loop starts climbing without much
+	// additional latency benefit.
+	sess.SetNoDelay(1, 5, 2, 1)
 	sess.SetWindowSize(kcpSndWnd, kcpRcvWnd)
 	sess.SetMtu(kcpMTU)
 	sess.SetACKNoDelay(true)
