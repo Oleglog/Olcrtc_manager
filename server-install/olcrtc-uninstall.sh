@@ -19,6 +19,14 @@ if [ ! -f /usr/local/bin/olcrtc ] && [ ! -f /etc/systemd/system/olcrtc-server.se
     exit 0
 fi
 
+# Count extra instances
+extra_count=0
+for d in /etc/olcrtc/*/env; do
+    [ -f "$d" ] || continue
+    n="$(basename "$(dirname "$d")")"
+    [[ "$n" =~ ^[0-9]+$ ]] && extra_count=$((extra_count + 1))
+done
+
 echo ""
 echo "============================================================"
 echo "  olcRTC Uninstaller"
@@ -26,10 +34,13 @@ echo "============================================================"
 echo ""
 echo "  This will remove:"
 echo "    - systemd service olcrtc-server"
+if [ "$extra_count" -gt 0 ]; then
+    echo "    - $extra_count additional instance(s) (olcrtc-server@*.service)"
+fi
 echo "    - /usr/local/bin/olcrtc"
 echo "    - /usr/local/bin/olcrtc-launcher"
-echo "    - /etc/olcrtc/  (config + encryption key)"
-echo "    - /var/lib/olcrtc/"
+echo "    - /etc/olcrtc/  (all configs + encryption keys)"
+echo "    - /var/lib/olcrtc/ and /var/lib/olcrtc-*/"
 echo "    - system user 'olcrtc'"
 echo ""
 
@@ -49,14 +60,24 @@ if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
 fi
 
 echo ""
-echo "[*] Останавливаю и удаляю сервис..."
+echo "[*] Останавливаю и удаляю основной сервис..."
 systemctl disable --now olcrtc-server 2>/dev/null || true
 systemctl reset-failed olcrtc-server 2>/dev/null || true
 rm -f /etc/systemd/system/olcrtc-server.service
+
+echo "[*] Останавливаю и удаляю все дополнительные инстансы..."
+for d in /etc/olcrtc/*/env; do
+    [ -f "$d" ] || continue
+    n="$(basename "$(dirname "$d")")"
+    [[ "$n" =~ ^[0-9]+$ ]] || continue
+    systemctl disable --now "olcrtc-server@${n}.service" 2>/dev/null || true
+    systemctl reset-failed "olcrtc-server@${n}.service" 2>/dev/null || true
+done
+rm -f /etc/systemd/system/olcrtc-server@.service
 systemctl daemon-reload
 
 echo "[*] Удаляю файлы..."
-rm -rf /etc/olcrtc /var/lib/olcrtc /usr/local/bin/olcrtc /usr/local/bin/olcrtc-launcher
+rm -rf /etc/olcrtc /var/lib/olcrtc /var/lib/olcrtc-* /usr/local/bin/olcrtc /usr/local/bin/olcrtc-launcher
 
 echo "[*] Удаляю пользователя olcrtc..."
 userdel olcrtc 2>/dev/null || true

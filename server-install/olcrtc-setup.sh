@@ -45,7 +45,8 @@ tty_read() {
 # ── Helper: update a single key in the env file ──────────────────────────────
 set_env_value() {
     local key="$1" value="$2"
-    if grep -qE "^${key}=" "$ENV_FILE" 2>/dev/null; then
+    local target_file="${3:-$ENV_FILE}"
+    if grep -qE "^${key}=" "$target_file" 2>/dev/null; then
         # Build a clean temp file to avoid sed issues with special characters
         local tmpfile
         tmpfile="$(mktemp)"
@@ -54,18 +55,19 @@ set_env_value() {
                 "${key}="*) echo "${key}=${value}" ;;
                 *) echo "$line" ;;
             esac
-        done < "$ENV_FILE" > "$tmpfile"
-        cat "$tmpfile" > "$ENV_FILE"
+        done < "$target_file" > "$tmpfile"
+        cat "$tmpfile" > "$target_file"
         rm -f "$tmpfile"
     else
-        echo "${key}=${value}" >> "$ENV_FILE"
+        echo "${key}=${value}" >> "$target_file"
     fi
 }
 
 # ── Helper: read a value from the env file ───────────────────────────────────
 get_env_value() {
     local key="$1"
-    grep -E "^${key}=" "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2-
+    local target_file="${2:-$ENV_FILE}"
+    grep -E "^${key}=" "$target_file" 2>/dev/null | tail -1 | cut -d= -f2-
 }
 
 # ── Helper: ensure qrencode is available ─────────────────────────────────────
@@ -162,6 +164,181 @@ proxy_human() {
     fi
 }
 
+# ── Multi-instance helpers ───────────────────────────────────────────────────
+
+MAX_EXTRA_INSTANCES=20
+
+list_instances() {
+    # Основной
+    if [ -f /etc/olcrtc/env ]; then
+        echo "0"
+    fi
+    # Дополнительные: /etc/olcrtc/<N>/env
+    for d in /etc/olcrtc/*/env; do
+        [ -f "$d" ] || continue
+        local n
+        n="$(basename "$(dirname "$d")")"
+        [[ "$n" =~ ^[0-9]+$ ]] && echo "$n"
+    done
+}
+
+instance_env_file() {
+    local n="$1"
+    if [ "$n" = "0" ]; then
+        echo "/etc/olcrtc/env"
+    else
+        echo "/etc/olcrtc/$n/env"
+    fi
+}
+
+instance_key_file() {
+    local n="$1"
+    if [ "$n" = "0" ]; then
+        echo "/etc/olcrtc/key.hex"
+    else
+        echo "/etc/olcrtc/$n/key.hex"
+    fi
+}
+
+instance_service() {
+    local n="$1"
+    if [ "$n" = "0" ]; then
+        echo "olcrtc-server.service"
+    else
+        echo "olcrtc-server@${n}.service"
+    fi
+}
+
+instance_label() {
+    local n="$1"
+    if [ "$n" = "0" ]; then
+        echo "основной"
+    else
+        echo "#$n"
+    fi
+}
+
+next_instance_id() {
+    local max=1
+    for d in /etc/olcrtc/*/env; do
+        [ -f "$d" ] || continue
+        local n
+        n="$(basename "$(dirname "$d")")"
+        [[ "$n" =~ ^[0-9]+$ ]] && [ "$n" -gt "$max" ] && max="$n"
+    done
+    echo $((max + 1))
+}
+
+instance_count() {
+    local count=0
+    [ -f /etc/olcrtc/env ] && count=1
+    for d in /etc/olcrtc/*/env; do
+        [ -f "$d" ] || continue
+        local n
+        n="$(basename "$(dirname "$d")")"
+        [[ "$n" =~ ^[0-9]+$ ]] && count=$((count + 1))
+    done
+    echo "$count"
+}
+
+extra_instance_count() {
+    local count=0
+    for d in /etc/olcrtc/*/env; do
+        [ -f "$d" ] || continue
+        local n
+        n="$(basename "$(dirname "$d")")"
+        [[ "$n" =~ ^[0-9]+$ ]] && count=$((count + 1))
+    done
+    echo "$count"
+}
+
+# Wait for auto-created room ID for a specific service instance
+wait_for_room_id_for() {
+    local svc="$1" env_f="$2" prov="$3"
+    echo "[*] Waiting for $prov to create a room..."
+    local detected=""
+    local pattern="(WB Stream room created|Jazz room created): "
+    for i in $(seq 1 30); do
+        sleep 1
+        if detected="$(journalctl -u "$svc" --since '1 minute ago' --no-pager 2>/dev/null \
+            | grep -oE "$pattern\\S+" \
+            | tail -1 \
+            | awk '{print $NF}')"; then
+            if [ -n "$detected" ]; then
+                break
+            fi
+        fi
+    done
+
+    if [ -z "$detected" ]; then
+        echo "[!] Failed to detect a generated room ID within 30s." >&2
+        journalctl -u "$svc" --no-pager -n 30 >&2 || true
+        return 1
+    fi
+
+    set_env_value "OLCRTC_ROOM_ID" "$detected" "$env_f"
+    echo "[*] Pinned room ID: $detected"
+    systemctl restart "$svc"
+    sleep 2
+    return 0
+}
+
+# Install the systemd template unit for extra instances (idempotent)
+install_template_unit() {
+    cat > /etc/systemd/system/olcrtc-server@.service <<'TMPLUNIT'
+[Unit]
+Description=olcRTC server instance %i
+Documentation=https://github.com/openlibrecommunity/olcrtc
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=exec
+EnvironmentFile=/etc/olcrtc/%i/env
+User=olcrtc
+Group=olcrtc
+StateDirectory=olcrtc-%i
+StateDirectoryMode=0750
+WorkingDirectory=/var/lib/olcrtc-%i
+ExecStart=/usr/local/bin/olcrtc-launcher
+
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+
+Restart=on-failure
+RestartSec=5s
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+TMPLUNIT
+    systemctl daemon-reload
+}
+
+# Remove template unit if no extra instances remain
+maybe_remove_template_unit() {
+    if [ "$(extra_instance_count)" -eq 0 ]; then
+        rm -f /etc/systemd/system/olcrtc-server@.service
+        systemctl daemon-reload
+    fi
+}
+
 # ──────────────────────────────────────────────────────────────────────────────
 #  CLI argument parsing
 # ──────────────────────────────────────────────────────────────────────────────
@@ -240,6 +417,415 @@ is_installed() {
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  INSTANCE MANAGEMENT SUBMENU
+# ══════════════════════════════════════════════════════════════════════════════
+
+run_instance_menu() {
+    while true; do
+        echo ""
+        echo "============================================================"
+        echo "  olcRTC — Управление инстансами"
+        echo "============================================================"
+        echo ""
+        echo "  Активные инстансы:"
+        echo "  ──────────────────────────────────────────────────────────"
+        local inst_n inst_ef inst_svc inst_prov inst_room inst_name inst_status inst_lbl
+        for inst_n in $(list_instances); do
+            inst_ef="$(instance_env_file "$inst_n")"
+            inst_svc="$(instance_service "$inst_n")"
+            inst_lbl="$(instance_label "$inst_n")"
+            inst_prov="$(get_env_value OLCRTC_PROVIDER "$inst_ef")"
+            inst_room="$(get_env_value OLCRTC_ROOM_ID "$inst_ef")"
+            inst_name="$(get_env_value OLCRTC_NAME "$inst_ef")"
+            [ -z "$inst_name" ] && inst_name="${inst_prov}_olcrtc"
+            inst_status="$(systemctl is-active "$inst_svc" 2>/dev/null || echo "unknown")"
+            printf "  [%-8s]  %-12s | Room: %-12s | %s\n" "$inst_lbl" "$inst_prov" "$inst_room" "$inst_status"
+        done
+        echo "  ──────────────────────────────────────────────────────────"
+        echo ""
+        echo "  1) Создать новый инстанс"
+        echo "  2) Показать URI / QR-код инстанса"
+        echo "  3) Настроить инстанс (провайдер, прокси, debug, имя)"
+        echo "  4) Перезапустить инстанс"
+        echo "  5) Удалить инстанс"
+        echo "  6) Статус всех инстансов"
+        echo "  0) ← Назад"
+        echo ""
+        tty_read -rp "Выберите пункт: " ichoice
+
+        case "$ichoice" in
+        1)  # ── Создать новый инстанс ──
+            local new_id
+            new_id="$(next_instance_id)"
+            if [ "$new_id" -gt $((MAX_EXTRA_INSTANCES + 1)) ]; then
+                echo "  [!] Достигнут лимит дополнительных инстансов ($MAX_EXTRA_INSTANCES)"
+                tty_read -rp "[Enter для продолжения]"
+                continue
+            fi
+
+            echo ""
+            echo "  Создание инстанса #$new_id"
+            echo ""
+
+            # Provider
+            echo "  1) wb_stream"
+            echo "  2) jazz"
+            echo "  3) telemost"
+            echo ""
+            local main_prov
+            main_prov="$(get_env_value OLCRTC_PROVIDER)"
+            tty_read -rp "  Провайдер [1-3, Enter = как основной ($main_prov)]: " pc
+            local new_prov=""
+            case "$pc" in
+                1) new_prov="wb_stream" ;;
+                2) new_prov="jazz" ;;
+                3) new_prov="telemost" ;;
+                "") new_prov="$main_prov" ;;
+                *) echo "  [!] Неверный выбор"; tty_read -rp "[Enter для продолжения]"; continue ;;
+            esac
+
+            # Name
+            local new_name_default="${new_prov}_olcrtc_${new_id}"
+            tty_read -rp "  Имя соединения [Enter = $new_name_default]: " new_name
+            [ -z "$new_name" ] && new_name="$new_name_default"
+
+            # SOCKS proxy
+            local main_proxy new_proxy=""
+            main_proxy="$(get_env_value OLCRTC_SOCKS_PROXY)"
+            if [ -n "$main_proxy" ]; then
+                tty_read -rp "  SOCKS5-прокси [Enter = как основной ($main_proxy), n = без прокси]: " proxy_ans
+                case "$proxy_ans" in
+                    n|N) new_proxy="" ;;
+                    "") new_proxy="$main_proxy" ;;
+                    *) new_proxy="$proxy_ans" ;;
+                esac
+            else
+                tty_read -rp "  SOCKS5-прокси [user:pass@]host:port (Enter = без прокси): " proxy_ans
+                new_proxy="$proxy_ans"
+            fi
+
+            # Create directories
+            echo "[*] Создаю директории для инстанса #$new_id..."
+            install -d -m 0750 -o root -g olcrtc "/etc/olcrtc/$new_id"
+            install -d -m 0750 -o olcrtc -g olcrtc "/var/lib/olcrtc-$new_id"
+
+            # Generate key
+            echo "[*] Генерирую ключ шифрования..."
+            umask 077
+            local new_kf="/etc/olcrtc/$new_id/key.hex"
+            openssl rand -hex 32 > "$new_kf"
+            chown root:olcrtc "$new_kf"
+            chmod 0640 "$new_kf"
+            local new_key
+            new_key="$(cat "$new_kf")"
+
+            # Room ID
+            local new_room="any"
+            if [ "$new_prov" = "telemost" ]; then
+                tty_read -rp "  Введите Room ID для Telemost: " new_room
+                if [ -z "$new_room" ]; then
+                    echo "  [!] Room ID не может быть пустым"
+                    tty_read -rp "[Enter для продолжения]"
+                    continue
+                fi
+            fi
+
+            # Write env file
+            local new_ef="/etc/olcrtc/$new_id/env"
+            cat > "$new_ef" <<IEOF
+# Managed by olcrtc-setup.sh — instance #$new_id
+OLCRTC_PROVIDER=$new_prov
+OLCRTC_ROOM_ID=$new_room
+OLCRTC_KEY=$new_key
+OLCRTC_DNS=$DNS_DEFAULT
+OLCRTC_DEBUG=
+OLCRTC_SOCKS_PROXY=$new_proxy
+OLCRTC_NAME=$new_name
+IEOF
+            chown root:olcrtc "$new_ef"
+            chmod 0640 "$new_ef"
+
+            # Ensure template unit
+            install_template_unit
+
+            # Enable & start
+            local new_svc
+            new_svc="$(instance_service "$new_id")"
+            echo "[*] Запускаю $new_svc..."
+            systemctl enable --quiet "$new_svc"
+            systemctl start "$new_svc"
+
+            # Wait for room ID
+            if [ "$new_room" = "any" ]; then
+                if ! wait_for_room_id_for "$new_svc" "$new_ef" "$new_prov"; then
+                    echo "  [!] Сервис запущен, но room ID не определён. Проверьте логи."
+                    tty_read -rp "[Enter для продолжения]"
+                    continue
+                fi
+            fi
+
+            # Show result
+            local final_room final_key
+            final_room="$(get_env_value OLCRTC_ROOM_ID "$new_ef")"
+            final_key="$(get_env_value OLCRTC_KEY "$new_ef")"
+            echo ""
+            echo "  Инстанс #$new_id создан."
+            show_uri_qr "$new_prov" "$final_room" "$final_key" "$new_name"
+            echo ""
+            tty_read -rp "[Enter для продолжения]"
+            ;;
+
+        2)  # ── Показать URI / QR-код инстанса ──
+            echo ""
+            echo "  Выберите инстанс:"
+            for inst_n in $(list_instances); do
+                inst_ef="$(instance_env_file "$inst_n")"
+                inst_lbl="$(instance_label "$inst_n")"
+                inst_prov="$(get_env_value OLCRTC_PROVIDER "$inst_ef")"
+                inst_room="$(get_env_value OLCRTC_ROOM_ID "$inst_ef")"
+                printf "    %s) [%s] %s | Room: %s\n" "$inst_n" "$inst_lbl" "$inst_prov" "$inst_room"
+            done
+            echo ""
+            tty_read -rp "  Номер инстанса (0 = основной): " sel_n
+            local sel_ef
+            sel_ef="$(instance_env_file "$sel_n")"
+            if [ ! -f "$sel_ef" ]; then
+                echo "  [!] Инстанс не найден"
+                tty_read -rp "[Enter для продолжения]"
+                continue
+            fi
+            local sel_prov sel_room sel_key sel_name
+            sel_prov="$(get_env_value OLCRTC_PROVIDER "$sel_ef")"
+            sel_room="$(get_env_value OLCRTC_ROOM_ID "$sel_ef")"
+            sel_key="$(get_env_value OLCRTC_KEY "$sel_ef")"
+            sel_name="$(get_env_value OLCRTC_NAME "$sel_ef")"
+            [ -z "$sel_name" ] && sel_name="${sel_prov}_olcrtc"
+            show_uri_qr "$sel_prov" "$sel_room" "$sel_key" "$sel_name"
+            echo ""
+            tty_read -rp "[Enter для продолжения]"
+            ;;
+
+        3)  # ── Настроить инстанс ──
+            echo ""
+            echo "  Выберите инстанс для настройки:"
+            for inst_n in $(list_instances); do
+                inst_ef="$(instance_env_file "$inst_n")"
+                inst_lbl="$(instance_label "$inst_n")"
+                inst_prov="$(get_env_value OLCRTC_PROVIDER "$inst_ef")"
+                printf "    %s) [%s] %s\n" "$inst_n" "$inst_lbl" "$inst_prov"
+            done
+            echo ""
+            tty_read -rp "  Номер инстанса: " cfg_n
+            local cfg_ef
+            cfg_ef="$(instance_env_file "$cfg_n")"
+            if [ ! -f "$cfg_ef" ]; then
+                echo "  [!] Инстанс не найден"
+                tty_read -rp "[Enter для продолжения]"
+                continue
+            fi
+            local cfg_svc
+            cfg_svc="$(instance_service "$cfg_n")"
+            local cfg_lbl
+            cfg_lbl="$(instance_label "$cfg_n")"
+
+            echo ""
+            echo "  Настройка инстанса [$cfg_lbl]:"
+            echo "  1) Сменить провайдера"
+            echo "  2) Настроить SOCKS5-прокси"
+            echo "  3) Убрать SOCKS5-прокси"
+            echo "  4) Включить / выключить debug"
+            echo "  5) Переименовать"
+            echo "  0) ← Назад"
+            echo ""
+            tty_read -rp "  Выберите: " cfg_choice
+
+            case "$cfg_choice" in
+            1)  # Сменить провайдера
+                echo ""
+                echo "  1) wb_stream"
+                echo "  2) jazz"
+                echo "  3) telemost"
+                echo ""
+                tty_read -rp "  Провайдер [1-3]: " cpc
+                local cfg_prov=""
+                case "$cpc" in
+                    1) cfg_prov="wb_stream" ;;
+                    2) cfg_prov="jazz" ;;
+                    3) cfg_prov="telemost" ;;
+                    *) echo "  [!] Неверный выбор"; tty_read -rp "[Enter для продолжения]"; continue ;;
+                esac
+                set_env_value "OLCRTC_PROVIDER" "$cfg_prov" "$cfg_ef"
+                if [ "$cfg_prov" = "telemost" ]; then
+                    tty_read -rp "  Введите Room ID для Telemost: " cfg_room
+                    if [ -z "$cfg_room" ]; then
+                        echo "  [!] Room ID не может быть пустым"
+                        tty_read -rp "[Enter для продолжения]"
+                        continue
+                    fi
+                    set_env_value "OLCRTC_ROOM_ID" "$cfg_room" "$cfg_ef"
+                else
+                    set_env_value "OLCRTC_ROOM_ID" "any" "$cfg_ef"
+                fi
+                systemctl restart "$cfg_svc"
+                if [ "$(get_env_value OLCRTC_ROOM_ID "$cfg_ef")" = "any" ]; then
+                    if ! wait_for_room_id_for "$cfg_svc" "$cfg_ef" "$cfg_prov"; then
+                        tty_read -rp "[Enter для продолжения]"
+                        continue
+                    fi
+                fi
+                echo "  Провайдер изменён на: $cfg_prov"
+                ;;
+            2)  # Настроить SOCKS5-прокси
+                tty_read -rp "  Введите адрес прокси [user:pass@]host:port: " cfg_proxy
+                if [ -z "$cfg_proxy" ] || [[ "$cfg_proxy" != *":"* ]]; then
+                    echo "  [!] Неверный формат"
+                    tty_read -rp "[Enter для продолжения]"
+                    continue
+                fi
+                set_env_value "OLCRTC_SOCKS_PROXY" "$cfg_proxy" "$cfg_ef"
+                systemctl restart "$cfg_svc"
+                echo "  Прокси установлен: $cfg_proxy"
+                ;;
+            3)  # Убрать SOCKS5-прокси
+                set_env_value "OLCRTC_SOCKS_PROXY" "" "$cfg_ef"
+                systemctl restart "$cfg_svc"
+                echo "  Прокси удалён"
+                ;;
+            4)  # Debug
+                local cfg_debug
+                cfg_debug="$(get_env_value OLCRTC_DEBUG "$cfg_ef")"
+                if [ -n "$cfg_debug" ] && [ "$cfg_debug" != "0" ] && [ "$cfg_debug" != "false" ]; then
+                    set_env_value "OLCRTC_DEBUG" "" "$cfg_ef"
+                    echo "  Debug выключен"
+                else
+                    set_env_value "OLCRTC_DEBUG" "1" "$cfg_ef"
+                    echo "  Debug включён"
+                fi
+                systemctl restart "$cfg_svc"
+                ;;
+            5)  # Переименовать
+                local cfg_cur_name
+                cfg_cur_name="$(get_env_value OLCRTC_NAME "$cfg_ef")"
+                [ -z "$cfg_cur_name" ] && cfg_cur_name="$(get_env_value OLCRTC_PROVIDER "$cfg_ef")_olcrtc"
+                echo "  Текущее имя: $cfg_cur_name"
+                tty_read -rp "  Новое имя: " cfg_new_name
+                if [ -z "$cfg_new_name" ]; then
+                    echo "  [!] Имя не может быть пустым"
+                    tty_read -rp "[Enter для продолжения]"
+                    continue
+                fi
+                set_env_value "OLCRTC_NAME" "$cfg_new_name" "$cfg_ef"
+                echo "  Имя изменено на: $cfg_new_name"
+                ;;
+            0) continue ;;
+            *) echo "  [!] Неверный выбор" ;;
+            esac
+            echo ""
+            tty_read -rp "[Enter для продолжения]"
+            ;;
+
+        4)  # ── Перезапустить инстанс ──
+            echo ""
+            echo "  Выберите инстанс для перезапуска:"
+            for inst_n in $(list_instances); do
+                inst_lbl="$(instance_label "$inst_n")"
+                inst_svc="$(instance_service "$inst_n")"
+                inst_status="$(systemctl is-active "$inst_svc" 2>/dev/null || echo "unknown")"
+                printf "    %s) [%s] %s\n" "$inst_n" "$inst_lbl" "$inst_status"
+            done
+            echo ""
+            tty_read -rp "  Номер инстанса: " rst_n
+            local rst_ef
+            rst_ef="$(instance_env_file "$rst_n")"
+            if [ ! -f "$rst_ef" ]; then
+                echo "  [!] Инстанс не найден"
+                tty_read -rp "[Enter для продолжения]"
+                continue
+            fi
+            local rst_svc
+            rst_svc="$(instance_service "$rst_n")"
+            systemctl restart "$rst_svc"
+            echo "  Инстанс [$(instance_label "$rst_n")] перезапущен."
+            echo ""
+            tty_read -rp "[Enter для продолжения]"
+            ;;
+
+        5)  # ── Удалить инстанс ──
+            local del_count
+            del_count="$(extra_instance_count)"
+            if [ "$del_count" -eq 0 ]; then
+                echo "  Нет дополнительных инстансов для удаления."
+                echo "  (Основной инстанс удаляется через пункт 11 главного меню)"
+                tty_read -rp "[Enter для продолжения]"
+                continue
+            fi
+            echo ""
+            echo "  Выберите дополнительный инстанс для удаления:"
+            for inst_n in $(list_instances); do
+                [ "$inst_n" = "0" ] && continue
+                inst_ef="$(instance_env_file "$inst_n")"
+                inst_lbl="$(instance_label "$inst_n")"
+                inst_prov="$(get_env_value OLCRTC_PROVIDER "$inst_ef")"
+                inst_room="$(get_env_value OLCRTC_ROOM_ID "$inst_ef")"
+                printf "    %s) [%s] %s | Room: %s\n" "$inst_n" "$inst_lbl" "$inst_prov" "$inst_room"
+            done
+            echo ""
+            tty_read -rp "  Номер инстанса: " del_n
+            if [ "$del_n" = "0" ]; then
+                echo "  [!] Основной инстанс нельзя удалить из этого меню (используйте пункт 11)"
+                tty_read -rp "[Enter для продолжения]"
+                continue
+            fi
+            local del_ef
+            del_ef="$(instance_env_file "$del_n")"
+            if [ ! -f "$del_ef" ]; then
+                echo "  [!] Инстанс не найден"
+                tty_read -rp "[Enter для продолжения]"
+                continue
+            fi
+            tty_read -rp "  Удалить инстанс #$del_n? [y/N] " del_confirm
+            if [ "$del_confirm" != "y" ] && [ "$del_confirm" != "Y" ]; then
+                echo "  Отменено."
+                tty_read -rp "[Enter для продолжения]"
+                continue
+            fi
+            local del_svc
+            del_svc="$(instance_service "$del_n")"
+            echo "[*] Останавливаю $del_svc..."
+            systemctl disable --now "$del_svc" 2>/dev/null || true
+            systemctl reset-failed "$del_svc" 2>/dev/null || true
+            echo "[*] Удаляю файлы инстанса #$del_n..."
+            rm -rf "/etc/olcrtc/$del_n" "/var/lib/olcrtc-$del_n"
+            maybe_remove_template_unit
+            echo "  Инстанс #$del_n удалён."
+            echo ""
+            tty_read -rp "[Enter для продолжения]"
+            ;;
+
+        6)  # ── Статус всех инстансов ──
+            echo ""
+            for inst_n in $(list_instances); do
+                inst_svc="$(instance_service "$inst_n")"
+                inst_lbl="$(instance_label "$inst_n")"
+                echo "  ── Инстанс [$inst_lbl] ($inst_svc) ──"
+                systemctl --no-pager status "$inst_svc" 2>/dev/null || true
+                echo ""
+            done
+            tty_read -rp "[Enter для продолжения]"
+            ;;
+
+        0)  # Назад
+            return
+            ;;
+
+        *)
+            echo "  [!] Неверный пункт меню"
+            ;;
+        esac
+    done
+}
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  INTERACTIVE MENU MODE
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -258,10 +844,18 @@ run_menu() {
 
         [ -z "$cur_name" ] && cur_name="${cur_provider}_olcrtc"
 
+        local inst_total
+        inst_total="$(instance_count)"
+        local extra_inst
+        extra_inst="$(extra_instance_count)"
+
         echo ""
         echo "============================================================"
         echo "  olcRTC Server Manager"
         echo "  Provider: $cur_provider | Room: $cur_room | IP: $cur_ip"
+        if [ "$extra_inst" -gt 0 ]; then
+            echo "  Инстансов: $inst_total (основной + $extra_inst доп.)"
+        fi
         echo "============================================================"
         echo ""
         echo "  1) Статус сервиса"
@@ -275,6 +869,8 @@ run_menu() {
         echo "  9) Переименовать соединение (name)"
         echo " 10) Обновить бинарник olcRTC"
         echo " 11) Удалить olcRTC полностью"
+        echo " ---"
+        echo " 20) Управление инстансами  >>>"
         echo "  0) Выход"
         echo ""
         tty_read -rp "Выберите пункт: " choice
@@ -516,18 +1112,31 @@ run_menu() {
                 tty_read -rp "[Enter для продолжения]"
                 continue
             fi
-            echo "[*] Останавливаю и удаляю сервис..."
+            echo "[*] Останавливаю и удаляю основной сервис..."
             systemctl disable --now olcrtc-server 2>/dev/null || true
             systemctl reset-failed olcrtc-server 2>/dev/null || true
             rm -f /etc/systemd/system/olcrtc-server.service
+            echo "[*] Останавливаю и удаляю все дополнительные инстансы..."
+            for inst_n in $(list_instances); do
+                [ "$inst_n" = "0" ] && continue
+                local inst_svc
+                inst_svc="$(instance_service "$inst_n")"
+                systemctl disable --now "$inst_svc" 2>/dev/null || true
+                systemctl reset-failed "$inst_svc" 2>/dev/null || true
+            done
+            rm -f /etc/systemd/system/olcrtc-server@.service
             systemctl daemon-reload
             echo "[*] Удаляю файлы..."
-            rm -rf /etc/olcrtc /var/lib/olcrtc /usr/local/bin/olcrtc /usr/local/bin/olcrtc-launcher
+            rm -rf /etc/olcrtc /var/lib/olcrtc /var/lib/olcrtc-* /usr/local/bin/olcrtc /usr/local/bin/olcrtc-launcher
             echo "[*] Удаляю пользователя olcrtc..."
             userdel olcrtc 2>/dev/null || true
             echo ""
             echo "  olcRTC полностью удалён."
             exit 0
+            ;;
+
+        20) # Управление инстансами
+            run_instance_menu
             ;;
 
         0)  # Выход

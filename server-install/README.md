@@ -187,13 +187,46 @@ systemctl stop olcrtc-server        # stop (won't restart on reboot)
 systemctl disable olcrtc-server     # don't start on reboot
 ```
 
+## Multiple instances
+
+You can run several independent olcRTC servers on the same VPS, each with its
+own room ID, encryption key, and provider. Use the interactive manager menu:
+
+```bash
+sudo bash olcrtc-setup.sh   # → menu item 20) Управление инстансами
+```
+
+Each additional instance (`#2`, `#3`, …) gets:
+
+| Path | Contents |
+| --- | --- |
+| `/etc/olcrtc/<N>/env` | Instance config |
+| `/etc/olcrtc/<N>/key.hex` | Instance encryption key |
+| `/var/lib/olcrtc-<N>/` | Instance state directory |
+| `olcrtc-server@<N>.service` | Systemd template unit instance |
+
+All instances share the same binary (`/usr/local/bin/olcrtc`), launcher, and
+system user (`olcrtc`). Up to 20 additional instances are supported.
+
+The template unit (`olcrtc-server@.service`) is created automatically when
+the first additional instance is added and removed when the last one is deleted.
+
 ## Uninstall
+
+Recommended — use the uninstall script (handles all instances):
+
+```bash
+sudo bash olcrtc-uninstall.sh
+```
+
+Manual (main instance only):
 
 ```bash
 sudo systemctl disable --now olcrtc-server
 sudo rm -f /etc/systemd/system/olcrtc-server.service
 sudo systemctl daemon-reload
-sudo rm -rf /etc/olcrtc /var/lib/olcrtc /usr/local/bin/olcrtc
+sudo rm -rf /etc/olcrtc /var/lib/olcrtc /var/lib/olcrtc-* /usr/local/bin/olcrtc /usr/local/bin/olcrtc-launcher
+sudo rm -f /etc/systemd/system/olcrtc-server@.service
 sudo userdel olcrtc 2>/dev/null || true
 ```
 
@@ -223,6 +256,10 @@ For `telemost`, no API call is needed — the user-supplied ID is the room.
 | `/etc/olcrtc/env` | root:olcrtc | 0640 | EnvironmentFile read by systemd (PROVIDER, ROOM_ID, KEY, DNS, DEBUG, SOCKS_PROXY) |
 | `/var/lib/olcrtc/` | olcrtc:olcrtc | 0750 | Per-process state directory |
 | `/etc/systemd/system/olcrtc-server.service` | root:root | 0644 | Hardened systemd unit |
+| `/etc/olcrtc/<N>/env` | root:olcrtc | 0640 | Config for additional instance N |
+| `/etc/olcrtc/<N>/key.hex` | root:olcrtc | 0640 | Key for additional instance N |
+| `/var/lib/olcrtc-<N>/` | olcrtc:olcrtc | 0750 | State directory for instance N |
+| `/etc/systemd/system/olcrtc-server@.service` | root:root | 0644 | Systemd template unit (auto-created) |
 
 ## Licenses
 
@@ -307,13 +344,35 @@ sudo grep -E '^OLCRTC_(PROVIDER|ROOM_ID|KEY)=' /etc/olcrtc/env
 
 Это важно: до v0.1.3 (включая v0.1.2) клиентский TCP-трафик тоже шёл через прокси, из-за чего Telegram и другие сервисы, заблокированные в РФ, не работали через туннель. **Используй v0.1.3 или выше.**
 
+### Несколько инстансов
+
+На одном VPS можно запустить несколько независимых olcRTC-серверов, каждый со
+своим room ID, ключом и провайдером. Управление через интерактивное меню:
+
+```bash
+sudo bash olcrtc-setup.sh   # → пункт 20) Управление инстансами
+```
+
+Каждый дополнительный инстанс (`#2`, `#3`, …) получает свой конфиг
+(`/etc/olcrtc/<N>/env`), ключ (`/etc/olcrtc/<N>/key.hex`) и state-директорию
+(`/var/lib/olcrtc-<N>/`). Все инстансы используют один бинарник и одного
+системного пользователя. Лимит — 20 дополнительных инстансов.
+
 ### Удаление
+
+Рекомендуется использовать скрипт удаления (удаляет все инстансы):
+
+```bash
+sudo bash olcrtc-uninstall.sh
+```
+
+Ручное удаление:
 
 ```bash
 sudo systemctl disable --now olcrtc-server
-sudo rm -f /etc/systemd/system/olcrtc-server.service
+sudo rm -f /etc/systemd/system/olcrtc-server.service /etc/systemd/system/olcrtc-server@.service
 sudo systemctl daemon-reload
-sudo rm -rf /etc/olcrtc /var/lib/olcrtc /usr/local/bin/olcrtc /usr/local/bin/olcrtc-launcher
+sudo rm -rf /etc/olcrtc /var/lib/olcrtc /var/lib/olcrtc-* /usr/local/bin/olcrtc /usr/local/bin/olcrtc-launcher
 sudo userdel olcrtc 2>/dev/null || true
 ```
 
