@@ -278,18 +278,32 @@ do_install() {
         local wgcf_arch="amd64"
         { [ "$arch" = "aarch64" ] || [ "$arch" = "arm64" ]; } && wgcf_arch="arm64"
         # Получаем последнюю версию через GitHub API
-        local wgcf_ver
-        wgcf_ver="$(curl -fsSL https://api.github.com/repos/ViRb3/wgcf/releases/latest | grep -o '"tag_name":"[^"]*"' | cut -d'"' -f4)"
+        local api_json wgcf_ver
+        api_json="$(curl -fsSL https://api.github.com/repos/ViRb3/wgcf/releases/latest 2>/dev/null)" || true
+        wgcf_ver="$(echo "$api_json" | grep -o '"tag_name":"[^"]*"' | cut -d'"' -f4 || true)"
         wgcf_ver="${wgcf_ver#v}"  # убираем "v" из "v2.2.30"
         if [ -z "$wgcf_ver" ]; then
-            die "Не удалось определить версию wgcf. Проверьте доступ к api.github.com"
+            echo "[!] Не удалось получить версию wgcf через GitHub API." >&2
+            echo "    Возможно api.github.com заблокирован или rate-limited." >&2
+            echo "    Используйте опцию 1 (ввод ключей вручную из 3x-ui)." >&2
+            echo "" >&2
+            tty_read -rp "  Попробовать версию 2.2.30? [Y/n] " fallback_choice
+            if [ "$fallback_choice" = "n" ] || [ "$fallback_choice" = "N" ]; then
+                die "Отменено. Перезапустите и выберите опцию 1."
+            fi
+            wgcf_ver="2.2.30"
         fi
         local wgcf_url="https://github.com/ViRb3/wgcf/releases/download/v${wgcf_ver}/wgcf_${wgcf_ver}_linux_${wgcf_arch}"
         echo "    Версия: $wgcf_ver  Архитектура: $wgcf_arch"
-        curl -fsSL "$wgcf_url" -o /tmp/wgcf || die "Не удалось скачать wgcf: $wgcf_url"
+        echo "    URL: $wgcf_url"
+        if ! curl -fsSL "$wgcf_url" -o /tmp/wgcf; then
+            die "Не удалось скачать wgcf: $wgcf_url\n    Перезапустите и выберите опцию 1 (ввод вручную)."
+        fi
         chmod +x /tmp/wgcf
         echo "[*] Регистрирую WARP-аккаунт..."
-        (cd /tmp && ./wgcf register --accept-tos && ./wgcf generate) || die "wgcf не удался"
+        if ! (cd /tmp && ./wgcf register --accept-tos && ./wgcf generate); then
+            die "wgcf не удался. Перезапустите и выберите опцию 1 (ввод вручную)."
+        fi
         mkdir -p /etc/olcrtc
         cp /tmp/wgcf-profile.conf "$CONF"
         chmod 600 "$CONF"
