@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"time"
 
+	lksdk "github.com/livekit/server-sdk-go/v2"
+	protoLogger "github.com/livekit/protocol/logger"
 	"github.com/openlibrecommunity/olcrtc/internal/app/session"
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 	"github.com/openlibrecommunity/olcrtc/internal/names"
@@ -157,7 +159,10 @@ func parseFlags() config {
 func configureLogging(debug bool) {
 	if debug {
 		logger.SetVerbose(true)
+		return
 	}
+	// Suppress noisy LiveKit/pion logs unless debug is enabled.
+	lksdk.SetLogger(protoLogger.GetDiscardLogger())
 }
 
 func resolveDataDir(dataDir string) (string, error) {
