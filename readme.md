@@ -31,20 +31,24 @@ for `linux/amd64` and `linux/arm64`.
 
 ## Server — quick start
 
+One command, no git required:
+
 ```bash
-# On your VPS, as root:
+curl -fsSL https://raw.githubusercontent.com/Oleglog/olcrtc_FORK/master/server-install/olcrtc-setup.sh | sudo bash
+```
+
+Or from a checkout:
+```bash
 git clone https://github.com/Oleglog/olcrtc_FORK
 cd olcrtc_FORK
-sudo ./server-install/install.sh
+sudo bash server-install/olcrtc-setup.sh
 ```
 
-Or with a one-liner (no git required):
-```bash
-curl -fsSL https://raw.githubusercontent.com/Oleglog/olcrtc_FORK/master/server-install/install.sh | sudo bash
-```
+The script is **self-contained** — it downloads the binary, installs the
+systemd service, and prints **Carrier**, **Transport**, **Room ID** and
+**Encryption key** to enter into the Android app.
 
-The installer prints **Carrier**, **Transport**, **Room ID** and **Encryption key** —
-enter these into the Android app.
+After installation, re-run the same script for an interactive management menu.
 
 See the full server documentation: **[server-install/README.md](server-install/README.md)**
 
@@ -63,10 +67,10 @@ Default carrier: **wbstream**. Default transport: **datachannel**.
 
 ## Server management
 
-After installation, re-run `olcrtc-setup.sh` for an interactive menu:
+Re-run the same script — it detects the existing installation and shows a menu:
 
 ```bash
-sudo bash /path/to/olcrtc-setup.sh
+sudo bash olcrtc-setup.sh
 ```
 
 Menu items include:
@@ -77,6 +81,12 @@ Menu items include:
 - Multiple instances (up to 20)
 - Update binary
 - Full uninstall
+
+### Uninstall
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Oleglog/olcrtc_FORK/master/server-install/olcrtc-uninstall.sh | sudo bash
+```
 
 See [`server-install/README.md`](server-install/README.md) for details.
 
@@ -123,7 +133,7 @@ If your VPS IP is blocked by wbstream / jazz / telemost, route signalling
 through a residential SOCKS5 proxy:
 
 ```bash
-sudo ./server-install/install.sh --socks-proxy user:pass@host:port
+sudo bash olcrtc-setup.sh --socks-proxy user:pass@host:port
 ```
 
 Only provider API / signalling goes through the proxy. Client TCP tunnel
