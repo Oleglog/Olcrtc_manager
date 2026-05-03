@@ -20,16 +20,27 @@ What the installer does:
 - creates a dedicated `olcrtc` system user,
 - generates a 256-bit hex encryption key (`/etc/olcrtc/key.hex`),
 - registers a hardened `systemd` service (`olcrtc-server.service`),
-- asks Wildberries Stream / Yandex SaluteJazz / Yandex Telemost to provision a
-  room on first start,
+- asks the selected carrier (Wildberries Stream / SaluteJazz / Yandex Telemost)
+  to provision a room on first start,
 - captures the auto-generated room ID from `journalctl` and pins it into the
   service environment so the same room is reused across restarts,
 - supports an optional outbound SOCKS5 proxy (NO_AUTH or RFC 1929
   USER/PASSWORD), useful when the VPS IP is blocked by
-  wb_stream / jazz / telemost, and an optional `-debug` flag,
+  wbstream / jazz / telemost, and an optional `-debug` flag,
 - prints the credentials you need to fill into the Android app.
 
-Default provider is **`wb_stream`**.
+Default carrier is **`wbstream`**. Default transport is **`datachannel`**.
+
+### Carrier & transport matrix
+
+| Transport | telemost | jazz | wbstream |
+|-----------|:--------:|:----:|:--------:|
+| datachannel | ✗ | ✓ | ✓ |
+| vp8channel | ✓ | ✓ | ✓ |
+| seichannel | ✗ | ✓ | ✓ |
+| videochannel | ✓ | ✓ | ✓ |
+
+Speed (descending): **datachannel** (~6 MB/s) > **vp8channel** > **seichannel** > **videochannel** (~200 KB/s)
 
 ## Requirements
 
@@ -41,7 +52,7 @@ Default provider is **`wb_stream`**.
 - Recommended: 1 vCPU, 1 GB RAM, 10 GB disk. The binary is ~20 MB and uses
   ~50–250 MB RAM depending on traffic.
 
-## Quick start (default — wb_stream)
+## Quick start (default — wbstream + datachannel)
 
 **Option A — from a clean checkout of master** (binary auto-downloaded from
 the matching Release):
@@ -80,21 +91,24 @@ Android app at the end:
         olcRTC server is up.
 ==========================================================
 
-  Provider:        wb_stream
+  Carrier:         wbstream
+  Transport:       datachannel (~6 МБ/с)
   Room ID:         01HZX...
-  Encryption key:  7b3c1f...
-  DNS resolver:    1.1.1.1:53
+  Key (hex):       7b3c1f...
+  DNS:             1.1.1.1:53
   Public IP:       a.b.c.d
 ...
 ```
 
-## Picking a different provider
+## Picking a different carrier / transport
 
 ```bash
-sudo ./install.sh --provider telemost          # provider = telemost
-sudo ./install.sh --provider jazz              # provider = jazz
-sudo ./install.sh --provider wb_stream         # provider = wb_stream (default)
+sudo ./install.sh --carrier telemost --transport vp8channel
+sudo ./install.sh --carrier jazz --transport datachannel
+sudo ./install.sh --carrier wbstream                       # default transport = datachannel
 ```
+
+The legacy `--provider` flag is still accepted as an alias for `--carrier`.
 
 For **telemost**, the room ID is whatever string you choose — it is not
 provisioned by Yandex. You can override the auto-generated `olcrtc-XXXX`
@@ -113,6 +127,8 @@ proxy and debug settings unless you ask otherwise:
 sudo ./install.sh                                   # update binary / unit file, keep everything
 sudo ./install.sh --regenerate                      # keep key, get a new room ID
 sudo ./install.sh --regenerate-key                  # rotate everything (key + room)
+sudo ./install.sh --carrier jazz                    # change carrier
+sudo ./install.sh --transport vp8channel            # change transport
 sudo ./install.sh --socks-proxy host:port           # route outbound through SOCKS5 (NO_AUTH)
 sudo ./install.sh --socks-proxy user:pass@h:port    # route outbound through SOCKS5 (USER/PASSWORD)
 sudo ./install.sh --socks-proxy ""                  # remove existing SOCKS5 proxy
@@ -130,7 +146,7 @@ residential / Russian IP to register a guest session. Yandex Telemost is
 more permissive but can still throttle or rotate sessions on suspicious IPs.
 
 If your VPS gets `i/o timeout` connecting to `stream.wb.ru` (or similar),
-or is blocked by wb_stream / jazz, rent a residential SOCKS5 proxy. Both
+or is blocked by wbstream / jazz, rent a residential SOCKS5 proxy. Both
 `NO_AUTH` (IP-whitelisted) and `RFC 1929 USER/PASSWORD` are supported —
 use whichever your provider gives you:
 
@@ -154,8 +170,8 @@ What goes through the proxy and what does not:
 
 | Traffic | Routing |
 | --- | --- |
-| Provider HTTP API calls (wb_stream / jazz / telemost guest registration, room creation, polling) | through the SOCKS5 proxy |
-| Provider WebSocket signalling (jazz / telemost) | through the SOCKS5 proxy |
+| Carrier HTTP API calls (wbstream / jazz / telemost guest registration, room creation, polling) | through the SOCKS5 proxy |
+| Carrier WebSocket signalling (jazz / telemost) | through the SOCKS5 proxy |
 | Client TCP traffic tunnelled from the Android device (browser, Telegram, anything else) | **direct from the VPS, NOT through the proxy** |
 | WebRTC media (UDP between VPS and Android) | direct, peer-to-peer (SOCKS5 cannot tunnel UDP via CONNECT) |
 
@@ -190,7 +206,7 @@ systemctl disable olcrtc-server     # don't start on reboot
 ## Multiple instances
 
 You can run several independent olcRTC servers on the same VPS, each with its
-own room ID, encryption key, and provider. Use the interactive manager menu:
+own room ID, encryption key, carrier and transport. Use the interactive manager menu:
 
 ```bash
 sudo bash olcrtc-setup.sh   # → menu item 20) Управление инстансами
@@ -232,7 +248,7 @@ sudo userdel olcrtc 2>/dev/null || true
 
 ## How it picks the room ID
 
-For `wb_stream` and `jazz`, the room is allocated server-side by the
+For `wbstream` and `jazz`, the room is allocated server-side by the
 respective provider when the olcrtc binary calls their REST API on startup.
 The first run uses `-id any`, which makes the upstream API allocate a fresh
 room and log a line of the form:
@@ -253,7 +269,7 @@ For `telemost`, no API call is needed — the user-supplied ID is the room.
 | `/usr/local/bin/olcrtc` | root:root | 0755 | The Go binary |
 | `/usr/local/bin/olcrtc-launcher` | root:root | 0755 | Bash wrapper that translates env to flags |
 | `/etc/olcrtc/key.hex` | root:olcrtc | 0640 | 64-char hex encryption key |
-| `/etc/olcrtc/env` | root:olcrtc | 0640 | EnvironmentFile read by systemd (PROVIDER, ROOM_ID, KEY, DNS, DEBUG, SOCKS_PROXY) |
+| `/etc/olcrtc/env` | root:olcrtc | 0640 | EnvironmentFile read by systemd (CARRIER, TRANSPORT, LINK, ROOM_ID, KEY, DNS, etc.) |
 | `/var/lib/olcrtc/` | olcrtc:olcrtc | 0750 | Per-process state directory |
 | `/etc/systemd/system/olcrtc-server.service` | root:root | 0644 | Hardened systemd unit |
 | `/etc/olcrtc/<N>/env` | root:olcrtc | 0640 | Config for additional instance N |
@@ -284,7 +300,7 @@ tar -xzf /tmp/olcrtc.tgz -C /tmp
 sudo /tmp/olcrtc-server-installer-*/install.sh
 ```
 
-С residential SOCKS5-прокси (если IP VPS заблокирован у wb_stream / jazz / telemost):
+С residential SOCKS5-прокси (если IP VPS заблокирован у wbstream / jazz / telemost):
 
 ```bash
 sudo /tmp/olcrtc-server-installer-*/install.sh \
@@ -301,13 +317,15 @@ sudo /tmp/olcrtc-server-installer-*/install.sh \
 6. Wildberries Stream / SaluteJazz / Telemost создадут комнату при первом старте
 7. Инсталлер выведет на экран **Provider**, **Room ID** и **Encryption key** — эти три значения нужно ввести в Android-приложение
 
-### Сменить провайдера
+### Сменить carrier / транспорт
 
 ```bash
-sudo ./install.sh --provider wb_stream      # по умолчанию, надёжнее всего
-sudo ./install.sh --provider jazz           # SaluteJazz
-sudo ./install.sh --provider telemost       # Yandex Telemost
+sudo ./install.sh --carrier wbstream                          # по умолчанию
+sudo ./install.sh --carrier jazz --transport datachannel      # SaluteJazz + быстрый транспорт
+sudo ./install.sh --carrier telemost --transport vp8channel   # Yandex Telemost
 ```
+
+Старый флаг `--provider` принимается как алиас для `--carrier`.
 
 ### Повторный запуск (идемпотентность)
 
@@ -317,6 +335,8 @@ sudo ./install.sh --provider telemost       # Yandex Telemost
 sudo ./install.sh                             # обновить бинарник/юнит, всё остальное сохранить
 sudo ./install.sh --regenerate                # сменить комнату (ключ остаётся)
 sudo ./install.sh --regenerate-key            # сменить и ключ, и комнату
+sudo ./install.sh --carrier jazz              # сменить carrier
+sudo ./install.sh --transport vp8channel      # сменить транспорт
 sudo ./install.sh --socks-proxy host:port     # включить SOCKS5 (NO_AUTH)
 sudo ./install.sh --socks-proxy u:p@h:port    # включить SOCKS5 (USER/PASSWORD)
 sudo ./install.sh --socks-proxy ""            # выключить SOCKS5
@@ -329,16 +349,16 @@ sudo ./install.sh --no-debug                  # выключить verbose-ло�
 ```bash
 sudo systemctl status olcrtc-server               # сервис должен быть active
 sudo journalctl -u olcrtc-server -n 50 --no-pager # должна быть строка "room created"
-sudo grep -E '^OLCRTC_(PROVIDER|ROOM_ID|KEY)=' /etc/olcrtc/env
+sudo grep -E '^OLCRTC_(CARRIER|TRANSPORT|ROOM_ID|KEY)=' /etc/olcrtc/env
 ```
 
-Эти три значения (Provider, Room ID, Key) вводятся в Android-приложение в настройках профиля **olcRTC**.
+Эти значения (Carrier, Transport, Room ID, Key) вводятся в Android-приложение в настройках профиля **olcRTC**.
 
 ### Что идёт через прокси, что не идёт (с v0.1.3)
 
 | Трафик                                                       | Маршрут                          |
 |--------------------------------------------------------------|----------------------------------|
-| Регистрация в провайдере (HTTP API + WebSocket signalling)   | через прокси                     |
+| Регистрация в carrier (HTTP API + WebSocket signalling)      | через прокси                     |
 | WebRTC media (UDP между VPS и Android)                        | напрямую (UDP не идёт через CONNECT) |
 | TCP-трафик клиента через туннель (Telegram, браузер и т.д.)  | **напрямую с VPS, минуя прокси** |
 
@@ -347,7 +367,7 @@ sudo grep -E '^OLCRTC_(PROVIDER|ROOM_ID|KEY)=' /etc/olcrtc/env
 ### Несколько инстансов
 
 На одном VPS можно запустить несколько независимых olcRTC-серверов, каждый со
-своим room ID, ключом и провайдером. Управление через интерактивное меню:
+своим room ID, ключом, carrier и транспортом. Управление через интерактивное меню:
 
 ```bash
 sudo bash olcrtc-setup.sh   # → пункт 20) Управление инстансами

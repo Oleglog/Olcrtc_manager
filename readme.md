@@ -7,33 +7,86 @@
 
 </div>
 
-
 ## About
-olcRTC - across the sea
 
-Project that allows users to bypass blocking by parasitizing and tunneling on unblocked and whitelisted services in Russia, use legal webRTC services
+olcRTC — across the sea.
 
-## Status
+Tunnels TCP traffic over WebRTC through whitelisted Russian conferencing
+services (Yandex Telemost, SaluteJazz, Wildberries Stream) so it cannot be
+blocked without breaking the upstream service.
 
-Beta
-<br>
-See all info in [issues](https://github.com/openlibrecommunity/olcrtc/issues)
-<br>
-Issues? contact us at [@openlibrecommunity](https://t.me/openlibrecommunity)
-<br>
-Or wait for the release or at least a release
+This fork ([Oleglog/olcrtc_FORK](https://github.com/Oleglog/olcrtc_FORK))
+adds a one-command systemd installer, interactive management menu, SOCKS5
+proxy support for signalling, multi-instance support, and pre-built binaries
+for `linux/amd64` and `linux/arm64`.
 
-## Read docs for start 
+## Quick links
 
-[For noobs](docs/fast.md)
+| | |
+|---|---|
+| **Server install (one command)** | [`server-install/`](server-install/) — [README](server-install/README.md) |
+| **Android client** | [Oleglog/Exclave_FORK](https://github.com/Oleglog/Exclave_FORK) |
+| **Upstream project** | [openlibrecommunity/olcrtc](https://github.com/openlibrecommunity/olcrtc) |
+| **Telegram** | [@openlibrecommunity](https://t.me/openlibrecommunity) |
 
-[Manual](docs/manual.md)
+## Server — quick start
 
-[Setting matrix](docs/settings.md)
+```bash
+# On your VPS, as root:
+git clone https://github.com/Oleglog/olcrtc_FORK
+cd olcrtc_FORK
+sudo ./server-install/install.sh
+```
 
+Or with a one-liner (no git required):
+```bash
+curl -fsSL https://raw.githubusercontent.com/Oleglog/olcrtc_FORK/master/server-install/install.sh | sudo bash
+```
 
+The installer prints **Carrier**, **Transport**, **Room ID** and **Encryption key** —
+enter these into the Android app.
 
-## Build
+See the full server documentation: **[server-install/README.md](server-install/README.md)**
+
+## Carrier & transport matrix
+
+| Transport | telemost | jazz | wbstream |
+|-----------|:--------:|:----:|:--------:|
+| datachannel | ✗ | ✓ | ✓ |
+| vp8channel | ✓ | ✓ | ✓ |
+| seichannel | ✗ | ✓ | ✓ |
+| videochannel | ✓ | ✓ | ✓ |
+
+Speed (descending): **datachannel** (~6 MB/s) > **vp8channel** > **seichannel** > **videochannel** (~200 KB/s)
+
+Default carrier: **wbstream**. Default transport: **datachannel**.
+
+## Server management
+
+After installation, re-run `olcrtc-setup.sh` for an interactive menu:
+
+```bash
+sudo bash /path/to/olcrtc-setup.sh
+```
+
+Menu items include:
+- Change carrier / transport
+- Regenerate room ID / encryption key
+- Configure SOCKS5 proxy
+- Toggle debug logging
+- Multiple instances (up to 20)
+- Update binary
+- Full uninstall
+
+See [`server-install/README.md`](server-install/README.md) for details.
+
+## Docs (upstream)
+
+- [Quick start with containers](docs/fast.md)
+- [Manual setup](docs/manual.md)
+- [Settings matrix](docs/settings.md)
+
+## Build from source
 
 ```bash
 # install mage first
@@ -62,21 +115,38 @@ mage docker
 mage lint
 mage test
 mage clean
-
 ```
+
+## SOCKS5 proxy for signalling
+
+If your VPS IP is blocked by wbstream / jazz / telemost, route signalling
+through a residential SOCKS5 proxy:
+
+```bash
+sudo ./server-install/install.sh --socks-proxy user:pass@host:port
+```
+
+Only provider API / signalling goes through the proxy. Client TCP tunnel
+traffic exits directly from the VPS. See
+[server-install/README.md § Outbound SOCKS5 proxy](server-install/README.md#outbound-socks5-proxy-when-your-vps-ip-is-blocked).
+
+## WARP proxy (Cloudflare)
+
+For an alternative to residential proxies, see
+[server-install/WARP-PROXY.md](server-install/WARP-PROXY.md).
+
+## License
+
+WTFPL (inherited from upstream). See also `LICENSE`.
 
 <div align="center">
 
 ---
 
-
-Telegram: [zarazaex](https://t.me/zarazaexe)
+Upstream: [openlibrecommunity/olcrtc](https://github.com/openlibrecommunity/olcrtc)
 <br>
-Email: [zarazaex@tuta.io](mailto:zarazaex@tuta.io)
-<br>
-Site: [zarazaex.xyz](https://zarazaex.xyz)
+Telegram: [@openlibrecommunity](https://t.me/openlibrecommunity)
 <br>
 Made for: [olcNG](https://github.com/zarazaex69/olcng)
-
 
 </div>

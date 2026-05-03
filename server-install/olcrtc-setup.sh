@@ -8,7 +8,7 @@
 #   - /usr/local/bin/olcrtc                    statically-linked olcrtc binary
 #   - /usr/local/bin/olcrtc-launcher           wrapper that translates env to flags
 #   - /etc/systemd/system/olcrtc-server.service hardened systemd unit
-#   - /etc/olcrtc/env                          OLCRTC_PROVIDER / ROOM_ID / KEY / DNS / DEBUG / SOCKS_PROXY / NAME
+#   - /etc/olcrtc/env                          OLCRTC_CARRIER / TRANSPORT / LINK / ROOM_ID / KEY / DNS / etc.
 #   - /etc/olcrtc/key.hex                      32-byte encryption key (hex)
 #
 # Idempotent. Re-run with --regenerate to get a fresh room ID; re-run with
@@ -16,15 +16,18 @@
 
 set -euo pipefail
 
-INSTALLER_VERSION="0.1.3"
-PROVIDER_DEFAULT="wb_stream"
+INSTALLER_VERSION="0.2.0"
+CARRIER_DEFAULT="wbstream"
+TRANSPORT_DEFAULT="datachannel"
 DNS_DEFAULT="1.1.1.1:53"
 
 REGENERATE_ROOM=0
 REGENERATE_KEY=0
-PROVIDER="${OLCRTC_PROVIDER:-$PROVIDER_DEFAULT}"
+CARRIER="${OLCRTC_CARRIER:-${OLCRTC_PROVIDER:-$CARRIER_DEFAULT}}"
+TRANSPORT="${OLCRTC_TRANSPORT:-$TRANSPORT_DEFAULT}"
 SET_SOCKS_PROXY="__keep__"
 SET_DEBUG="__keep__"
+SET_TRANSPORT="__keep__"
 SET_NAME=""
 SET_TELEMOST_ID=""
 
@@ -106,7 +109,7 @@ show_uri_qr() {
 
 # ── Helper: wait for auto-created room ID from journal ───────────────────────
 wait_for_room_id() {
-    echo "[*] Waiting for $PROVIDER to create a room..."
+    echo "[*] Waiting for $CARRIER to create a room..."
     local detected=""
     local pattern="(WB Stream room created|Jazz room created): "
     for i in $(seq 1 30); do
@@ -162,6 +165,110 @@ proxy_human() {
     else
         echo "$val (SOCKS5 NO_AUTH)"
     fi
+}
+
+# ── Helper: read carrier from env (backward compat OLCRTC_PROVIDER) ──────────
+get_carrier() {
+    local ef="${1:-$ENV_FILE}"
+    local c
+    c="$(get_env_value OLCRTC_CARRIER "$ef")"
+    [ -z "$c" ] && c="$(get_env_value OLCRTC_PROVIDER "$ef")"
+    [ "$c" = "wb_stream" ] && c="wbstream"
+    echo "$c"
+}
+
+# ── Helper: normalize carrier name (backward compat) ────────────────────────
+normalize_carrier() {
+    local c="$1"
+    case "$c" in
+        wb_stream) echo "wbstream" ;;
+        *) echo "$c" ;;
+    esac
+}
+
+# ── Helper: human-readable carrier name ─────────────────────────────────────
+carrier_human() {
+    case "$1" in
+        wbstream)  echo "Wildberries Stream" ;;
+        jazz)      echo "SaluteJazz" ;;
+        telemost)  echo "Yandex Telemost" ;;
+        *) echo "$1" ;;
+    esac
+}
+
+# ── Helper: human-readable transport name ───────────────────────────────────
+transport_human() {
+    case "$1" in
+        datachannel)  echo "datachannel (~6 МБ/с)" ;;
+        vp8channel)   echo "vp8channel (универсальный)" ;;
+        seichannel)   echo "seichannel" ;;
+        videochannel) echo "videochannel (~200 КБ/с)" ;;
+        *) echo "$1" ;;
+    esac
+}
+
+# ── Helper: interactive transport selection ──────────────────────────────────
+# Usage: select_transport <carrier> [current_transport]
+# On success sets REPLY_TRANSPORT (and optionally REPLY_VP8_FPS, REPLY_VP8_BATCH)
+select_transport() {
+    local carrier="$1"
+    local current="${2:-}"
+    local i=0
+    local -a opts=()
+
+    echo "  Транспорт:"
+
+    # vp8channel — works with all carriers
+    i=$((i+1)); opts+=("vp8channel")
+    local tag=""; [ "$current" = "vp8channel" ] && tag=" ←"
+    echo "    $i) vp8channel   — универсальный, работает со всеми${tag}"
+
+    # datachannel — not with telemost
+    if [ "$carrier" != "telemost" ]; then
+        i=$((i+1)); opts+=("datachannel")
+        tag=""; [ "$current" = "datachannel" ] && tag=" ←"
+        echo "    $i) datachannel  — самый быстрый (~6 МБ/с)${tag}"
+    fi
+
+    # seichannel — not with telemost
+    if [ "$carrier" != "telemost" ]; then
+        i=$((i+1)); opts+=("seichannel")
+        tag=""; [ "$current" = "seichannel" ] && tag=" ←"
+        echo "    $i) seichannel   — для wbstream/jazz${tag}"
+    fi
+
+    # videochannel — works with all
+    i=$((i+1)); opts+=("videochannel")
+    tag=""; [ "$current" = "videochannel" ] && tag=" ←"
+    echo "    $i) videochannel — медленный (~200 КБ/с), крайний случай${tag}"
+
+    echo ""
+    local dl=""
+    [ -n "$current" ] && dl=", Enter = оставить"
+    tty_read -rp "  Выберите [1-$i${dl}]: " tc
+
+    if [ -z "$tc" ] && [ -n "$current" ]; then
+        REPLY_TRANSPORT="$current"
+        return 0
+    fi
+
+    if [ "$tc" -ge 1 ] 2>/dev/null && [ "$tc" -le "$i" ] 2>/dev/null; then
+        REPLY_TRANSPORT="${opts[$((tc-1))]}"
+    else
+        REPLY_TRANSPORT=""
+        return 1
+    fi
+
+    # Ask vp8 options if vp8channel selected
+    REPLY_VP8_FPS=""
+    REPLY_VP8_BATCH=""
+    if [ "$REPLY_TRANSPORT" = "vp8channel" ]; then
+        tty_read -rp "  VP8 FPS [Enter = 60]: " vfps
+        REPLY_VP8_FPS="${vfps:-60}"
+        tty_read -rp "  VP8 batch size [Enter = 8]: " vbatch
+        REPLY_VP8_BATCH="${vbatch:-8}"
+    fi
+    return 0
 }
 
 # ── Multi-instance helpers ───────────────────────────────────────────────────
@@ -348,32 +455,38 @@ usage() {
 Usage: sudo ./olcrtc-setup.sh [options]
 
 Options:
-    --provider <wb_stream|telemost|jazz>
-                          Pick a provider (default: $PROVIDER_DEFAULT).
+    --carrier <wbstream|telemost|jazz>
+                          Pick a carrier (default: $CARRIER_DEFAULT).
+    --provider <name>     Deprecated alias for --carrier.
+    --transport <datachannel|vp8channel|seichannel|videochannel>
+                          Pick a transport (default: $TRANSPORT_DEFAULT).
     --regenerate          Drop the saved room ID and create a new one.
     --regenerate-key      Drop the encryption key AND room ID, regenerate both.
     --socks-proxy <[user:pass@]host:port>
-                          Route provider signalling through a SOCKS5 proxy.
+                          Route carrier signalling through a SOCKS5 proxy.
                           Pass "" to remove an existing setting.
     --debug               Enable verbose -debug logging.
     --no-debug            Disable verbose logging.
-    --name <string>       Connection name shown in the client (default: <provider>_olcrtc).
-    --id <room_id>        Room ID for Telemost (required with --provider telemost in CLI).
+    --name <string>       Connection name shown in the client.
+    --id <room_id>        Room ID for Telemost.
     -h, --help            Show this help.
 
 Examples:
     sudo ./olcrtc-setup.sh
-    sudo ./olcrtc-setup.sh --provider telemost --id 12345
-    sudo ./olcrtc-setup.sh --provider jazz --regenerate
+    sudo ./olcrtc-setup.sh --carrier telemost --transport vp8channel --id 12345
+    sudo ./olcrtc-setup.sh --carrier jazz --transport datachannel --regenerate
     sudo ./olcrtc-setup.sh --socks-proxy 1.2.3.4:1080
-    sudo ./olcrtc-setup.sh --name my_server
 EOF
 }
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --provider) PROVIDER="$2"; shift 2 ;;
-        --provider=*) PROVIDER="${1#*=}"; shift ;;
+        --carrier) CARRIER="$(normalize_carrier "$2")"; shift 2 ;;
+        --carrier=*) CARRIER="$(normalize_carrier "${1#*=}")"; shift ;;
+        --provider) CARRIER="$(normalize_carrier "$2")"; shift 2 ;;
+        --provider=*) CARRIER="$(normalize_carrier "${1#*=}")"; shift ;;
+        --transport) SET_TRANSPORT="$2"; shift 2 ;;
+        --transport=*) SET_TRANSPORT="${1#*=}"; shift ;;
         --regenerate) REGENERATE_ROOM=1; shift ;;
         --regenerate-key) REGENERATE_KEY=1; REGENERATE_ROOM=1; shift ;;
         --socks-proxy) SET_SOCKS_PROXY="$2"; shift 2 ;;
@@ -389,6 +502,9 @@ while [ $# -gt 0 ]; do
     esac
 done
 
+# Normalize carrier (backward compat wb_stream → wbstream)
+CARRIER="$(normalize_carrier "$CARRIER")"
+
 # ── Pre-flight checks ────────────────────────────────────────────────────────
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -396,9 +512,9 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-case "$PROVIDER" in
-    telemost|jazz|wb_stream) ;;
-    *) echo "[!] Unsupported provider: $PROVIDER" >&2; exit 1 ;;
+case "$CARRIER" in
+    telemost|jazz|wbstream) ;;
+    *) echo "[!] Unsupported carrier: $CARRIER" >&2; exit 1 ;;
 esac
 
 if ! command -v systemctl >/dev/null 2>&1; then
@@ -429,23 +545,25 @@ run_instance_menu() {
         echo ""
         echo "  Активные инстансы:"
         echo "  ──────────────────────────────────────────────────────────"
-        local inst_n inst_ef inst_svc inst_prov inst_room inst_name inst_status inst_lbl
+        local inst_n inst_ef inst_svc inst_carr inst_trans inst_room inst_name inst_status inst_lbl
         for inst_n in $(list_instances); do
             inst_ef="$(instance_env_file "$inst_n")"
             inst_svc="$(instance_service "$inst_n")"
             inst_lbl="$(instance_label "$inst_n")"
-            inst_prov="$(get_env_value OLCRTC_PROVIDER "$inst_ef")"
+            inst_carr="$(get_carrier "$inst_ef")"
+            inst_trans="$(get_env_value OLCRTC_TRANSPORT "$inst_ef")"
+            [ -z "$inst_trans" ] && inst_trans="datachannel"
             inst_room="$(get_env_value OLCRTC_ROOM_ID "$inst_ef")"
             inst_name="$(get_env_value OLCRTC_NAME "$inst_ef")"
-            [ -z "$inst_name" ] && inst_name="${inst_prov}_olcrtc"
+            [ -z "$inst_name" ] && inst_name="${inst_carr}_olcrtc"
             inst_status="$(systemctl is-active "$inst_svc" 2>/dev/null || echo "unknown")"
-            printf "  [%-8s]  %-12s | Room: %-12s | %s\n" "$inst_lbl" "$inst_prov" "$inst_room" "$inst_status"
+            printf "  [%-8s]  %-10s %-14s | Room: %-12s | %s\n" "$inst_lbl" "$inst_carr" "$inst_trans" "$inst_room" "$inst_status"
         done
         echo "  ──────────────────────────────────────────────────────────"
         echo ""
         echo "  1) Создать новый инстанс"
         echo "  2) Показать URI / QR-код инстанса"
-        echo "  3) Настроить инстанс (провайдер, прокси, debug, имя)"
+        echo "  3) Настроить инстанс (carrier, транспорт, прокси, debug, имя)"
         echo "  4) Перезапустить инстанс"
         echo "  5) Удалить инстанс"
         echo "  6) Статус всех инстансов"
@@ -467,25 +585,40 @@ run_instance_menu() {
             echo "  Создание инстанса #$new_id"
             echo ""
 
-            # Provider
-            echo "  1) wb_stream"
-            echo "  2) jazz"
-            echo "  3) telemost"
+            # Carrier
+            echo "  Carrier (сервис):"
+            echo "    1) wbstream  — Wildberries Stream"
+            echo "    2) jazz      — SaluteJazz"
+            echo "    3) telemost  — Yandex Telemost"
             echo ""
-            local main_prov
-            main_prov="$(get_env_value OLCRTC_PROVIDER)"
-            tty_read -rp "  Провайдер [1-3, Enter = как основной ($main_prov)]: " pc
-            local new_prov=""
+            local main_carr
+            main_carr="$(get_carrier)"
+            tty_read -rp "  Carrier [1-3, Enter = как основной ($main_carr)]: " pc
+            local new_carr=""
             case "$pc" in
-                1) new_prov="wb_stream" ;;
-                2) new_prov="jazz" ;;
-                3) new_prov="telemost" ;;
-                "") new_prov="$main_prov" ;;
+                1) new_carr="wbstream" ;;
+                2) new_carr="jazz" ;;
+                3) new_carr="telemost" ;;
+                "") new_carr="$main_carr" ;;
                 *) echo "  [!] Неверный выбор"; tty_read -rp "[Enter для продолжения]"; continue ;;
             esac
 
+            # Transport
+            echo ""
+            local main_trans
+            main_trans="$(get_env_value OLCRTC_TRANSPORT)"
+            [ -z "$main_trans" ] && main_trans="$TRANSPORT_DEFAULT"
+            if ! select_transport "$new_carr" "$main_trans"; then
+                echo "  [!] Неверный выбор транспорта"
+                tty_read -rp "[Enter для продолжения]"
+                continue
+            fi
+            local new_trans="$REPLY_TRANSPORT"
+            local new_vp8_fps="${REPLY_VP8_FPS:-}"
+            local new_vp8_batch="${REPLY_VP8_BATCH:-}"
+
             # Name
-            local new_name_default="${new_prov}_olcrtc_${new_id}"
+            local new_name_default="${new_carr}_olcrtc_${new_id}"
             tty_read -rp "  Имя соединения [Enter = $new_name_default]: " new_name
             [ -z "$new_name" ] && new_name="$new_name_default"
 
@@ -521,7 +654,7 @@ run_instance_menu() {
 
             # Room ID
             local new_room="any"
-            if [ "$new_prov" = "telemost" ]; then
+            if [ "$new_carr" = "telemost" ]; then
                 tty_read -rp "  Введите Room ID для Telemost: " new_room
                 if [ -z "$new_room" ]; then
                     echo "  [!] Room ID не может быть пустым"
@@ -534,13 +667,17 @@ run_instance_menu() {
             local new_ef="/etc/olcrtc/$new_id/env"
             cat > "$new_ef" <<IEOF
 # Managed by olcrtc-setup.sh — instance #$new_id
-OLCRTC_PROVIDER=$new_prov
+OLCRTC_CARRIER=$new_carr
+OLCRTC_TRANSPORT=$new_trans
+OLCRTC_LINK=direct
 OLCRTC_ROOM_ID=$new_room
 OLCRTC_KEY=$new_key
 OLCRTC_DNS=$DNS_DEFAULT
 OLCRTC_DEBUG=
 OLCRTC_SOCKS_PROXY=$new_proxy
 OLCRTC_NAME=$new_name
+OLCRTC_VP8_FPS=$new_vp8_fps
+OLCRTC_VP8_BATCH=$new_vp8_batch
 IEOF
             chown root:olcrtc "$new_ef"
             chmod 0640 "$new_ef"
@@ -557,7 +694,7 @@ IEOF
 
             # Wait for room ID
             if [ "$new_room" = "any" ]; then
-                if ! wait_for_room_id_for "$new_svc" "$new_ef" "$new_prov"; then
+                if ! wait_for_room_id_for "$new_svc" "$new_ef" "$new_carr"; then
                     echo "  [!] Сервис запущен, но room ID не определён. Проверьте логи."
                     tty_read -rp "[Enter для продолжения]"
                     continue
@@ -570,7 +707,7 @@ IEOF
             final_key="$(get_env_value OLCRTC_KEY "$new_ef")"
             echo ""
             echo "  Инстанс #$new_id создан."
-            show_uri_qr "$new_prov" "$final_room" "$final_key" "$new_name"
+            show_uri_qr "$new_carr" "$final_room" "$final_key" "$new_name"
             echo ""
             tty_read -rp "[Enter для продолжения]"
             ;;
@@ -581,9 +718,9 @@ IEOF
             for inst_n in $(list_instances); do
                 inst_ef="$(instance_env_file "$inst_n")"
                 inst_lbl="$(instance_label "$inst_n")"
-                inst_prov="$(get_env_value OLCRTC_PROVIDER "$inst_ef")"
+                inst_carr="$(get_carrier "$inst_ef")"
                 inst_room="$(get_env_value OLCRTC_ROOM_ID "$inst_ef")"
-                printf "    %s) [%s] %s | Room: %s\n" "$inst_n" "$inst_lbl" "$inst_prov" "$inst_room"
+                printf "    %s) [%s] %s | Room: %s\n" "$inst_n" "$inst_lbl" "$inst_carr" "$inst_room"
             done
             echo ""
             tty_read -rp "  Номер инстанса (0 = основной): " sel_n
@@ -594,13 +731,13 @@ IEOF
                 tty_read -rp "[Enter для продолжения]"
                 continue
             fi
-            local sel_prov sel_room sel_key sel_name
-            sel_prov="$(get_env_value OLCRTC_PROVIDER "$sel_ef")"
+            local sel_carr sel_room sel_key sel_name
+            sel_carr="$(get_carrier "$sel_ef")"
             sel_room="$(get_env_value OLCRTC_ROOM_ID "$sel_ef")"
             sel_key="$(get_env_value OLCRTC_KEY "$sel_ef")"
             sel_name="$(get_env_value OLCRTC_NAME "$sel_ef")"
-            [ -z "$sel_name" ] && sel_name="${sel_prov}_olcrtc"
-            show_uri_qr "$sel_prov" "$sel_room" "$sel_key" "$sel_name"
+            [ -z "$sel_name" ] && sel_name="${sel_carr}_olcrtc"
+            show_uri_qr "$sel_carr" "$sel_room" "$sel_key" "$sel_name"
             echo ""
             tty_read -rp "[Enter для продолжения]"
             ;;
@@ -611,8 +748,10 @@ IEOF
             for inst_n in $(list_instances); do
                 inst_ef="$(instance_env_file "$inst_n")"
                 inst_lbl="$(instance_label "$inst_n")"
-                inst_prov="$(get_env_value OLCRTC_PROVIDER "$inst_ef")"
-                printf "    %s) [%s] %s\n" "$inst_n" "$inst_lbl" "$inst_prov"
+                inst_carr="$(get_carrier "$inst_ef")"
+                inst_trans="$(get_env_value OLCRTC_TRANSPORT "$inst_ef")"
+                [ -z "$inst_trans" ] && inst_trans="datachannel"
+                printf "    %s) [%s] %s / %s\n" "$inst_n" "$inst_lbl" "$inst_carr" "$inst_trans"
             done
             echo ""
             tty_read -rp "  Номер инстанса: " cfg_n
@@ -630,32 +769,42 @@ IEOF
 
             echo ""
             echo "  Настройка инстанса [$cfg_lbl]:"
-            echo "  1) Сменить провайдера"
-            echo "  2) Настроить SOCKS5-прокси"
-            echo "  3) Убрать SOCKS5-прокси"
-            echo "  4) Включить / выключить debug"
-            echo "  5) Переименовать"
+            echo "  1) Сменить carrier"
+            echo "  2) Сменить транспорт"
+            echo "  3) Настроить SOCKS5-прокси"
+            echo "  4) Убрать SOCKS5-прокси"
+            echo "  5) Включить / выключить debug"
+            echo "  6) Переименовать"
             echo "  0) ← Назад"
             echo ""
             tty_read -rp "  Выберите: " cfg_choice
 
             case "$cfg_choice" in
-            1)  # Сменить провайдера
+            1)  # Сменить carrier
                 echo ""
-                echo "  1) wb_stream"
-                echo "  2) jazz"
-                echo "  3) telemost"
+                echo "  Carrier (сервис):"
+                echo "    1) wbstream  — Wildberries Stream"
+                echo "    2) jazz      — SaluteJazz"
+                echo "    3) telemost  — Yandex Telemost"
                 echo ""
-                tty_read -rp "  Провайдер [1-3]: " cpc
-                local cfg_prov=""
+                tty_read -rp "  Carrier [1-3]: " cpc
+                local cfg_carr=""
                 case "$cpc" in
-                    1) cfg_prov="wb_stream" ;;
-                    2) cfg_prov="jazz" ;;
-                    3) cfg_prov="telemost" ;;
+                    1) cfg_carr="wbstream" ;;
+                    2) cfg_carr="jazz" ;;
+                    3) cfg_carr="telemost" ;;
                     *) echo "  [!] Неверный выбор"; tty_read -rp "[Enter для продолжения]"; continue ;;
                 esac
-                set_env_value "OLCRTC_PROVIDER" "$cfg_prov" "$cfg_ef"
-                if [ "$cfg_prov" = "telemost" ]; then
+                set_env_value "OLCRTC_CARRIER" "$cfg_carr" "$cfg_ef"
+                # Check transport compatibility
+                local cfg_cur_trans
+                cfg_cur_trans="$(get_env_value OLCRTC_TRANSPORT "$cfg_ef")"
+                [ -z "$cfg_cur_trans" ] && cfg_cur_trans="datachannel"
+                if [ "$cfg_carr" = "telemost" ] && { [ "$cfg_cur_trans" = "datachannel" ] || [ "$cfg_cur_trans" = "seichannel" ]; }; then
+                    echo "  [!] Транспорт $cfg_cur_trans не совместим с telemost, переключаю на vp8channel"
+                    set_env_value "OLCRTC_TRANSPORT" "vp8channel" "$cfg_ef"
+                fi
+                if [ "$cfg_carr" = "telemost" ]; then
                     tty_read -rp "  Введите Room ID для Telemost: " cfg_room
                     if [ -z "$cfg_room" ]; then
                         echo "  [!] Room ID не может быть пустым"
@@ -668,14 +817,33 @@ IEOF
                 fi
                 systemctl restart "$cfg_svc"
                 if [ "$(get_env_value OLCRTC_ROOM_ID "$cfg_ef")" = "any" ]; then
-                    if ! wait_for_room_id_for "$cfg_svc" "$cfg_ef" "$cfg_prov"; then
+                    if ! wait_for_room_id_for "$cfg_svc" "$cfg_ef" "$cfg_carr"; then
                         tty_read -rp "[Enter для продолжения]"
                         continue
                     fi
                 fi
-                echo "  Провайдер изменён на: $cfg_prov"
+                echo "  Carrier изменён на: $cfg_carr"
                 ;;
-            2)  # Настроить SOCKS5-прокси
+            2)  # Сменить транспорт
+                echo ""
+                local cfg_cur_carr cfg_cur_trans
+                cfg_cur_carr="$(get_carrier "$cfg_ef")"
+                cfg_cur_trans="$(get_env_value OLCRTC_TRANSPORT "$cfg_ef")"
+                [ -z "$cfg_cur_trans" ] && cfg_cur_trans="datachannel"
+                if ! select_transport "$cfg_cur_carr" "$cfg_cur_trans"; then
+                    echo "  [!] Неверный выбор"
+                    tty_read -rp "[Enter для продолжения]"
+                    continue
+                fi
+                set_env_value "OLCRTC_TRANSPORT" "$REPLY_TRANSPORT" "$cfg_ef"
+                if [ -n "$REPLY_VP8_FPS" ]; then
+                    set_env_value "OLCRTC_VP8_FPS" "$REPLY_VP8_FPS" "$cfg_ef"
+                    set_env_value "OLCRTC_VP8_BATCH" "$REPLY_VP8_BATCH" "$cfg_ef"
+                fi
+                systemctl restart "$cfg_svc"
+                echo "  Транспорт изменён на: $REPLY_TRANSPORT"
+                ;;
+            3)  # Настроить SOCKS5-прокси
                 tty_read -rp "  Введите адрес прокси [user:pass@]host:port: " cfg_proxy
                 if [ -z "$cfg_proxy" ] || [[ "$cfg_proxy" != *":"* ]]; then
                     echo "  [!] Неверный формат"
@@ -686,12 +854,12 @@ IEOF
                 systemctl restart "$cfg_svc"
                 echo "  Прокси установлен: $cfg_proxy"
                 ;;
-            3)  # Убрать SOCKS5-прокси
+            4)  # Убрать SOCKS5-прокси
                 set_env_value "OLCRTC_SOCKS_PROXY" "" "$cfg_ef"
                 systemctl restart "$cfg_svc"
                 echo "  Прокси удалён"
                 ;;
-            4)  # Debug
+            5)  # Debug
                 local cfg_debug
                 cfg_debug="$(get_env_value OLCRTC_DEBUG "$cfg_ef")"
                 if [ -n "$cfg_debug" ] && [ "$cfg_debug" != "0" ] && [ "$cfg_debug" != "false" ]; then
@@ -703,10 +871,10 @@ IEOF
                 fi
                 systemctl restart "$cfg_svc"
                 ;;
-            5)  # Переименовать
+            6)  # Переименовать
                 local cfg_cur_name
                 cfg_cur_name="$(get_env_value OLCRTC_NAME "$cfg_ef")"
-                [ -z "$cfg_cur_name" ] && cfg_cur_name="$(get_env_value OLCRTC_PROVIDER "$cfg_ef")_olcrtc"
+                [ -z "$cfg_cur_name" ] && cfg_cur_name="$(get_carrier "$cfg_ef")_olcrtc"
                 echo "  Текущее имя: $cfg_cur_name"
                 tty_read -rp "  Новое имя: " cfg_new_name
                 if [ -z "$cfg_new_name" ]; then
@@ -765,9 +933,9 @@ IEOF
                 [ "$inst_n" = "0" ] && continue
                 inst_ef="$(instance_env_file "$inst_n")"
                 inst_lbl="$(instance_label "$inst_n")"
-                inst_prov="$(get_env_value OLCRTC_PROVIDER "$inst_ef")"
+                inst_carr="$(get_carrier "$inst_ef")"
                 inst_room="$(get_env_value OLCRTC_ROOM_ID "$inst_ef")"
-                printf "    %s) [%s] %s | Room: %s\n" "$inst_n" "$inst_lbl" "$inst_prov" "$inst_room"
+                printf "    %s) [%s] %s | Room: %s\n" "$inst_n" "$inst_lbl" "$inst_carr" "$inst_room"
             done
             echo ""
             tty_read -rp "  Номер инстанса: " del_n
@@ -833,8 +1001,10 @@ run_menu() {
     ensure_qrencode || true
 
     while true; do
-        local cur_provider cur_room cur_key cur_name cur_debug cur_proxy cur_ip
-        cur_provider="$(get_env_value OLCRTC_PROVIDER)"
+        local cur_carrier cur_transport cur_room cur_key cur_name cur_debug cur_proxy cur_ip
+        cur_carrier="$(get_carrier)"
+        cur_transport="$(get_env_value OLCRTC_TRANSPORT)"
+        [ -z "$cur_transport" ] && cur_transport="datachannel"
         cur_room="$(get_env_value OLCRTC_ROOM_ID)"
         cur_key="$(get_env_value OLCRTC_KEY)"
         cur_name="$(get_env_value OLCRTC_NAME)"
@@ -842,7 +1012,7 @@ run_menu() {
         cur_proxy="$(get_env_value OLCRTC_SOCKS_PROXY)"
         cur_ip="$(get_public_ip)"
 
-        [ -z "$cur_name" ] && cur_name="${cur_provider}_olcrtc"
+        [ -z "$cur_name" ] && cur_name="${cur_carrier}_olcrtc"
 
         local inst_total
         inst_total="$(instance_count)"
@@ -852,7 +1022,8 @@ run_menu() {
         echo ""
         echo "============================================================"
         echo "  olcRTC Server Manager"
-        echo "  Provider: $cur_provider | Room: $cur_room | IP: $cur_ip"
+        echo "  Carrier: $cur_carrier | Transport: $cur_transport"
+        echo "  Room: $cur_room | IP: $cur_ip"
         if [ "$extra_inst" -gt 0 ]; then
             echo "  Инстансов: $inst_total (основной + $extra_inst доп.)"
         fi
@@ -860,15 +1031,16 @@ run_menu() {
         echo ""
         echo "  1) Статус сервиса"
         echo "  2) Показать URI / QR-код"
-        echo "  3) Сменить провайдера"
-        echo "  4) Пересоздать room ID  (--regenerate)"
-        echo "  5) Ротация ключа + room ID  (--regenerate-key)"
-        echo "  6) Настроить SOCKS5-прокси"
-        echo "  7) Убрать SOCKS5-прокси"
-        echo "  8) Включить / выключить debug-логирование"
-        echo "  9) Переименовать соединение (name)"
-        echo " 10) Обновить бинарник olcRTC"
-        echo " 11) Удалить olcRTC полностью"
+        echo "  3) Сменить carrier"
+        echo "  4) Сменить транспорт"
+        echo "  5) Пересоздать room ID  (--regenerate)"
+        echo "  6) Ротация ключа + room ID  (--regenerate-key)"
+        echo "  7) Настроить SOCKS5-прокси"
+        echo "  8) Убрать SOCKS5-прокси"
+        echo "  9) Включить / выключить debug-логирование"
+        echo " 10) Переименовать соединение (name)"
+        echo " 11) Обновить бинарник olcRTC"
+        echo " 12) Удалить olcRTC полностью"
         echo " ---"
         echo " 20) Управление инстансами  >>>"
         echo "  0) Выход"
@@ -884,31 +1056,38 @@ run_menu() {
             ;;
 
         2)  # Показать URI / QR-код
-            show_uri_qr "$cur_provider" "$cur_room" "$cur_key" "$cur_name"
+            show_uri_qr "$cur_carrier" "$cur_room" "$cur_key" "$cur_name"
             echo ""
             tty_read -rp "[Enter для продолжения]"
             ;;
 
-        3)  # Сменить провайдера
+        3)  # Сменить carrier
             echo ""
-            echo "  Текущий провайдер: $cur_provider"
+            echo "  Текущий carrier: $cur_carrier"
             echo ""
-            echo "  1) wb_stream"
-            echo "  2) jazz"
-            echo "  3) telemost"
+            echo "  Carrier (сервис):"
+            echo "    1) wbstream  — Wildberries Stream"
+            echo "    2) jazz      — SaluteJazz"
+            echo "    3) telemost  — Yandex Telemost"
             echo ""
-            tty_read -rp "  Выберите провайдера [1-3]: " pchoice
-            local new_provider=""
+            tty_read -rp "  Выберите carrier [1-3]: " pchoice
+            local new_carrier=""
             case "$pchoice" in
-                1) new_provider="wb_stream" ;;
-                2) new_provider="jazz" ;;
-                3) new_provider="telemost" ;;
+                1) new_carrier="wbstream" ;;
+                2) new_carrier="jazz" ;;
+                3) new_carrier="telemost" ;;
                 *) echo "  [!] Неверный выбор"; tty_read -rp "[Enter для продолжения]"; continue ;;
             esac
 
-            set_env_value "OLCRTC_PROVIDER" "$new_provider"
+            set_env_value "OLCRTC_CARRIER" "$new_carrier"
 
-            if [ "$new_provider" = "telemost" ]; then
+            # Check transport compatibility
+            if [ "$new_carrier" = "telemost" ] && { [ "$cur_transport" = "datachannel" ] || [ "$cur_transport" = "seichannel" ]; }; then
+                echo "  [!] Транспорт $cur_transport не совместим с telemost, переключаю на vp8channel"
+                set_env_value "OLCRTC_TRANSPORT" "vp8channel"
+            fi
+
+            if [ "$new_carrier" = "telemost" ]; then
                 tty_read -rp "  Введите Room ID для Telemost: " new_room
                 if [ -z "$new_room" ]; then
                     echo "  [!] Room ID не может быть пустым"
@@ -922,7 +1101,7 @@ run_menu() {
                 ROOM_ID="any"
             fi
 
-            PROVIDER="$new_provider"
+            CARRIER="$new_carrier"
             systemctl restart olcrtc-server.service
 
             if [ "$ROOM_ID" = "any" ]; then
@@ -932,26 +1111,43 @@ run_menu() {
                 fi
             fi
 
-            # Re-read updated values
             cur_room="$(get_env_value OLCRTC_ROOM_ID)"
             cur_name="$(get_env_value OLCRTC_NAME)"
-            [ -z "$cur_name" ] && cur_name="${new_provider}_olcrtc"
+            [ -z "$cur_name" ] && cur_name="${new_carrier}_olcrtc"
             cur_key="$(get_env_value OLCRTC_KEY)"
 
             echo ""
-            echo "  Провайдер изменён на: $new_provider"
-            show_uri_qr "$new_provider" "$cur_room" "$cur_key" "$cur_name"
+            echo "  Carrier изменён на: $new_carrier"
+            show_uri_qr "$new_carrier" "$cur_room" "$cur_key" "$cur_name"
             echo ""
             tty_read -rp "[Enter для продолжения]"
             ;;
 
-        4)  # Пересоздать room ID
+        4)  # Сменить транспорт
+            echo ""
+            if ! select_transport "$cur_carrier" "$cur_transport"; then
+                echo "  [!] Неверный выбор"
+                tty_read -rp "[Enter для продолжения]"
+                continue
+            fi
+            set_env_value "OLCRTC_TRANSPORT" "$REPLY_TRANSPORT"
+            if [ -n "$REPLY_VP8_FPS" ]; then
+                set_env_value "OLCRTC_VP8_FPS" "$REPLY_VP8_FPS"
+                set_env_value "OLCRTC_VP8_BATCH" "$REPLY_VP8_BATCH"
+            fi
+            systemctl restart olcrtc-server.service
+            echo "  Транспорт изменён на: $REPLY_TRANSPORT"
+            echo ""
+            tty_read -rp "[Enter для продолжения]"
+            ;;
+
+        5)  # Пересоздать room ID
             set_env_value "OLCRTC_ROOM_ID" "any"
             ROOM_ID="any"
-            PROVIDER="$cur_provider"
+            CARRIER="$cur_carrier"
             systemctl restart olcrtc-server.service
 
-            if [ "$cur_provider" = "telemost" ]; then
+            if [ "$cur_carrier" = "telemost" ]; then
                 tty_read -rp "  Введите новый Room ID для Telemost: " new_room
                 if [ -z "$new_room" ]; then
                     echo "  [!] Room ID не может быть пустым"
@@ -971,12 +1167,12 @@ run_menu() {
             cur_room="$(get_env_value OLCRTC_ROOM_ID)"
             echo ""
             echo "  Room ID обновлён: $cur_room"
-            show_uri_qr "$cur_provider" "$cur_room" "$cur_key" "$cur_name"
+            show_uri_qr "$cur_carrier" "$cur_room" "$cur_key" "$cur_name"
             echo ""
             tty_read -rp "[Enter для продолжения]"
             ;;
 
-        5)  # Ротация ключа + room ID
+        6)  # Ротация ключа + room ID
             echo ""
             tty_read -rp "  Все существующие клиенты потеряют подключение. Продолжить? [y/N] " confirm
             if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
@@ -995,10 +1191,10 @@ run_menu() {
             set_env_value "OLCRTC_KEY" "$new_key"
             set_env_value "OLCRTC_ROOM_ID" "any"
             ROOM_ID="any"
-            PROVIDER="$cur_provider"
+            CARRIER="$cur_carrier"
             systemctl restart olcrtc-server.service
 
-            if [ "$cur_provider" = "telemost" ]; then
+            if [ "$cur_carrier" = "telemost" ]; then
                 tty_read -rp "  Введите новый Room ID для Telemost: " new_room
                 if [ -z "$new_room" ]; then
                     echo "  [!] Room ID не может быть пустым"
@@ -1019,12 +1215,12 @@ run_menu() {
             cur_key="$(get_env_value OLCRTC_KEY)"
             echo ""
             echo "  Ключ и Room ID обновлены."
-            show_uri_qr "$cur_provider" "$cur_room" "$cur_key" "$cur_name"
+            show_uri_qr "$cur_carrier" "$cur_room" "$cur_key" "$cur_name"
             echo ""
             tty_read -rp "[Enter для продолжения]"
             ;;
 
-        6)  # Настроить SOCKS5-прокси
+        7)  # Настроить SOCKS5-прокси
             echo ""
             tty_read -rp "  Введите адрес прокси [user:pass@]host:port: " new_proxy
             if [ -z "$new_proxy" ] || [[ "$new_proxy" != *":"* ]]; then
@@ -1039,7 +1235,7 @@ run_menu() {
             tty_read -rp "[Enter для продолжения]"
             ;;
 
-        7)  # Убрать SOCKS5-прокси
+        8)  # Убрать SOCKS5-прокси
             set_env_value "OLCRTC_SOCKS_PROXY" ""
             systemctl restart olcrtc-server.service
             echo "  Прокси удалён"
@@ -1047,7 +1243,7 @@ run_menu() {
             tty_read -rp "[Enter для продолжения]"
             ;;
 
-        8)  # Включить / выключить debug
+        9)  # Включить / выключить debug
             if [ -n "$cur_debug" ] && [ "$cur_debug" != "0" ] && [ "$cur_debug" != "false" ]; then
                 set_env_value "OLCRTC_DEBUG" ""
                 echo "  Debug выключен"
@@ -1060,7 +1256,7 @@ run_menu() {
             tty_read -rp "[Enter для продолжения]"
             ;;
 
-        9)  # Переименовать соединение
+        10) # Переименовать соединение
             echo ""
             echo "  Текущее имя: $cur_name"
             tty_read -rp "  Введите новое имя: " new_name
@@ -1072,13 +1268,12 @@ run_menu() {
             set_env_value "OLCRTC_NAME" "$new_name"
             cur_room="$(get_env_value OLCRTC_ROOM_ID)"
             cur_key="$(get_env_value OLCRTC_KEY)"
-            cur_provider="$(get_env_value OLCRTC_PROVIDER)"
-            show_uri_qr "$cur_provider" "$cur_room" "$cur_key" "$new_name"
+            show_uri_qr "$cur_carrier" "$cur_room" "$cur_key" "$new_name"
             echo ""
             tty_read -rp "[Enter для продолжения]"
             ;;
 
-        10) # Обновить бинарник
+        11) # Обновить бинарник
             local up_arch up_bin up_tag up_url
             up_arch="$(uname -m)"
             case "$up_arch" in
@@ -1104,7 +1299,7 @@ run_menu() {
             tty_read -rp "[Enter для продолжения]"
             ;;
 
-        11) # Удалить olcRTC полностью
+        12) # Удалить olcRTC полностью
             echo ""
             tty_read -rp "  Удалить olcRTC сервер, все конфиги и ключи? Это необратимо! [y/N] " confirm
             if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
@@ -1218,17 +1413,28 @@ run_install() {
     echo "[*] Installing olcrtc-launcher..."
     cat > /usr/local/bin/olcrtc-launcher <<'LAUNCHER'
 #!/usr/bin/env bash
-# olcRTC server launcher — reads /etc/olcrtc/env and translates to CLI flags.
+# olcRTC server launcher — reads env and translates to CLI flags.
 set -euo pipefail
 
-if [ -z "${OLCRTC_PROVIDER:-}" ] || [ -z "${OLCRTC_ROOM_ID:-}" ] || [ -z "${OLCRTC_KEY:-}" ]; then
-    echo "olcrtc-launcher: missing required env (OLCRTC_PROVIDER / OLCRTC_ROOM_ID / OLCRTC_KEY)" >&2
+# Carrier: prefer OLCRTC_CARRIER, fall back to legacy OLCRTC_PROVIDER
+carrier="${OLCRTC_CARRIER:-${OLCRTC_PROVIDER:-}}"
+# Backward compat: wb_stream → wbstream
+[ "$carrier" = "wb_stream" ] && carrier="wbstream"
+
+if [ -z "$carrier" ] || [ -z "${OLCRTC_ROOM_ID:-}" ] || [ -z "${OLCRTC_KEY:-}" ]; then
+    echo "olcrtc-launcher: missing required env (OLCRTC_CARRIER / OLCRTC_ROOM_ID / OLCRTC_KEY)" >&2
     exit 64
 fi
 
+transport="${OLCRTC_TRANSPORT:-datachannel}"
+link="${OLCRTC_LINK:-direct}"
+
 ARGS=(
     -mode srv
-    -provider "$OLCRTC_PROVIDER"
+    -carrier "$carrier"
+    -transport "$transport"
+    -link "$link"
+    -data data
     -id "$OLCRTC_ROOM_ID"
     -key "$OLCRTC_KEY"
     -dns "${OLCRTC_DNS:-1.1.1.1:53}"
@@ -1236,6 +1442,11 @@ ARGS=(
 
 if [ -n "${OLCRTC_DEBUG:-}" ] && [ "$OLCRTC_DEBUG" != "0" ] && [ "$OLCRTC_DEBUG" != "false" ]; then
     ARGS+=(-debug)
+fi
+
+# VP8 channel options
+if [ "$transport" = "vp8channel" ]; then
+    ARGS+=(-vp8-fps "${OLCRTC_VP8_FPS:-60}" -vp8-batch "${OLCRTC_VP8_BATCH:-8}")
 fi
 
 if [ -n "${OLCRTC_SOCKS_PROXY:-}" ]; then
@@ -1346,17 +1557,23 @@ UNIT
     EXISTING_SOCKS_PROXY=""
     EXISTING_DEBUG=""
     EXISTING_NAME=""
+    EXISTING_TRANSPORT=""
+    EXISTING_VP8_FPS=""
+    EXISTING_VP8_BATCH=""
     if [ -f "$ENV_FILE" ]; then
         EXISTING_ROOM="$(get_env_value OLCRTC_ROOM_ID)"
         EXISTING_SOCKS_PROXY="$(get_env_value OLCRTC_SOCKS_PROXY)"
         EXISTING_DEBUG="$(get_env_value OLCRTC_DEBUG)"
         EXISTING_NAME="$(get_env_value OLCRTC_NAME)"
+        EXISTING_TRANSPORT="$(get_env_value OLCRTC_TRANSPORT)"
+        EXISTING_VP8_FPS="$(get_env_value OLCRTC_VP8_FPS)"
+        EXISTING_VP8_BATCH="$(get_env_value OLCRTC_VP8_BATCH)"
     fi
     if [ "$REGENERATE_ROOM" -eq 1 ]; then
         EXISTING_ROOM=""
     fi
 
-    # Decide final SOCKS proxy / debug values
+    # Decide final SOCKS proxy / debug / transport values
     if [ "$SET_SOCKS_PROXY" = "__keep__" ]; then
         SOCKS_PROXY="$EXISTING_SOCKS_PROXY"
     else
@@ -1367,6 +1584,16 @@ UNIT
     else
         DEBUG_FLAG="$SET_DEBUG"
     fi
+    if [ "$SET_TRANSPORT" = "__keep__" ]; then
+        if [ -n "$EXISTING_TRANSPORT" ]; then
+            TRANSPORT="$EXISTING_TRANSPORT"
+        fi
+        # else keep TRANSPORT from env/default
+    else
+        TRANSPORT="$SET_TRANSPORT"
+    fi
+    VP8_FPS="${EXISTING_VP8_FPS:-}"
+    VP8_BATCH="${EXISTING_VP8_BATCH:-}"
 
     # Decide name
     if [ -n "$SET_NAME" ]; then
@@ -1374,18 +1601,17 @@ UNIT
     elif [ -n "$EXISTING_NAME" ]; then
         NAME="$EXISTING_NAME"
     else
-        NAME="${PROVIDER}_olcrtc"
+        NAME="${CARRIER}_olcrtc"
     fi
 
     # Decide initial room ID
     if [ -n "$EXISTING_ROOM" ] && [ "$EXISTING_ROOM" != "any" ]; then
         ROOM_ID="$EXISTING_ROOM"
         echo "[*] Reusing existing room ID: $ROOM_ID"
-    elif [ "$PROVIDER" = "telemost" ]; then
+    elif [ "$CARRIER" = "telemost" ]; then
         if [ -n "$SET_TELEMOST_ID" ]; then
             ROOM_ID="$SET_TELEMOST_ID"
         else
-            # Interactive mode: ask user for room ID
             tty_read -rp "[?] Введите Room ID для Telemost: " ROOM_ID
             if [ -z "$ROOM_ID" ]; then
                 echo "[!] Room ID не может быть пустым для Telemost" >&2
@@ -1400,13 +1626,17 @@ UNIT
     # Write env file
     cat > "$ENV_FILE" <<EOF
 # Managed by olcrtc-setup.sh
-OLCRTC_PROVIDER=$PROVIDER
+OLCRTC_CARRIER=$CARRIER
+OLCRTC_TRANSPORT=$TRANSPORT
+OLCRTC_LINK=direct
 OLCRTC_ROOM_ID=$ROOM_ID
 OLCRTC_KEY=$KEY
 OLCRTC_DNS=$DNS_DEFAULT
 OLCRTC_DEBUG=$DEBUG_FLAG
 OLCRTC_SOCKS_PROXY=$SOCKS_PROXY
 OLCRTC_NAME=$NAME
+OLCRTC_VP8_FPS=$VP8_FPS
+OLCRTC_VP8_BATCH=$VP8_BATCH
 EOF
     chown root:olcrtc "$ENV_FILE"
     chmod 0640 "$ENV_FILE"
@@ -1416,7 +1646,7 @@ EOF
     systemctl enable --quiet olcrtc-server.service
     systemctl restart olcrtc-server.service
 
-    # Auto-detect room ID for wb_stream / jazz
+    # Auto-detect room ID for wbstream / jazz
     if [ "$ROOM_ID" = "any" ]; then
         if ! wait_for_room_id; then
             exit 1
@@ -1430,6 +1660,7 @@ EOF
     PUBLIC_IP="$(get_public_ip)"
     DEBUG_HUMAN="$(debug_human "$DEBUG_FLAG")"
     PROXY_HUMAN="$(proxy_human "$SOCKS_PROXY")"
+    TRANSPORT_HUMAN="$(transport_human "$TRANSPORT")"
 
     cat <<EOF
 
@@ -1437,7 +1668,8 @@ EOF
         olcRTC server is up.
 ==========================================================
 
-  Provider:        $PROVIDER
+  Carrier:         $CARRIER
+  Transport:       $TRANSPORT_HUMAN
   Room ID:         $ROOM_ID
   Key (hex):       $KEY
   DNS:             $DNS_DEFAULT
@@ -1448,7 +1680,7 @@ EOF
 
   URI для импорта в приложение:
 EOF
-    show_uri_qr "$PROVIDER" "$ROOM_ID" "$KEY" "$NAME"
+    show_uri_qr "$CARRIER" "$ROOM_ID" "$KEY" "$NAME"
 
     cat <<EOF
 
@@ -1466,6 +1698,7 @@ EOF
 
 if is_installed && [ "$REGENERATE_ROOM" -eq 0 ] && [ "$REGENERATE_KEY" -eq 0 ] \
     && [ "$SET_SOCKS_PROXY" = "__keep__" ] && [ "$SET_DEBUG" = "__keep__" ] \
+    && [ "$SET_TRANSPORT" = "__keep__" ] \
     && [ -z "$SET_NAME" ] && [ -z "$SET_TELEMOST_ID" ]; then
     # No CLI flags that imply install/update → interactive menu
     run_menu

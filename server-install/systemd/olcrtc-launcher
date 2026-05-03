@@ -7,31 +7,44 @@
 # because systemd's ExecStart= does not support conditional arguments.
 #
 # Recognised environment variables:
-#   OLCRTC_PROVIDER          required: telemost | jazz | wb_stream
-#   OLCRTC_ROOM_ID           required: room ID (for jazz/wb_stream "any" auto-creates)
+#   OLCRTC_CARRIER           required: telemost | jazz | wbstream
+#   OLCRTC_PROVIDER          deprecated alias for OLCRTC_CARRIER
+#   OLCRTC_ROOM_ID           required: room ID (for jazz/wbstream "any" auto-creates)
 #   OLCRTC_KEY               required: 64-char hex encryption key
+#   OLCRTC_TRANSPORT         optional: datachannel | vp8channel | seichannel | videochannel (default: datachannel)
+#   OLCRTC_LINK              optional: direct (default: direct)
 #   OLCRTC_DNS               optional: DNS resolver (default 1.1.1.1:53)
 #   OLCRTC_DEBUG             optional: set to 1 to enable -debug verbose logging
-#   OLCRTC_SOCKS_PROXY       optional: SOCKS5 proxy used for outbound traffic.
+#   OLCRTC_VP8_FPS           optional: VP8 FPS (default 60, only for vp8channel)
+#   OLCRTC_VP8_BATCH         optional: VP8 batch size (default 8, only for vp8channel)
+#   OLCRTC_SOCKS_PROXY       optional: SOCKS5 proxy used for signalling traffic.
 #                                       Accepted forms:
 #                                         host:port
 #                                         user:pass@host:port    (RFC 1929)
 #                                         socks5://[user:pass@]host:port
 #                                         socks5h://[user:pass@]host:port
-#                                       Useful when the VPS's own IP is
-#                                       blocked by wb_stream/jazz/telemost —
-#                                       point this at a residential proxy.
 
 set -euo pipefail
 
-if [ -z "${OLCRTC_PROVIDER:-}" ] || [ -z "${OLCRTC_ROOM_ID:-}" ] || [ -z "${OLCRTC_KEY:-}" ]; then
-    echo "olcrtc-launcher: missing required env (OLCRTC_PROVIDER / OLCRTC_ROOM_ID / OLCRTC_KEY)" >&2
+# Carrier: prefer OLCRTC_CARRIER, fall back to legacy OLCRTC_PROVIDER
+carrier="${OLCRTC_CARRIER:-${OLCRTC_PROVIDER:-}}"
+# Backward compat: wb_stream → wbstream
+[ "$carrier" = "wb_stream" ] && carrier="wbstream"
+
+if [ -z "$carrier" ] || [ -z "${OLCRTC_ROOM_ID:-}" ] || [ -z "${OLCRTC_KEY:-}" ]; then
+    echo "olcrtc-launcher: missing required env (OLCRTC_CARRIER / OLCRTC_ROOM_ID / OLCRTC_KEY)" >&2
     exit 64
 fi
 
+transport="${OLCRTC_TRANSPORT:-datachannel}"
+link="${OLCRTC_LINK:-direct}"
+
 ARGS=(
     -mode srv
-    -provider "$OLCRTC_PROVIDER"
+    -carrier "$carrier"
+    -transport "$transport"
+    -link "$link"
+    -data data
     -id "$OLCRTC_ROOM_ID"
     -key "$OLCRTC_KEY"
     -dns "${OLCRTC_DNS:-1.1.1.1:53}"
@@ -39,6 +52,11 @@ ARGS=(
 
 if [ -n "${OLCRTC_DEBUG:-}" ] && [ "$OLCRTC_DEBUG" != "0" ] && [ "$OLCRTC_DEBUG" != "false" ]; then
     ARGS+=(-debug)
+fi
+
+# VP8 channel options
+if [ "$transport" = "vp8channel" ]; then
+    ARGS+=(-vp8-fps "${OLCRTC_VP8_FPS:-60}" -vp8-batch "${OLCRTC_VP8_BATCH:-8}")
 fi
 
 if [ -n "${OLCRTC_SOCKS_PROXY:-}" ]; then
