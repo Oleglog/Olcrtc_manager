@@ -1106,16 +1106,35 @@ IEOF
 run_menu() {
     ensure_qrencode || true
 
+    # Active instance for the main menu. Defaults to 0 (primary) but the user
+    # can switch to any other instance via the "Сменить активный инстанс"
+    # item. All operations below operate on this instance's env file and
+    # systemd service.
+    local MENU_INSTANCE_N="${MENU_INSTANCE_N:-0}"
+
     while true; do
+        # If the previously-selected instance was deleted (e.g. via the
+        # instance submenu), fall back to the primary so we never operate on
+        # a missing env file.
+        local MENU_ENV MENU_SVC MENU_KEY_FILE MENU_LBL
+        MENU_ENV="$(instance_env_file "$MENU_INSTANCE_N")"
+        if [ ! -f "$MENU_ENV" ]; then
+            MENU_INSTANCE_N=0
+            MENU_ENV="$(instance_env_file 0)"
+        fi
+        MENU_SVC="$(instance_service "$MENU_INSTANCE_N")"
+        MENU_KEY_FILE="$(instance_key_file "$MENU_INSTANCE_N")"
+        MENU_LBL="$(instance_label "$MENU_INSTANCE_N")"
+
         local cur_carrier cur_transport cur_room cur_key cur_name cur_debug cur_proxy cur_ip
-        cur_carrier="$(get_carrier)"
-        cur_transport="$(get_env_value OLCRTC_TRANSPORT)"
+        cur_carrier="$(get_carrier "$MENU_ENV")"
+        cur_transport="$(get_env_value OLCRTC_TRANSPORT "$MENU_ENV")"
         [ -z "$cur_transport" ] && cur_transport="datachannel"
-        cur_room="$(get_env_value OLCRTC_ROOM_ID)"
-        cur_key="$(get_env_value OLCRTC_KEY)"
-        cur_name="$(get_env_value OLCRTC_NAME)"
-        cur_debug="$(get_env_value OLCRTC_DEBUG)"
-        cur_proxy="$(get_env_value OLCRTC_SOCKS_PROXY)"
+        cur_room="$(get_env_value OLCRTC_ROOM_ID "$MENU_ENV")"
+        cur_key="$(get_env_value OLCRTC_KEY "$MENU_ENV")"
+        cur_name="$(get_env_value OLCRTC_NAME "$MENU_ENV")"
+        cur_debug="$(get_env_value OLCRTC_DEBUG "$MENU_ENV")"
+        cur_proxy="$(get_env_value OLCRTC_SOCKS_PROXY "$MENU_ENV")"
         cur_ip="$(get_public_ip)"
 
         [ -z "$cur_name" ] && cur_name="${cur_carrier}_olcrtc"
@@ -1128,13 +1147,16 @@ run_menu() {
         echo ""
         echo "============================================================"
         echo "  olcRTC Server Manager"
+        echo "  Активный инстанс: $MENU_LBL  (имя: $cur_name)"
         echo "  Carrier: $cur_carrier | Transport: $cur_transport"
         echo "  Room: $cur_room | IP: $cur_ip"
+        echo "  Прокси: $(proxy_human "$cur_proxy")"
         if [ "$extra_inst" -gt 0 ]; then
-            echo "  Инстансов: $inst_total (основной + $extra_inst доп.)"
+            echo "  Всего инстансов: $inst_total (основной + $extra_inst доп.)"
         fi
         echo "============================================================"
         echo ""
+        echo "  Управление активным инстансом:"
         echo "  1) Статус сервиса"
         echo "  2) Показать URI / QR-код"
         echo "  3) Сменить carrier"
@@ -1145,10 +1167,15 @@ run_menu() {
         echo "  8) Убрать SOCKS5-прокси"
         echo "  9) Включить / выключить debug-логирование"
         echo " 10) Переименовать соединение (name)"
-        echo " 11) Обновить бинарник olcRTC"
-        echo " 12) Удалить olcRTC полностью"
-        echo " ---"
+        echo "  ---"
+        if [ "$extra_inst" -gt 0 ]; then
+            echo " 13) Сменить активный инстанс  (сейчас: $MENU_LBL)"
+        fi
         echo " 20) Управление инстансами  >>>"
+        echo "  ---"
+        echo "  Глобальные операции:"
+        echo " 11) Обновить бинарник olcRTC (для всех инстансов)"
+        echo " 12) Удалить olcRTC полностью"
         echo "  0) Выход"
         echo ""
         tty_read -rp "Выберите пункт: " choice
@@ -1156,13 +1183,13 @@ run_menu() {
         case "$choice" in
         1)  # Статус сервиса
             echo ""
-            systemctl --no-pager status olcrtc-server || true
+            systemctl --no-pager status "$MENU_SVC" || true
             echo ""
             tty_read -rp "[Enter для продолжения]"
             ;;
 
         2)  # Показать URI / QR-код
-            show_uri_qr "$cur_carrier" "$cur_room" "$cur_key" "$cur_name"
+            show_uri_qr "$cur_carrier" "$cur_room" "$cur_key" "$cur_name" "$MENU_ENV"
             echo ""
             tty_read -rp "[Enter для продолжения]"
             ;;
@@ -1185,14 +1212,14 @@ run_menu() {
                 *) echo "  [!] Неверный выбор"; tty_read -rp "[Enter для продолжения]"; continue ;;
             esac
 
-            set_env_value "OLCRTC_CARRIER" "$new_carrier"
+            set_env_value "OLCRTC_CARRIER" "$new_carrier" "$MENU_ENV"
 
             # Check transport compatibility
             if ! is_transport_supported "$new_carrier" "$cur_transport"; then
                 local new_trans
                 new_trans="$(default_transport_for "$new_carrier")"
                 echo "  [!] Транспорт $cur_transport не совместим с $new_carrier, переключаю на $new_trans"
-                set_env_value "OLCRTC_TRANSPORT" "$new_trans"
+                set_env_value "OLCRTC_TRANSPORT" "$new_trans" "$MENU_ENV"
             fi
 
             if [ "$new_carrier" = "telemost" ]; then
@@ -1202,31 +1229,31 @@ run_menu() {
                     tty_read -rp "[Enter для продолжения]"
                     continue
                 fi
-                set_env_value "OLCRTC_ROOM_ID" "$new_room"
+                set_env_value "OLCRTC_ROOM_ID" "$new_room" "$MENU_ENV"
                 ROOM_ID="$new_room"
             else
-                set_env_value "OLCRTC_ROOM_ID" "any"
+                set_env_value "OLCRTC_ROOM_ID" "any" "$MENU_ENV"
                 ROOM_ID="any"
             fi
 
             CARRIER="$new_carrier"
-            systemctl restart olcrtc-server.service
+            systemctl restart "$MENU_SVC"
 
             if [ "$ROOM_ID" = "any" ]; then
-                if ! wait_for_room_id; then
+                if ! wait_for_room_id_for "$MENU_SVC" "$MENU_ENV" "$cur_carrier"; then
                     tty_read -rp "[Enter для продолжения]"
                     continue
                 fi
             fi
 
-            cur_room="$(get_env_value OLCRTC_ROOM_ID)"
-            cur_name="$(get_env_value OLCRTC_NAME)"
+            cur_room="$(get_env_value OLCRTC_ROOM_ID "$MENU_ENV")"
+            cur_name="$(get_env_value OLCRTC_NAME "$MENU_ENV")"
             [ -z "$cur_name" ] && cur_name="${new_carrier}_olcrtc"
-            cur_key="$(get_env_value OLCRTC_KEY)"
+            cur_key="$(get_env_value OLCRTC_KEY "$MENU_ENV")"
 
             echo ""
             echo "  Carrier изменён на: $new_carrier"
-            show_uri_qr "$new_carrier" "$cur_room" "$cur_key" "$cur_name"
+            show_uri_qr "$new_carrier" "$cur_room" "$cur_key" "$cur_name" "$MENU_ENV"
             echo ""
             tty_read -rp "[Enter для продолжения]"
             ;;
@@ -1239,22 +1266,22 @@ run_menu() {
                 continue
             fi
             if [ "$REPLY_TRANSPORT" = "$cur_transport" ]; then
-                set_env_value "OLCRTC_TRANSPORT" "$REPLY_TRANSPORT"
+                set_env_value "OLCRTC_TRANSPORT" "$REPLY_TRANSPORT" "$MENU_ENV"
                 if [ -n "$REPLY_VP8_FPS" ]; then
-                    set_env_value "OLCRTC_VP8_FPS" "$REPLY_VP8_FPS"
-                    set_env_value "OLCRTC_VP8_BATCH" "$REPLY_VP8_BATCH"
+                    set_env_value "OLCRTC_VP8_FPS" "$REPLY_VP8_FPS" "$MENU_ENV"
+                    set_env_value "OLCRTC_VP8_BATCH" "$REPLY_VP8_BATCH" "$MENU_ENV"
                 fi
-                systemctl restart olcrtc-server.service
+                systemctl restart "$MENU_SVC"
                 echo "  Транспорт уже $REPLY_TRANSPORT — настройки обновлены, room сохранён."
                 echo ""
                 tty_read -rp "[Enter для продолжения]"
                 continue
             fi
 
-            set_env_value "OLCRTC_TRANSPORT" "$REPLY_TRANSPORT"
+            set_env_value "OLCRTC_TRANSPORT" "$REPLY_TRANSPORT" "$MENU_ENV"
             if [ -n "$REPLY_VP8_FPS" ]; then
-                set_env_value "OLCRTC_VP8_FPS" "$REPLY_VP8_FPS"
-                set_env_value "OLCRTC_VP8_BATCH" "$REPLY_VP8_BATCH"
+                set_env_value "OLCRTC_VP8_FPS" "$REPLY_VP8_FPS" "$MENU_ENV"
+                set_env_value "OLCRTC_VP8_BATCH" "$REPLY_VP8_BATCH" "$MENU_ENV"
             fi
 
             # Транспорт сменился — пересоздаём комнату, иначе старая
@@ -1266,37 +1293,37 @@ run_menu() {
                     tty_read -rp "[Enter для продолжения]"
                     continue
                 fi
-                set_env_value "OLCRTC_ROOM_ID" "$new_room"
+                set_env_value "OLCRTC_ROOM_ID" "$new_room" "$MENU_ENV"
                 ROOM_ID="$new_room"
-                systemctl restart olcrtc-server.service
+                systemctl restart "$MENU_SVC"
             else
-                set_env_value "OLCRTC_ROOM_ID" "any"
+                set_env_value "OLCRTC_ROOM_ID" "any" "$MENU_ENV"
                 ROOM_ID="any"
                 CARRIER="$cur_carrier"
-                systemctl restart olcrtc-server.service
-                if ! wait_for_room_id; then
+                systemctl restart "$MENU_SVC"
+                if ! wait_for_room_id_for "$MENU_SVC" "$MENU_ENV" "$cur_carrier"; then
                     tty_read -rp "[Enter для продолжения]"
                     continue
                 fi
             fi
 
-            cur_room="$(get_env_value OLCRTC_ROOM_ID)"
-            cur_key="$(get_env_value OLCRTC_KEY)"
-            cur_name="$(get_env_value OLCRTC_NAME)"
+            cur_room="$(get_env_value OLCRTC_ROOM_ID "$MENU_ENV")"
+            cur_key="$(get_env_value OLCRTC_KEY "$MENU_ENV")"
+            cur_name="$(get_env_value OLCRTC_NAME "$MENU_ENV")"
             [ -z "$cur_name" ] && cur_name="${cur_carrier}_olcrtc"
             echo ""
             echo "  Транспорт изменён на: $REPLY_TRANSPORT"
             echo "  Room ID пересоздан: $cur_room"
-            show_uri_qr "$cur_carrier" "$cur_room" "$cur_key" "$cur_name"
+            show_uri_qr "$cur_carrier" "$cur_room" "$cur_key" "$cur_name" "$MENU_ENV"
             echo ""
             tty_read -rp "[Enter для продолжения]"
             ;;
 
         5)  # Пересоздать room ID
-            set_env_value "OLCRTC_ROOM_ID" "any"
+            set_env_value "OLCRTC_ROOM_ID" "any" "$MENU_ENV"
             ROOM_ID="any"
             CARRIER="$cur_carrier"
-            systemctl restart olcrtc-server.service
+            systemctl restart "$MENU_SVC"
 
             if [ "$cur_carrier" = "telemost" ]; then
                 tty_read -rp "  Введите новый Room ID для Telemost: " new_room
@@ -1305,20 +1332,20 @@ run_menu() {
                     tty_read -rp "[Enter для продолжения]"
                     continue
                 fi
-                set_env_value "OLCRTC_ROOM_ID" "$new_room"
+                set_env_value "OLCRTC_ROOM_ID" "$new_room" "$MENU_ENV"
                 ROOM_ID="$new_room"
-                systemctl restart olcrtc-server.service
+                systemctl restart "$MENU_SVC"
             else
-                if ! wait_for_room_id; then
+                if ! wait_for_room_id_for "$MENU_SVC" "$MENU_ENV" "$cur_carrier"; then
                     tty_read -rp "[Enter для продолжения]"
                     continue
                 fi
             fi
 
-            cur_room="$(get_env_value OLCRTC_ROOM_ID)"
+            cur_room="$(get_env_value OLCRTC_ROOM_ID "$MENU_ENV")"
             echo ""
             echo "  Room ID обновлён: $cur_room"
-            show_uri_qr "$cur_carrier" "$cur_room" "$cur_key" "$cur_name"
+            show_uri_qr "$cur_carrier" "$cur_room" "$cur_key" "$cur_name" "$MENU_ENV"
             echo ""
             tty_read -rp "[Enter для продолжения]"
             ;;
@@ -1334,16 +1361,16 @@ run_menu() {
 
             echo "[*] Generating fresh 256-bit encryption key..."
             umask 077
-            openssl rand -hex 32 > "$KEY_FILE"
-            chown root:olcrtc "$KEY_FILE"
-            chmod 0640 "$KEY_FILE"
+            openssl rand -hex 32 > "$MENU_KEY_FILE"
+            chown root:olcrtc "$MENU_KEY_FILE"
+            chmod 0640 "$MENU_KEY_FILE"
             local new_key
-            new_key="$(cat "$KEY_FILE")"
-            set_env_value "OLCRTC_KEY" "$new_key"
-            set_env_value "OLCRTC_ROOM_ID" "any"
+            new_key="$(cat "$MENU_KEY_FILE")"
+            set_env_value "OLCRTC_KEY" "$new_key" "$MENU_ENV"
+            set_env_value "OLCRTC_ROOM_ID" "any" "$MENU_ENV"
             ROOM_ID="any"
             CARRIER="$cur_carrier"
-            systemctl restart olcrtc-server.service
+            systemctl restart "$MENU_SVC"
 
             if [ "$cur_carrier" = "telemost" ]; then
                 tty_read -rp "  Введите новый Room ID для Telemost: " new_room
@@ -1352,21 +1379,21 @@ run_menu() {
                     tty_read -rp "[Enter для продолжения]"
                     continue
                 fi
-                set_env_value "OLCRTC_ROOM_ID" "$new_room"
+                set_env_value "OLCRTC_ROOM_ID" "$new_room" "$MENU_ENV"
                 ROOM_ID="$new_room"
-                systemctl restart olcrtc-server.service
+                systemctl restart "$MENU_SVC"
             else
-                if ! wait_for_room_id; then
+                if ! wait_for_room_id_for "$MENU_SVC" "$MENU_ENV" "$cur_carrier"; then
                     tty_read -rp "[Enter для продолжения]"
                     continue
                 fi
             fi
 
-            cur_room="$(get_env_value OLCRTC_ROOM_ID)"
-            cur_key="$(get_env_value OLCRTC_KEY)"
+            cur_room="$(get_env_value OLCRTC_ROOM_ID "$MENU_ENV")"
+            cur_key="$(get_env_value OLCRTC_KEY "$MENU_ENV")"
             echo ""
             echo "  Ключ и Room ID обновлены."
-            show_uri_qr "$cur_carrier" "$cur_room" "$cur_key" "$cur_name"
+            show_uri_qr "$cur_carrier" "$cur_room" "$cur_key" "$cur_name" "$MENU_ENV"
             echo ""
             tty_read -rp "[Enter для продолжения]"
             ;;
@@ -1379,16 +1406,16 @@ run_menu() {
                 tty_read -rp "[Enter для продолжения]"
                 continue
             fi
-            set_env_value "OLCRTC_SOCKS_PROXY" "$new_proxy"
-            systemctl restart olcrtc-server.service
+            set_env_value "OLCRTC_SOCKS_PROXY" "$new_proxy" "$MENU_ENV"
+            systemctl restart "$MENU_SVC"
             echo "  Прокси установлен: $new_proxy"
             echo ""
             tty_read -rp "[Enter для продолжения]"
             ;;
 
         8)  # Убрать SOCKS5-прокси
-            set_env_value "OLCRTC_SOCKS_PROXY" ""
-            systemctl restart olcrtc-server.service
+            set_env_value "OLCRTC_SOCKS_PROXY" "" "$MENU_ENV"
+            systemctl restart "$MENU_SVC"
             echo "  Прокси удалён"
             echo ""
             tty_read -rp "[Enter для продолжения]"
@@ -1396,13 +1423,13 @@ run_menu() {
 
         9)  # Включить / выключить debug
             if [ -n "$cur_debug" ] && [ "$cur_debug" != "0" ] && [ "$cur_debug" != "false" ]; then
-                set_env_value "OLCRTC_DEBUG" ""
+                set_env_value "OLCRTC_DEBUG" "" "$MENU_ENV"
                 echo "  Debug выключен"
             else
-                set_env_value "OLCRTC_DEBUG" "1"
+                set_env_value "OLCRTC_DEBUG" "1" "$MENU_ENV"
                 echo "  Debug включён"
             fi
-            systemctl restart olcrtc-server.service
+            systemctl restart "$MENU_SVC"
             echo ""
             tty_read -rp "[Enter для продолжения]"
             ;;
@@ -1416,10 +1443,10 @@ run_menu() {
                 tty_read -rp "[Enter для продолжения]"
                 continue
             fi
-            set_env_value "OLCRTC_NAME" "$new_name"
-            cur_room="$(get_env_value OLCRTC_ROOM_ID)"
-            cur_key="$(get_env_value OLCRTC_KEY)"
-            show_uri_qr "$cur_carrier" "$cur_room" "$cur_key" "$new_name"
+            set_env_value "OLCRTC_NAME" "$new_name" "$MENU_ENV"
+            cur_room="$(get_env_value OLCRTC_ROOM_ID "$MENU_ENV")"
+            cur_key="$(get_env_value OLCRTC_KEY "$MENU_ENV")"
+            show_uri_qr "$cur_carrier" "$cur_room" "$cur_key" "$new_name" "$MENU_ENV"
             echo ""
             tty_read -rp "[Enter для продолжения]"
             ;;
@@ -1444,8 +1471,56 @@ run_menu() {
             fi
             mv /usr/local/bin/olcrtc.tmp /usr/local/bin/olcrtc
             chmod 0755 /usr/local/bin/olcrtc
-            systemctl restart olcrtc-server.service
-            echo "  Бинарник обновлён и сервис перезапущен."
+            # Бинарник общий — перезапускаем все инстансы, чтобы они подхватили новую версию.
+            local up_n up_svc
+            for up_n in $(list_instances); do
+                up_svc="$(instance_service "$up_n")"
+                if systemctl is-enabled --quiet "$up_svc" 2>/dev/null \
+                   || systemctl is-active --quiet "$up_svc" 2>/dev/null; then
+                    systemctl restart "$up_svc"
+                    echo "  Перезапущен: $up_svc"
+                fi
+            done
+            echo "  Бинарник обновлён, все активные инстансы перезапущены."
+            echo ""
+            tty_read -rp "[Enter для продолжения]"
+            ;;
+
+        13) # Сменить активный инстанс
+            if [ "$extra_inst" -eq 0 ]; then
+                echo "  [!] Дополнительных инстансов нет — переключать не на что."
+                tty_read -rp "[Enter для продолжения]"
+                continue
+            fi
+            echo ""
+            echo "  Доступные инстансы:"
+            local sw_n sw_ef sw_lbl sw_carr sw_room sw_svc sw_status
+            for sw_n in $(list_instances); do
+                sw_ef="$(instance_env_file "$sw_n")"
+                sw_lbl="$(instance_label "$sw_n")"
+                sw_svc="$(instance_service "$sw_n")"
+                sw_carr="$(get_carrier "$sw_ef")"
+                sw_room="$(get_env_value OLCRTC_ROOM_ID "$sw_ef")"
+                sw_status="$(systemctl is-active "$sw_svc" 2>/dev/null || echo "unknown")"
+                local marker=" "
+                [ "$sw_n" = "$MENU_INSTANCE_N" ] && marker="*"
+                printf "   %s %s) [%-8s] %-10s | Room: %-10s | %s\n" \
+                    "$marker" "$sw_n" "$sw_lbl" "$sw_carr" "$sw_room" "$sw_status"
+            done
+            echo ""
+            tty_read -rp "  Номер инстанса (Enter = оставить $MENU_LBL): " sw_pick
+            if [ -z "$sw_pick" ]; then
+                continue
+            fi
+            local sw_pick_ef
+            sw_pick_ef="$(instance_env_file "$sw_pick")"
+            if [ ! -f "$sw_pick_ef" ]; then
+                echo "  [!] Инстанс не найден"
+                tty_read -rp "[Enter для продолжения]"
+                continue
+            fi
+            MENU_INSTANCE_N="$sw_pick"
+            echo "  Активный инстанс: $(instance_label "$sw_pick")"
             echo ""
             tty_read -rp "[Enter для продолжения]"
             ;;
