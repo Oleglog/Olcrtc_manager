@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -16,6 +17,11 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 	"github.com/openlibrecommunity/olcrtc/internal/names"
 )
+
+// defaultPeers is the back-compat default for the multipath bonder:
+// 1 = single-peer mode, byte-for-byte identical to the historical
+// muxconn.Conn behaviour. Override with -peers N or OLCRTC_PEERS=N.
+const defaultPeers = 1
 
 // ErrDataDirRequired is returned when no data directory is specified.
 var ErrDataDirRequired = errors.New("data directory required (use -data data)")
@@ -51,6 +57,7 @@ type config struct {
 	videoTileRS     int
 	vp8FPS          int
 	vp8BatchSize    int
+	peers           int
 }
 
 func main() {
@@ -140,9 +147,26 @@ func parseFlags() config {
 		"Tile Reed-Solomon parity percent 0..200 (videochannel tile only, default 20)")
 	flag.IntVar(&cfg.vp8FPS, "vp8-fps", 0, "VP8 frames per second (vp8channel only, default 25)")
 	flag.IntVar(&cfg.vp8BatchSize, "vp8-batch", 0, "VP8 frames per tick (vp8channel only, default 1)")
+	flag.IntVar(&cfg.peers, "peers", peersFromEnv(),
+		"Multipath bonder peer count (1 = single-peer compat). Both server and client must agree.")
 	flag.Parse()
 
 	return cfg
+}
+
+// peersFromEnv reads OLCRTC_PEERS so the bonder peer count can be set
+// without editing CLI invocations. Falls back to defaultPeers (1) when
+// unset or unparseable to preserve back-compat.
+func peersFromEnv() int {
+	raw := os.Getenv("OLCRTC_PEERS")
+	if raw == "" {
+		return defaultPeers
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 {
+		return defaultPeers
+	}
+	return n
 }
 
 func configureLogging(debug bool) {
@@ -203,6 +227,7 @@ func toSessionConfig(cfg config) session.Config {
 		VideoTileRS:     cfg.videoTileRS,
 		VP8FPS:          cfg.vp8FPS,
 		VP8BatchSize:    cfg.vp8BatchSize,
+		Peers:           cfg.peers,
 	}
 }
 

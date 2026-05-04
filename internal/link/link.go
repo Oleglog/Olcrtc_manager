@@ -45,6 +45,12 @@ type Config struct {
 	VideoTileRS     int
 	VP8FPS       int
 	VP8BatchSize int
+	// PeerTag is set by the multipath bonder so that carriers which
+	// share a single broadcast room (livekit/wbstream) can stripe
+	// traffic across N participants without crosstalk: each peer
+	// publishes with this tag and drops incoming messages whose tag
+	// does not match. Empty means single-peer mode (back-compat).
+	PeerTag string
 }
 
 // Factory creates a link instance.

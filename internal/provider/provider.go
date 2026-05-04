@@ -49,6 +49,11 @@ type Config struct {
 	DNSServer string
 	ProxyAddr string
 	ProxyPort int
+	// PeerTag identifies one peer of a multipath bond; providers that
+	// share a broadcast room (wbstream/livekit) publish data using
+	// this tag as the topic and drop incoming messages whose topic
+	// does not match. Empty disables tagging (single-peer back-compat).
+	PeerTag string
 }
 
 // Factory is a function that creates a new Provider instance.

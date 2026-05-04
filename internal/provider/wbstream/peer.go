@@ -15,6 +15,11 @@ import (
 
 const (
 	wsURL = "wss://wbstream01-el.wb.ru:7880"
+	// defaultTopic is the LiveKit data-publish topic used in single-peer
+	// mode (back-compat). When the bonder runs N peers it overrides this
+	// per-peer with PeerTag (typically "olcrtc-{i}") so each peer can
+	// filter the broadcast and only deliver frames addressed to it.
+	defaultTopic = "olcrtc"
 )
 
 var (
@@ -30,6 +35,7 @@ var (
 type Peer struct {
 	roomURL         string
 	name            string
+	peerTag         string
 	room            *lksdk.Room
 	onData          func([]byte)
 	onReconnect     func(*webrtc.DataChannel)
@@ -43,6 +49,13 @@ type Peer struct {
 	videoTracks     []webrtc.TrackLocal
 	onVideoTrack    func(*webrtc.TrackRemote, *webrtc.RTPReceiver)
 	wg              sync.WaitGroup
+}
+
+// SetPeerTag overrides the LiveKit data-publish topic and enables
+// per-peer filtering on receive. Empty preserves single-peer mode
+// (back-compat: publish to "olcrtc" and accept every incoming packet).
+func (p *Peer) SetPeerTag(tag string) {
+	p.peerTag = tag
 }
 
 // NewPeer creates a new WB Stream provider peer.
@@ -67,7 +80,14 @@ func (p *Peer) Connect(ctx context.Context) error {
 
 	roomCB := &lksdk.RoomCallback{
 		ParticipantCallback: lksdk.ParticipantCallback{
-			OnDataReceived: func(data []byte, _ lksdk.DataReceiveParams) {
+			OnDataReceived: func(data []byte, params lksdk.DataReceiveParams) {
+				// Multipath mode: only accept frames published with our
+				// own peer tag; LiveKit broadcasts to every participant
+				// in the room, so without this filter peer 0 would
+				// swallow frames meant for peers 1..N-1.
+				if p.peerTag != "" && params.Topic != p.peerTag {
+					return
+				}
 				if p.onData != nil {
 					p.onData(data)
 				}
@@ -160,9 +180,13 @@ func (p *Peer) processSendQueue() {
 			if !ok {
 				return
 			}
+			topic := defaultTopic
+			if p.peerTag != "" {
+				topic = p.peerTag
+			}
 			if err := p.room.LocalParticipant.PublishDataPacket(
 				lksdk.UserData(data),
-				lksdk.WithDataPublishTopic("olcrtc"),
+				lksdk.WithDataPublishTopic(topic),
 				lksdk.WithDataPublishReliable(true),
 			); err != nil {
 				log.Printf("WB Stream publish data error: %v", err)

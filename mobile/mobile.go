@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -46,6 +48,9 @@ const (
 	dataTransport    = "datachannel"
 	defaultDNSServer = "1.1.1.1:53"
 	carrierWBStream  = "wbstream"
+	// defaultPeers preserves single-peer back-compat semantics. Override
+	// from Kotlin via SetPeers(n) or via the OLCRTC_PEERS env var.
+	defaultPeers = 1
 )
 
 //nolint:gochecknoglobals // Mobile bindings expose a singleton runtime controlled by the embedding app.
@@ -65,6 +70,7 @@ type mobileConfig struct {
 	dnsServer    string
 	vp8FPS       int
 	vp8BatchSize int
+	peers        int
 }
 
 // SetProtector sets the Android VPN socket protector.
@@ -124,6 +130,18 @@ func SetVP8Options(fps, batchSize int) {
 	ensureDefaultConfigLocked()
 	defaults.vp8FPS = clamp(fps, 1, 120)
 	defaults.vp8BatchSize = clamp(batchSize, 1, 32)
+}
+
+// SetPeers configures the multipath bonder peer count. 1 (default)
+// disables striping and is byte-for-byte identical to the historical
+// single-peer code path. Higher values open N parallel link.Link
+// peers in the same room and stripe smux frames across them by
+// hash(stream_id); both endpoints must agree on N.
+func SetPeers(n int) {
+	mu.Lock()
+	defer mu.Unlock()
+	ensureDefaultConfigLocked()
+	defaults.peers = clamp(n, 1, 16)
 }
 
 // SetDebug enables or disables verbose logging.
@@ -234,6 +252,7 @@ func startWithConfig(
 			0,
 			cfg.vp8FPS,
 			cfg.vp8BatchSize,
+			cfg.peers,
 		)
 
 		mu.Lock()
@@ -336,8 +355,24 @@ func ensureDefaultConfigLocked() {
 			dnsServer:    defaultDNSServer,
 			vp8FPS:       60,
 			vp8BatchSize: 8,
+			peers:        peersFromEnv(),
 		}
 	})
+}
+
+// peersFromEnv reads OLCRTC_PEERS so the bonder peer count can be set
+// from the host process environment. Falls back to defaultPeers (1)
+// when unset or unparseable.
+func peersFromEnv() int {
+	raw := os.Getenv("OLCRTC_PEERS")
+	if raw == "" {
+		return defaultPeers
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 {
+		return defaultPeers
+	}
+	return n
 }
 
 func normalizeTransport(value string) string {

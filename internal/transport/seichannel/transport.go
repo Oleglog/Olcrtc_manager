@@ -100,6 +100,7 @@ func New(ctx context.Context, cfg transport.Config) (transport.Transport, error)
 		DNSServer: cfg.DNSServer,
 		ProxyAddr: cfg.ProxyAddr,
 		ProxyPort: cfg.ProxyPort,
+		PeerTag:   cfg.PeerTag,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create provider transport: %w", err)

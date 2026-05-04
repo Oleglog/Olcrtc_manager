@@ -46,6 +46,11 @@ type Config struct {
 	DNSServer string
 	ProxyAddr string
 	ProxyPort int
+	// PeerTag identifies one peer of a multipath bond; carriers that
+	// share a broadcast room (wbstream) publish with this tag and drop
+	// incoming messages whose tag does not match. Empty disables
+	// tagging (single-peer back-compat mode).
+	PeerTag string
 }
 
 // Factory creates a new carrier session.
@@ -69,6 +74,7 @@ func RegisterLegacy(name string, factory provider.Factory) {
 			DNSServer: cfg.DNSServer,
 			ProxyAddr: cfg.ProxyAddr,
 			ProxyPort: cfg.ProxyPort,
+			PeerTag:   cfg.PeerTag,
 		})
 		if err != nil {
 			return nil, err

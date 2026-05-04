@@ -108,6 +108,11 @@ type Config struct {
 	VideoTileRS     int
 	VP8FPS          int
 	VP8BatchSize    int
+	// Peers controls how many parallel link.Link peers the muxconn
+	// bonder spreads smux frames across. <=1 disables striping and is
+	// byte-for-byte equivalent to the historical single-peer code path;
+	// both endpoints must agree on the same N.
+	Peers           int
 }
 
 // RegisterDefaults registers built-in providers and transports.
@@ -294,6 +299,7 @@ func Run(ctx context.Context, cfg Config) error {
 			cfg.VideoTileRS,
 			cfg.VP8FPS,
 			cfg.VP8BatchSize,
+			cfg.Peers,
 		); err != nil {
 			return fmt.Errorf("server: %w", err)
 		}
@@ -322,6 +328,7 @@ func Run(ctx context.Context, cfg Config) error {
 			cfg.VideoTileRS,
 			cfg.VP8FPS,
 			cfg.VP8BatchSize,
+			cfg.Peers,
 		); err != nil {
 			return fmt.Errorf("client: %w", err)
 		}

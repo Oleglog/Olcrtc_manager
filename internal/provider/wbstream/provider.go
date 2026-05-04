@@ -19,6 +19,7 @@ func New(ctx context.Context, cfg provider.Config) (provider.Provider, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create wbstream peer: %w", err)
 	}
+	peer.SetPeerTag(cfg.PeerTag)
 
 	return &wbStreamProvider{peer: peer}, nil
 }

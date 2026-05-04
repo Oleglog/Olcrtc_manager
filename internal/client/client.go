@@ -40,15 +40,17 @@ var (
 
 // Client handles local SOCKS5 connections and tunnels them to the server.
 type Client struct {
-	ln        link.Link
+	links     []link.Link
 	cipher    *crypto.Cipher
-	conn      *muxconn.Conn
+	conn      *muxconn.Bonder
 	session   *smux.Session
 	sessMu    sync.RWMutex
 	dnsServer string
 }
 
 // Run starts the client with the specified parameters.
+//
+//nolint:funlen // long parameter list mirrors the historical CLI surface
 func Run(
 	ctx context.Context,
 	linkName,
@@ -72,17 +74,20 @@ func Run(
 	videoTileRS int,
 	vp8FPS int,
 	vp8BatchSize int,
+	peers int,
 ) error {
 	return RunWithReady(
 		ctx, linkName, transportName, carrierName, roomURL, keyHex, localAddr,
 		dnsServer, socksUser, socksPass, nil,
 		videoWidth, videoHeight, videoFPS, videoBitrate, videoHW,
 		videoQRSize, videoQRRecovery, videoCodec, videoTileModule, videoTileRS,
-		vp8FPS, vp8BatchSize,
+		vp8FPS, vp8BatchSize, peers,
 	)
 }
 
 // RunWithReady is like Run but accepts a callback that is called when the client is ready.
+//
+//nolint:funlen // long parameter list mirrors the historical CLI surface
 func RunWithReady(
 	ctx context.Context,
 	linkName,
@@ -107,6 +112,7 @@ func RunWithReady(
 	videoTileRS int,
 	vp8FPS int,
 	vp8BatchSize int,
+	peers int,
 ) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -123,7 +129,7 @@ func RunWithReady(
 		dnsServer, "", 0,
 		videoWidth, videoHeight, videoFPS, videoBitrate, videoHW,
 		videoQRSize, videoQRRecovery, videoCodec, videoTileModule, videoTileRS,
-		vp8FPS, vp8BatchSize,
+		vp8FPS, vp8BatchSize, peers,
 	); err != nil {
 		return err
 	}
@@ -148,6 +154,17 @@ func RunWithReady(
 	return nil
 }
 
+// peerTagFor returns the LiveKit topic / wbstream peer tag for one peer
+// of an N-way bond. Empty when peers <= 1 to preserve the historical
+// "olcrtc" topic and skip the receive-side filter.
+func peerTagFor(peers, idx int) string {
+	if peers <= 1 {
+		return ""
+	}
+	return fmt.Sprintf("olcrtc-%d", idx)
+}
+
+//nolint:funlen,cyclop // bringUpLink coordinates N-way link creation, callbacks and watchers
 func (c *Client) bringUpLink(
 	ctx context.Context,
 	linkName, transportName, carrierName, roomURL string,
@@ -161,46 +178,70 @@ func (c *Client) bringUpLink(
 	videoCodec string,
 	videoTileModule, videoTileRS int,
 	vp8FPS, vp8BatchSize int,
+	peers int,
 ) error {
-	ln, err := link.New(ctx, linkName, link.Config{
-		Transport:       transportName,
-		Carrier:         carrierName,
-		RoomURL:         roomURL,
-		Name:            names.Generate(),
-		OnData:          c.onData,
-		DNSServer:       dnsServer,
-		ProxyAddr:       socksProxyAddr,
-		ProxyPort:       socksProxyPort,
-		VideoWidth:      videoWidth,
-		VideoHeight:     videoHeight,
-		VideoFPS:        videoFPS,
-		VideoBitrate:    videoBitrate,
-		VideoHW:         videoHW,
-		VideoQRSize:     videoQRSize,
-		VideoQRRecovery: videoQRRecovery,
-		VideoCodec:      videoCodec,
-		VideoTileModule: videoTileModule,
-		VideoTileRS:     videoTileRS,
-		VP8FPS:          vp8FPS,
-		VP8BatchSize:    vp8BatchSize,
-	})
+	if peers < 1 {
+		peers = 1
+	}
+	links := make([]link.Link, 0, peers)
+	for i := range peers {
+		idx := i
+		ln, err := link.New(ctx, linkName, link.Config{
+			Transport:       transportName,
+			Carrier:         carrierName,
+			RoomURL:         roomURL,
+			Name:            names.Generate(),
+			OnData:          func(data []byte) { c.pushFromPeer(idx, data) },
+			DNSServer:       dnsServer,
+			ProxyAddr:       socksProxyAddr,
+			ProxyPort:       socksProxyPort,
+			VideoWidth:      videoWidth,
+			VideoHeight:     videoHeight,
+			VideoFPS:        videoFPS,
+			VideoBitrate:    videoBitrate,
+			VideoHW:         videoHW,
+			VideoQRSize:     videoQRSize,
+			VideoQRRecovery: videoQRRecovery,
+			VideoCodec:      videoCodec,
+			VideoTileModule: videoTileModule,
+			VideoTileRS:     videoTileRS,
+			VP8FPS:          vp8FPS,
+			VP8BatchSize:    vp8BatchSize,
+			PeerTag:         peerTagFor(peers, idx),
+		})
+		if err != nil {
+			for _, prev := range links {
+				_ = prev.Close()
+			}
+			return fmt.Errorf("failed to create link peer %d: %w", idx, err)
+		}
+		links = append(links, ln)
+	}
+	c.links = links
+
+	for i, ln := range links {
+		idx := i
+		ln.SetEndedCallback(func(reason string) {
+			logger.Infof("Client peer %d reported conference end: %s", idx, reason)
+			cancel()
+		})
+		ln.SetReconnectCallback(func() { c.handleReconnect() })
+	}
+
+	logger.Infof("Connecting %d link peer(s) via %s/%s/%s...", peers, linkName, transportName, carrierName)
+	for i, ln := range links {
+		if err := ln.Connect(ctx); err != nil {
+			return fmt.Errorf("failed to connect link peer %d: %w", i, err)
+		}
+	}
+	logger.Infof("Link connected (%d peer(s))", peers)
+
+	conn, err := muxconn.NewBonder(c.links, c.cipher)
 	if err != nil {
-		return fmt.Errorf("failed to create link: %w", err)
+		return fmt.Errorf("create bonder: %w", err)
 	}
-	c.ln = ln
-
-	ln.SetEndedCallback(func(reason string) {
-		logger.Infof("Client link reported conference end: %s", reason)
-		cancel()
-	})
-	ln.SetReconnectCallback(func() { c.handleReconnect() })
-
-	if err := ln.Connect(ctx); err != nil {
-		return fmt.Errorf("failed to connect link: %w", err)
-	}
-
-	c.conn = muxconn.New(ln, c.cipher)
-	sess, err := smux.Client(c.conn, smuxConfig())
+	c.conn = conn
+	sess, err := smux.Client(conn, smuxConfig())
 	if err != nil {
 		return fmt.Errorf("smux client: %w", err)
 	}
@@ -208,7 +249,10 @@ func (c *Client) bringUpLink(
 	c.session = sess
 	c.sessMu.Unlock()
 
-	go ln.WatchConnection(ctx)
+	for _, ln := range links {
+		watch := ln
+		go watch.WatchConnection(ctx)
+	}
 	return nil
 }
 
@@ -236,13 +280,18 @@ func (c *Client) handleReconnect() {
 		c.conn = nil
 	}
 	c.sessMu.Unlock()
-	c.conn = muxconn.New(c.ln, c.cipher)
-	sess, err := smux.Client(c.conn, smuxConfig())
+	conn, err := muxconn.NewBonder(c.links, c.cipher)
+	if err != nil {
+		logger.Warnf("bonder re-init failed: %v", err)
+		return
+	}
+	sess, err := smux.Client(conn, smuxConfig())
 	if err != nil {
 		logger.Warnf("smux re-init failed: %v", err)
 		return
 	}
 	c.sessMu.Lock()
+	c.conn = conn
 	c.session = sess
 	c.sessMu.Unlock()
 }
@@ -256,8 +305,8 @@ func (c *Client) shutdown() {
 		_ = c.conn.Close()
 	}
 	c.sessMu.Unlock()
-	if c.ln != nil {
-		_ = c.ln.Close()
+	for _, ln := range c.links {
+		_ = ln.Close()
 	}
 }
 
@@ -277,12 +326,15 @@ func setupCipher(keyHex string) (*crypto.Cipher, error) {
 	return cipher, nil
 }
 
-func (c *Client) onData(data []byte) {
+// pushFromPeer is the OnData hook installed on every link peer; it
+// hands the encrypted wire payload to the bonder which decrypts and
+// merges it into the smux read buffer.
+func (c *Client) pushFromPeer(idx int, data []byte) {
 	c.sessMu.RLock()
 	conn := c.conn
 	c.sessMu.RUnlock()
 	if conn != nil {
-		conn.Push(data)
+		conn.Push(idx, data)
 	}
 }
 

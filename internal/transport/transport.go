@@ -53,6 +53,10 @@ type Config struct {
 	VideoTileRS     int
 	VP8FPS       int
 	VP8BatchSize int
+	// PeerTag identifies one peer of a multipath bond; used by carriers
+	// that share a broadcast room (wbstream) to filter cross-peer
+	// traffic. Empty disables tagging (single-peer mode).
+	PeerTag string
 }
 
 // Factory creates a transport instance.

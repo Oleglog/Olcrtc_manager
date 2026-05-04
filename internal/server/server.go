@@ -36,9 +36,9 @@ var (
 
 // Server handles incoming tunnel connections and proxies their traffic.
 type Server struct {
-	ln             link.Link
+	links          []link.Link
 	cipher         *crypto.Cipher
-	conn           *muxconn.Conn
+	conn           *muxconn.Bonder
 	session        *smux.Session
 	sessMu         sync.RWMutex
 	reinstallMu    sync.Mutex
@@ -61,6 +61,8 @@ type ConnectRequest struct {
 }
 
 // Run starts the server with the specified parameters.
+//
+//nolint:funlen // long parameter list mirrors the historical CLI surface
 func Run(
 	ctx context.Context,
 	linkName,
@@ -86,6 +88,7 @@ func Run(
 	videoTileRS int,
 	vp8FPS int,
 	vp8BatchSize int,
+	peers int,
 ) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -124,7 +127,7 @@ func Run(
 		runCtx, linkName, transportName, carrierName, roomURL, cancel,
 		videoWidth, videoHeight, videoFPS, videoBitrate, videoHW,
 		videoQRSize, videoQRRecovery, videoCodec, videoTileModule, videoTileRS,
-		vp8FPS, vp8BatchSize,
+		vp8FPS, vp8BatchSize, peers,
 	); err != nil {
 		return err
 	}
@@ -180,6 +183,17 @@ func smuxConfig() *smux.Config {
 	return cfg
 }
 
+// peerTagFor returns the LiveKit topic / wbstream peer tag for one peer
+// of an N-way bond. Empty when peers <= 1 to preserve the historical
+// "olcrtc" topic and skip the receive-side filter.
+func peerTagFor(peers, idx int) string {
+	if peers <= 1 {
+		return ""
+	}
+	return fmt.Sprintf("olcrtc-%d", idx)
+}
+
+//nolint:funlen // bringUpLink coordinates N-way link creation, callbacks and watchers
 func (s *Server) bringUpLink(
 	ctx context.Context,
 	linkName, transportName, carrierName, roomURL string,
@@ -191,67 +205,94 @@ func (s *Server) bringUpLink(
 	videoCodec string,
 	videoTileModule, videoTileRS int,
 	vp8FPS, vp8BatchSize int,
+	peers int,
 ) error {
-	ln, err := link.New(ctx, linkName, link.Config{
-		Transport:       transportName,
-		Carrier:         carrierName,
-		RoomURL:         roomURL,
-		Name:            names.Generate(),
-		OnData:          s.onData,
-		DNSServer:       s.dnsServer,
-		ProxyAddr:       s.socksProxyAddr,
-		ProxyPort:       s.socksProxyPort,
-		VideoWidth:      videoWidth,
-		VideoHeight:     videoHeight,
-		VideoFPS:        videoFPS,
-		VideoBitrate:    videoBitrate,
-		VideoHW:         videoHW,
-		VideoQRSize:     videoQRSize,
-		VideoQRRecovery: videoQRRecovery,
-		VideoCodec:      videoCodec,
-		VideoTileModule: videoTileModule,
-		VideoTileRS:     videoTileRS,
-		VP8FPS:          vp8FPS,
-		VP8BatchSize:    vp8BatchSize,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create link: %w", err)
+	if peers < 1 {
+		peers = 1
 	}
-	s.ln = ln
-
-	ln.SetEndedCallback(func(reason string) {
-		logger.Infof("Server link reported conference end: %s", reason)
-		cancel()
-	})
-	ln.SetReconnectCallback(func() { s.handleReconnect() })
-
-	logger.Infof("Connecting link via %s/%s/%s...", linkName, transportName, carrierName)
-	if err := ln.Connect(ctx); err != nil {
-		return fmt.Errorf("failed to connect link: %w", err)
+	links := make([]link.Link, 0, peers)
+	for i := range peers {
+		idx := i
+		ln, err := link.New(ctx, linkName, link.Config{
+			Transport:       transportName,
+			Carrier:         carrierName,
+			RoomURL:         roomURL,
+			Name:            names.Generate(),
+			OnData:          func(data []byte) { s.pushFromPeer(idx, data) },
+			DNSServer:       s.dnsServer,
+			ProxyAddr:       s.socksProxyAddr,
+			ProxyPort:       s.socksProxyPort,
+			VideoWidth:      videoWidth,
+			VideoHeight:     videoHeight,
+			VideoFPS:        videoFPS,
+			VideoBitrate:    videoBitrate,
+			VideoHW:         videoHW,
+			VideoQRSize:     videoQRSize,
+			VideoQRRecovery: videoQRRecovery,
+			VideoCodec:      videoCodec,
+			VideoTileModule: videoTileModule,
+			VideoTileRS:     videoTileRS,
+			VP8FPS:          vp8FPS,
+			VP8BatchSize:    vp8BatchSize,
+			PeerTag:         peerTagFor(peers, idx),
+		})
+		if err != nil {
+			for _, prev := range links {
+				_ = prev.Close()
+			}
+			return fmt.Errorf("failed to create link peer %d: %w", idx, err)
+		}
+		links = append(links, ln)
 	}
-	logger.Infof("Link connected")
+	s.links = links
 
-	s.installSession()
+	for i, ln := range links {
+		idx := i
+		ln.SetEndedCallback(func(reason string) {
+			logger.Infof("Server peer %d reported conference end: %s", idx, reason)
+			cancel()
+		})
+		ln.SetReconnectCallback(func() { s.handleReconnect() })
+	}
 
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		ln.WatchConnection(ctx)
-	}()
+	logger.Infof("Connecting %d link peer(s) via %s/%s/%s...", peers, linkName, transportName, carrierName)
+	for i, ln := range links {
+		if err := ln.Connect(ctx); err != nil {
+			return fmt.Errorf("failed to connect link peer %d: %w", i, err)
+		}
+	}
+	logger.Infof("Link connected (%d peer(s))", peers)
+
+	if err := s.installSession(); err != nil {
+		return err
+	}
+
+	for _, ln := range links {
+		watch := ln
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			watch.WatchConnection(ctx)
+		}()
+	}
 	return nil
 }
 
-func (s *Server) installSession() {
-	conn := muxconn.New(s.ln, s.cipher)
+func (s *Server) installSession() error {
+	conn, err := muxconn.NewBonder(s.links, s.cipher)
+	if err != nil {
+		return fmt.Errorf("create bonder: %w", err)
+	}
 	sess, err := smux.Server(conn, smuxConfig())
 	if err != nil {
 		logger.Warnf("smux server init failed: %v", err)
-		return
+		return fmt.Errorf("smux server init: %w", err)
 	}
 	s.sessMu.Lock()
 	s.conn = conn
 	s.session = sess
 	s.sessMu.Unlock()
+	return nil
 }
 
 func (s *Server) handleReconnect() {
@@ -280,15 +321,20 @@ func (s *Server) reinstallSession(dead *smux.Session) {
 		s.conn = nil
 	}
 	s.sessMu.Unlock()
-	s.installSession()
+	if err := s.installSession(); err != nil {
+		logger.Warnf("server reinstall session failed: %v", err)
+	}
 }
 
-func (s *Server) onData(data []byte) {
+// pushFromPeer is the OnData hook installed on every link peer; it
+// hands the encrypted wire payload to the bonder which decrypts and
+// merges it into the smux read buffer.
+func (s *Server) pushFromPeer(idx int, data []byte) {
 	s.sessMu.RLock()
 	conn := s.conn
 	s.sessMu.RUnlock()
 	if conn != nil {
-		conn.Push(data)
+		conn.Push(idx, data)
 	}
 }
 
@@ -344,8 +390,8 @@ func (s *Server) shutdown() {
 		_ = s.conn.Close()
 	}
 	s.sessMu.Unlock()
-	if s.ln != nil {
-		_ = s.ln.Close()
+	for _, ln := range s.links {
+		_ = ln.Close()
 	}
 }
 
