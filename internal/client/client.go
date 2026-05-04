@@ -200,7 +200,7 @@ func (c *Client) bringUpLink(
 	}
 
 	c.conn = muxconn.New(ln, c.cipher)
-	sess, err := smux.Client(c.conn, smuxConfig())
+	sess, err := smux.Client(c.conn, muxconn.SmuxConfig())
 	if err != nil {
 		return fmt.Errorf("smux client: %w", err)
 	}
@@ -210,18 +210,6 @@ func (c *Client) bringUpLink(
 
 	go ln.WatchConnection(ctx)
 	return nil
-}
-
-// smuxConfig returns the tuned smux config used on both ends.
-func smuxConfig() *smux.Config {
-	cfg := smux.DefaultConfig()
-	cfg.Version = 2
-	cfg.MaxFrameSize = 32768
-	cfg.MaxReceiveBuffer = 16 * 1024 * 1024
-	cfg.MaxStreamBuffer = 1024 * 1024
-	cfg.KeepAliveInterval = 10 * time.Second
-	cfg.KeepAliveTimeout = 60 * time.Second
-	return cfg
 }
 
 func (c *Client) handleReconnect() {
@@ -237,7 +225,7 @@ func (c *Client) handleReconnect() {
 	}
 	c.sessMu.Unlock()
 	c.conn = muxconn.New(c.ln, c.cipher)
-	sess, err := smux.Client(c.conn, smuxConfig())
+	sess, err := smux.Client(c.conn, muxconn.SmuxConfig())
 	if err != nil {
 		logger.Warnf("smux re-init failed: %v", err)
 		return

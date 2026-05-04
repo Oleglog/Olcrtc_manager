@@ -4,12 +4,37 @@ package datachannel
 import (
 	"context"
 	"fmt"
+	"os"
+	"strconv"
 
 	"github.com/openlibrecommunity/olcrtc/internal/carrier"
+	"github.com/openlibrecommunity/olcrtc/internal/logger"
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
 )
 
-const defaultMaxPayloadSize = 12 * 1024
+// defaultMaxPayloadSize is advertised by Features() to the upper layers.
+// Pion SCTP negotiates a much larger ceiling (~1 GiB by default), and
+// LiveKit's PublishDataPacket has no hard cap on user data, so 64 KiB is a
+// safe high-throughput default for a single peer. Override via env if you
+// need to fall back to the historical 12 KiB or push higher for testing.
+const defaultMaxPayloadSize = 64 * 1024
+
+// envMaxPayloadSize lets operators tune the advertised datachannel payload
+// without rebuilding. Both peers should agree to avoid framing surprises.
+const envMaxPayloadSize = "OLCRTC_DC_MAX_PAYLOAD"
+
+func resolveMaxPayloadSize() int {
+	raw, ok := os.LookupEnv(envMaxPayloadSize)
+	if !ok || raw == "" {
+		return defaultMaxPayloadSize
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil || v <= 0 {
+		logger.Warnf("datachannel: invalid %s=%q, using default %d", envMaxPayloadSize, raw, defaultMaxPayloadSize)
+		return defaultMaxPayloadSize
+	}
+	return v
+}
 
 type streamTransport struct {
 	stream carrier.ByteStream
@@ -97,6 +122,6 @@ func (p *streamTransport) Features() transport.Features {
 		Reliable:        true,
 		Ordered:         true,
 		MessageOriented: true,
-		MaxPayloadSize:  defaultMaxPayloadSize,
+		MaxPayloadSize:  resolveMaxPayloadSize(),
 	}
 }

@@ -167,19 +167,6 @@ func (s *Server) setupResolver() {
 	}
 }
 
-// smuxConfig mirrors the client side. Both peers must agree on Version and
-// MaxFrameSize.
-func smuxConfig() *smux.Config {
-	cfg := smux.DefaultConfig()
-	cfg.Version = 2
-	cfg.MaxFrameSize = 32768
-	cfg.MaxReceiveBuffer = 16 * 1024 * 1024
-	cfg.MaxStreamBuffer = 1024 * 1024
-	cfg.KeepAliveInterval = 10 * time.Second
-	cfg.KeepAliveTimeout = 60 * time.Second
-	return cfg
-}
-
 func (s *Server) bringUpLink(
 	ctx context.Context,
 	linkName, transportName, carrierName, roomURL string,
@@ -243,7 +230,7 @@ func (s *Server) bringUpLink(
 
 func (s *Server) installSession() {
 	conn := muxconn.New(s.ln, s.cipher)
-	sess, err := smux.Server(conn, smuxConfig())
+	sess, err := smux.Server(conn, muxconn.SmuxConfig())
 	if err != nil {
 		logger.Warnf("smux server init failed: %v", err)
 		return
