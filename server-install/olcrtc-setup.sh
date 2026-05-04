@@ -28,6 +28,7 @@ TRANSPORT="${OLCRTC_TRANSPORT:-$TRANSPORT_DEFAULT}"
 SET_SOCKS_PROXY="__keep__"
 SET_DEBUG="__keep__"
 SET_TRANSPORT="__keep__"
+SET_CARRIER="__keep__"
 SET_NAME=""
 SET_TELEMOST_ID=""
 
@@ -94,9 +95,33 @@ ensure_qrencode() {
 }
 
 # ── Helper: show URI + QR code ───────────────────────────────────────────────
+# Args: <provider> <room_id> <key_hex> <name> [<env_file>]
+# When env_file is provided (or defaults to $ENV_FILE), the current transport
+# and VP8 settings are read from it and embedded into the URI so that the
+# Android client picks up the same transport on QR import. Defaults
+# (datachannel) are omitted to keep the URI short and stay compatible with
+# the client's own toUri() convention.
 show_uri_qr() {
     local provider="$1" room_id="$2" key_hex="$3" name="$4"
-    local uri="olcrtc://${provider}@room/${room_id}?key=${key_hex}#${name}"
+    local env_file="${5:-$ENV_FILE}"
+
+    local transport="" vp8_fps="" vp8_batch=""
+    if [ -f "$env_file" ]; then
+        transport="$(get_env_value OLCRTC_TRANSPORT "$env_file")"
+        vp8_fps="$(get_env_value OLCRTC_VP8_FPS "$env_file")"
+        vp8_batch="$(get_env_value OLCRTC_VP8_BATCH "$env_file")"
+    fi
+
+    local uri="olcrtc://${provider}@room/${room_id}?key=${key_hex}"
+    if [ -n "$transport" ] && [ "$transport" != "datachannel" ]; then
+        uri="${uri}&transport=${transport}"
+        if [ "$transport" = "vp8channel" ]; then
+            [ -n "$vp8_fps" ] && uri="${uri}&vp8_fps=${vp8_fps}"
+            [ -n "$vp8_batch" ] && uri="${uri}&vp8_batch=${vp8_batch}"
+        fi
+    fi
+    uri="${uri}#${name}"
+
     echo ""
     echo "  URI:  $uri"
     echo ""
@@ -481,10 +506,10 @@ EOF
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --carrier) CARRIER="$(normalize_carrier "$2")"; shift 2 ;;
-        --carrier=*) CARRIER="$(normalize_carrier "${1#*=}")"; shift ;;
-        --provider) CARRIER="$(normalize_carrier "$2")"; shift 2 ;;
-        --provider=*) CARRIER="$(normalize_carrier "${1#*=}")"; shift ;;
+        --carrier) CARRIER="$(normalize_carrier "$2")"; SET_CARRIER="$CARRIER"; shift 2 ;;
+        --carrier=*) CARRIER="$(normalize_carrier "${1#*=}")"; SET_CARRIER="$CARRIER"; shift ;;
+        --provider) CARRIER="$(normalize_carrier "$2")"; SET_CARRIER="$CARRIER"; shift 2 ;;
+        --provider=*) CARRIER="$(normalize_carrier "${1#*=}")"; SET_CARRIER="$CARRIER"; shift ;;
         --transport) SET_TRANSPORT="$2"; shift 2 ;;
         --transport=*) SET_TRANSPORT="${1#*=}"; shift ;;
         --regenerate) REGENERATE_ROOM=1; shift ;;
@@ -708,7 +733,7 @@ IEOF
             final_key="$(get_env_value OLCRTC_KEY "$new_ef")"
             echo ""
             echo "  Инстанс #$new_id создан."
-            show_uri_qr "$new_carr" "$final_room" "$final_key" "$new_name"
+            show_uri_qr "$new_carr" "$final_room" "$final_key" "$new_name" "$new_ef"
             echo ""
             tty_read -rp "[Enter для продолжения]"
             ;;
@@ -738,7 +763,7 @@ IEOF
             sel_key="$(get_env_value OLCRTC_KEY "$sel_ef")"
             sel_name="$(get_env_value OLCRTC_NAME "$sel_ef")"
             [ -z "$sel_name" ] && sel_name="${sel_carr}_olcrtc"
-            show_uri_qr "$sel_carr" "$sel_room" "$sel_key" "$sel_name"
+            show_uri_qr "$sel_carr" "$sel_room" "$sel_key" "$sel_name" "$sel_ef"
             echo ""
             tty_read -rp "[Enter для продолжения]"
             ;;
@@ -841,8 +866,34 @@ IEOF
                     set_env_value "OLCRTC_VP8_FPS" "$REPLY_VP8_FPS" "$cfg_ef"
                     set_env_value "OLCRTC_VP8_BATCH" "$REPLY_VP8_BATCH" "$cfg_ef"
                 fi
-                systemctl restart "$cfg_svc"
-                echo "  Транспорт изменён на: $REPLY_TRANSPORT"
+
+                if [ "$REPLY_TRANSPORT" = "$cfg_cur_trans" ]; then
+                    systemctl restart "$cfg_svc"
+                    echo "  Транспорт уже $REPLY_TRANSPORT — настройки обновлены, room сохранён."
+                else
+                    # Транспорт сменился — пересоздаём комнату.
+                    if [ "$cfg_cur_carr" = "telemost" ]; then
+                        tty_read -rp "  Введите новый Room ID для Telemost: " cfg_new_room
+                        if [ -z "$cfg_new_room" ]; then
+                            echo "  [!] Room ID не может быть пустым"
+                            tty_read -rp "[Enter для продолжения]"
+                            continue
+                        fi
+                        set_env_value "OLCRTC_ROOM_ID" "$cfg_new_room" "$cfg_ef"
+                        systemctl restart "$cfg_svc"
+                    else
+                        set_env_value "OLCRTC_ROOM_ID" "any" "$cfg_ef"
+                        systemctl restart "$cfg_svc"
+                        if ! wait_for_room_id_for "$cfg_svc" "$cfg_ef" "$cfg_cur_carr"; then
+                            tty_read -rp "[Enter для продолжения]"
+                            continue
+                        fi
+                    fi
+                    local cfg_new_room_done
+                    cfg_new_room_done="$(get_env_value OLCRTC_ROOM_ID "$cfg_ef")"
+                    echo "  Транспорт изменён на: $REPLY_TRANSPORT"
+                    echo "  Room ID пересоздан: $cfg_new_room_done"
+                fi
                 ;;
             3)  # Настроить SOCKS5-прокси
                 tty_read -rp "  Введите адрес прокси [user:pass@]host:port: " cfg_proxy
@@ -1131,13 +1182,56 @@ run_menu() {
                 tty_read -rp "[Enter для продолжения]"
                 continue
             fi
+            if [ "$REPLY_TRANSPORT" = "$cur_transport" ]; then
+                set_env_value "OLCRTC_TRANSPORT" "$REPLY_TRANSPORT"
+                if [ -n "$REPLY_VP8_FPS" ]; then
+                    set_env_value "OLCRTC_VP8_FPS" "$REPLY_VP8_FPS"
+                    set_env_value "OLCRTC_VP8_BATCH" "$REPLY_VP8_BATCH"
+                fi
+                systemctl restart olcrtc-server.service
+                echo "  Транспорт уже $REPLY_TRANSPORT — настройки обновлены, room сохранён."
+                echo ""
+                tty_read -rp "[Enter для продолжения]"
+                continue
+            fi
+
             set_env_value "OLCRTC_TRANSPORT" "$REPLY_TRANSPORT"
             if [ -n "$REPLY_VP8_FPS" ]; then
                 set_env_value "OLCRTC_VP8_FPS" "$REPLY_VP8_FPS"
                 set_env_value "OLCRTC_VP8_BATCH" "$REPLY_VP8_BATCH"
             fi
-            systemctl restart olcrtc-server.service
+
+            # Транспорт сменился — пересоздаём комнату, иначе старая
+            # сигналинг-сессия конфликтует с новым транспортом.
+            if [ "$cur_carrier" = "telemost" ]; then
+                tty_read -rp "  Введите новый Room ID для Telemost: " new_room
+                if [ -z "$new_room" ]; then
+                    echo "  [!] Room ID не может быть пустым"
+                    tty_read -rp "[Enter для продолжения]"
+                    continue
+                fi
+                set_env_value "OLCRTC_ROOM_ID" "$new_room"
+                ROOM_ID="$new_room"
+                systemctl restart olcrtc-server.service
+            else
+                set_env_value "OLCRTC_ROOM_ID" "any"
+                ROOM_ID="any"
+                CARRIER="$cur_carrier"
+                systemctl restart olcrtc-server.service
+                if ! wait_for_room_id; then
+                    tty_read -rp "[Enter для продолжения]"
+                    continue
+                fi
+            fi
+
+            cur_room="$(get_env_value OLCRTC_ROOM_ID)"
+            cur_key="$(get_env_value OLCRTC_KEY)"
+            cur_name="$(get_env_value OLCRTC_NAME)"
+            [ -z "$cur_name" ] && cur_name="${cur_carrier}_olcrtc"
+            echo ""
             echo "  Транспорт изменён на: $REPLY_TRANSPORT"
+            echo "  Room ID пересоздан: $cur_room"
+            show_uri_qr "$cur_carrier" "$cur_room" "$cur_key" "$cur_name"
             echo ""
             tty_read -rp "[Enter для продолжения]"
             ;;
@@ -1561,6 +1655,7 @@ UNIT
     EXISTING_TRANSPORT=""
     EXISTING_VP8_FPS=""
     EXISTING_VP8_BATCH=""
+    EXISTING_CARRIER=""
     if [ -f "$ENV_FILE" ]; then
         EXISTING_ROOM="$(get_env_value OLCRTC_ROOM_ID)"
         EXISTING_SOCKS_PROXY="$(get_env_value OLCRTC_SOCKS_PROXY)"
@@ -1569,8 +1664,27 @@ UNIT
         EXISTING_TRANSPORT="$(get_env_value OLCRTC_TRANSPORT)"
         EXISTING_VP8_FPS="$(get_env_value OLCRTC_VP8_FPS)"
         EXISTING_VP8_BATCH="$(get_env_value OLCRTC_VP8_BATCH)"
+        EXISTING_CARRIER="$(get_carrier)"
     fi
     if [ "$REGENERATE_ROOM" -eq 1 ]; then
+        EXISTING_ROOM=""
+    fi
+    # Если --carrier не указан явно, сохраняем текущий carrier из env
+    # (без этого --debug/--regenerate без --carrier молча сбросил бы
+    # carrier на дефолтный wbstream).
+    if [ "$SET_CARRIER" = "__keep__" ] && [ -n "$EXISTING_CARRIER" ]; then
+        CARRIER="$EXISTING_CARRIER"
+    fi
+    # Если carrier явно сменился — старая комната принадлежит другому провайдеру.
+    if [ "$SET_CARRIER" != "__keep__" ] && [ -n "$EXISTING_CARRIER" ] \
+       && [ "$SET_CARRIER" != "$EXISTING_CARRIER" ]; then
+        echo "[*] Carrier changed: $EXISTING_CARRIER → $SET_CARRIER, regenerating room ID."
+        EXISTING_ROOM=""
+    fi
+    # Если транспорт явно указан и отличается — комната конфликтует с новым транспортом.
+    if [ "$SET_TRANSPORT" != "__keep__" ] && [ -n "$EXISTING_TRANSPORT" ] \
+       && [ "$SET_TRANSPORT" != "$EXISTING_TRANSPORT" ]; then
+        echo "[*] Transport changed: $EXISTING_TRANSPORT → $SET_TRANSPORT, regenerating room ID."
         EXISTING_ROOM=""
     fi
 
@@ -1699,7 +1813,7 @@ EOF
 
 if is_installed && [ "$REGENERATE_ROOM" -eq 0 ] && [ "$REGENERATE_KEY" -eq 0 ] \
     && [ "$SET_SOCKS_PROXY" = "__keep__" ] && [ "$SET_DEBUG" = "__keep__" ] \
-    && [ "$SET_TRANSPORT" = "__keep__" ] \
+    && [ "$SET_TRANSPORT" = "__keep__" ] && [ "$SET_CARRIER" = "__keep__" ] \
     && [ -z "$SET_NAME" ] && [ -z "$SET_TELEMOST_ID" ]; then
     # No CLI flags that imply install/update → interactive menu
     run_menu
