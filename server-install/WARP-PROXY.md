@@ -1,21 +1,21 @@
-# ТЗ: Скрытие IP VPS через WARP (wireproxy)
+# Скрытие IP VPS через WARP-прокси
 
 ## Проблема
 
 Клиент, подключённый через olcrtc, видит реальный IP VPS при посещении
-сайтов (например 2ip.io). Причина: функция `Server.dial()` в
-`internal/server/server.go` открывает TCP-соединения напрямую от VPS.
+сайтов (например 2ip.io). Причина: функция `Server.dial()` открывает
+TCP-соединения напрямую от VPS.
 
 Существующий SOCKS5-прокси (`-socks-proxy`) используется **только** для
-signaling-трафика (создание комнаты, получение токена) и должен сохранять
-RU-IP. Клиентский трафик через него идти не должен.
+signaling-трафика и должен сохранять RU-IP. Клиентский трафик через него
+идти не должен.
 
 ## Решение
 
-Добавить **второй** SOCKS5-прокси (`-warp-proxy`), через который пойдёт
-**только** клиентский tunnel-трафик (`Server.dial()`). В качестве этого
-прокси используется [wireproxy](https://github.com/pufferffish/wireproxy) —
-userspace WireGuard, поднимающий локальный SOCKS5 из `.conf`-файла WARP.
+Флаг `-warp-proxy` / переменная `OLCRTC_WARP_PROXY` маршрутизируют
+**только** клиентский tunnel-трафик через локальный SOCKS5 на базе
+Cloudflare WARP. В качестве SOCKS5 можно использовать **wireproxy**
+(отдельный демон) или **inbound в 3X-UI** (если панель уже установлена).
 
 ### Архитектура
 
@@ -25,12 +25,12 @@ userspace WireGuard, поднимающий локальный SOCKS5 из `.con
 │                                                              │
 │  ┌─────────────┐    signaling     ┌──────────────────────┐   │
 │  │ olcrtc-srv  │ ────────────────→│ SOCKS5 RU-прокси     │   │
-│  │             │    (wb_stream    │ 127.0.0.1:11080      │   │
+│  │             │    (carrier      │ (опционально)         │   │
 │  │             │     API/WS)      └──────────────────────┘   │
 │  │             │                                             │
 │  │             │    client TCP    ┌──────────────────────┐   │
-│  │             │ ────────────────→│ wireproxy (WARP)     │   │
-│  │             │    (dial())      │ 127.0.0.1:40000      │   │
+│  │             │ ────────────────→│ WARP SOCKS5           │   │
+│  │             │    (dial())      │ 127.0.0.1:40000       │   │
 │  └─────────────┘                  └───────┬──────────────┘   │
 │                                           │ WireGuard        │
 │                                           ▼                  │
@@ -42,158 +42,78 @@ userspace WireGuard, поднимающий локальный SOCKS5 из `.con
 ```
 
 **Клиент видит:** Cloudflare WARP IP (напр. 104.28.x.x)
-**wb_stream видит:** RU residential IP (через SOCKS5 RU-прокси)
-**Остальной VPS трафик:** не затронут (без namespace, без глобальных маршрутов)
+**Carrier видит:** RU residential IP (через SOCKS5 RU-прокси)
+**Остальной VPS трафик:** не затронут
 
-## Изменения в коде
+---
 
-### 1. `cmd/olcrtc/main.go` — новый флаг
+## Включение в olcrtc
 
-Добавить в `config`:
-
-```go
-warpProxyAddr string
-warpProxyPort int
-```
-
-Добавить в `parseFlags()`:
-
-```go
-flag.StringVar(&cfg.warpProxyAddr, "warp-proxy", "", "WARP SOCKS5 proxy for client tunnel traffic (server only)")
-flag.IntVar(&cfg.warpProxyPort, "warp-proxy-port", 40000, "WARP SOCKS5 proxy port (server only)")
-```
-
-Передать в `server.Run()` (добавить два аргумента):
-
-```go
-server.Run(ctx, cfg.provider, cfg.roomID, cfg.keyHex,
-    cfg.dnsServer,
-    cfg.socksProxyAddr, cfg.socksProxyPort,
-    cfg.socksProxyUser, cfg.socksProxyPass,
-    cfg.warpProxyAddr, cfg.warpProxyPort,   // <-- новое
-)
-```
-
-### 2. `internal/server/server.go` — маршрутизация dial() через WARP
-
-#### 2a. Добавить поля в `Server`:
-
-```go
-warpProxyAddr string
-warpProxyPort int
-```
-
-#### 2b. Обновить `Run()` — принять и сохранить новые параметры:
-
-```go
-func Run(
-    ctx context.Context,
-    providerName, roomURL, keyHex string,
-    dnsServer, socksProxyAddr string,
-    socksProxyPort int,
-    socksProxyUser, socksProxyPass string,
-    warpProxyAddr string,    // <-- новое
-    warpProxyPort int,       // <-- новое
-) error {
-```
-
-Сохранить в `Server`:
-
-```go
-s := &Server{
-    // ... существующие поля ...
-    warpProxyAddr: warpProxyAddr,
-    warpProxyPort: warpProxyPort,
-}
-```
-
-#### 2c. Изменить `dial()` — если WARP-прокси настроен, идти через него:
-
-```go
-func (s *Server) dial(req ConnectRequest) (net.Conn, error) {
-    addr := net.JoinHostPort(req.Addr, strconv.Itoa(req.Port))
-
-    // Если WARP-прокси настроен — весь клиентский трафик через него
-    if s.warpProxyAddr != "" {
-        proxyAddr := net.JoinHostPort(s.warpProxyAddr, strconv.Itoa(s.warpProxyPort))
-        dialer, err := proxy.SOCKS5("tcp", proxyAddr, nil, &net.Dialer{
-            Timeout:  10 * time.Second,
-            Resolver: s.resolver,
-        })
-        if err != nil {
-            return nil, fmt.Errorf("warp proxy setup failed: %w", err)
-        }
-        conn, err := dialer.Dial("tcp4", addr)
-        if err != nil {
-            return nil, fmt.Errorf("dial via warp failed: %w", err)
-        }
-        return conn, nil
-    }
-
-    // Без WARP — прямое соединение (как сейчас)
-    dialer := &net.Dialer{
-        Timeout:   10 * time.Second,
-        KeepAlive: 30 * time.Second,
-        Resolver:  s.resolver,
-    }
-    conn, err := dialer.Dial("tcp4", addr)
-    if err != nil {
-        return nil, fmt.Errorf("dial failed: %w", err)
-    }
-    return conn, nil
-}
-```
-
-Импорт: `"golang.org/x/net/proxy"` (уже используется в проекте через
-`internal/protect`).
-
-### 3. `server-install/systemd/olcrtc-launcher` — env → флаг
-
-Добавить после блока `OLCRTC_SOCKS_PROXY`:
+### Через меню (рекомендуется)
 
 ```bash
-if [ -n "${OLCRTC_WARP_PROXY:-}" ]; then
-    warp="$OLCRTC_WARP_PROXY"
-    if [[ "$warp" != *":"* ]]; then
-        echo "olcrtc-launcher: OLCRTC_WARP_PROXY must be host:port (got '$warp')" >&2
-        exit 68
-    fi
-    warp_host="${warp%:*}"
-    warp_port="${warp##*:}"
-    ARGS+=(-warp-proxy "$warp_host" -warp-proxy-port "$warp_port")
-fi
+# Запустить менеджер
+sudo bash olcrtc-setup.sh
+# Выбрать пункт 14 → ввести адрес (по умолчанию 127.0.0.1:40000)
 ```
 
-### 4. Env-файл `/etc/olcrtc/env`
+### Через env-файл
 
-Новая переменная (опциональная):
-
-```
+```bash
+# Добавить/изменить в /etc/olcrtc/env:
 OLCRTC_WARP_PROXY=127.0.0.1:40000
+
+# Перезапустить сервис:
+sudo systemctl restart olcrtc-server
 ```
 
-### 5. `server-install/olcrtc-setup.sh` — меню
-
-Добавить пункт в интерактивное меню:
-
-- **Настроить WARP-прокси** — задать/изменить/убрать `OLCRTC_WARP_PROXY`
-  в env-файле. Логика аналогична существующему пункту для `OLCRTC_SOCKS_PROXY`.
-
-## Установка wireproxy на VPS
-
-Не требует изменений в коде olcrtc. Выполняется один раз вручную:
+### Через CLI
 
 ```bash
-# 1. Скачать wireproxy
+olcrtc -mode srv ... -warp-proxy 127.0.0.1 -warp-proxy-port 40000
+```
+
+---
+
+## Вариант A: wireproxy (автономный, без 3X-UI)
+
+Подходит если на VPS **нет** 3X-UI или вы хотите изолировать WARP от
+остальных сервисов.
+
+### 1. Получить WARP-ключи
+
+```bash
+# Установить wgcf (генератор WARP-конфигов)
+curl -fsSL https://github.com/ViRb3/wgcf/releases/latest/download/wgcf_2.2.22_linux_amd64 \
+  -o /usr/local/bin/wgcf && chmod +x /usr/local/bin/wgcf
+
+cd /tmp
+wgcf register   # создаёт wgcf-account.toml
+wgcf generate    # создаёт wgcf-profile.conf
+cat wgcf-profile.conf
+# Запомните: PrivateKey, Address, PublicKey, Endpoint
+```
+
+### 2. Установить wireproxy
+
+```bash
 WPVER=1.0.9
-curl -fsSL "https://github.com/pufferffish/wireproxy/releases/download/v${WPVER}/wireproxy_linux_amd64.tar.gz" \
+ARCH=$(uname -m)
+case "$ARCH" in
+  x86_64|amd64)  WP_ARCH="amd64" ;;
+  aarch64|arm64)  WP_ARCH="arm64" ;;
+esac
+curl -fsSL "https://github.com/pufferffish/wireproxy/releases/download/v${WPVER}/wireproxy_linux_${WP_ARCH}.tar.gz" \
   | tar xz -C /usr/local/bin/ wireproxy
 chmod +x /usr/local/bin/wireproxy
+```
 
-# 2. Создать конфиг из уже сгенерированного WARP-профиля
+### 3. Создать конфиг
+
+```bash
 cat > /etc/olcrtc/wireproxy.conf << 'EOF'
 [Interface]
-PrivateKey = <PrivateKey из warp-wg.conf>
+PrivateKey = <PrivateKey из wgcf-profile.conf>
 DNS = 1.1.1.1
 Address = 172.16.0.2/32
 MTU = 1280
@@ -207,8 +127,11 @@ AllowedIPs = 0.0.0.0/0
 BindAddress = 127.0.0.1:40000
 EOF
 chmod 600 /etc/olcrtc/wireproxy.conf
+```
 
-# 3. Создать systemd unit
+### 4. Создать systemd unit
+
+```bash
 cat > /etc/systemd/system/wireproxy-warp.service << 'EOF'
 [Unit]
 Description=wireproxy WARP SOCKS5
@@ -227,24 +150,110 @@ EOF
 
 systemctl daemon-reload
 systemctl enable --now wireproxy-warp
-
-# 4. Проверить
-curl --proxy socks5://127.0.0.1:40000 https://ifconfig.me
-# Должен показать Cloudflare WARP IP
-
-# 5. Добавить в env
-echo 'OLCRTC_WARP_PROXY=127.0.0.1:40000' >> /etc/olcrtc/env
-systemctl restart olcrtc-server
 ```
 
-## Итого: файлы для изменения
+### 5. Проверить и включить
 
-| Файл | Что менять |
-|------|-----------|
-| `cmd/olcrtc/main.go` | +2 поля в config, +2 flag, передача в Run() |
-| `internal/server/server.go` | +2 поля в Server, обновить Run(), изменить dial() |
-| `server-install/systemd/olcrtc-launcher` | +блок OLCRTC_WARP_PROXY |
-| `server-install/olcrtc-setup.sh` | +пункт меню WARP-прокси (опционально) |
+```bash
+# Проверить что WARP работает
+curl --proxy socks5://127.0.0.1:40000 https://ifconfig.me
+# Должен показать Cloudflare IP, не IP VPS
 
-**Объём изменений:** ~30 строк Go, ~15 строк bash.
-**Обратная совместимость:** полная. Без `-warp-proxy` поведение не меняется.
+# Включить в olcrtc (пункт 14 в меню или вручную):
+sudo bash olcrtc-setup.sh
+```
+
+---
+
+## Вариант B: через 3X-UI (Xray-core)
+
+Подходит если на VPS **уже установлен** 3X-UI с настроенным WARP-outbound.
+Не требует установки wireproxy — Xray сам поднимает WireGuard-туннель.
+
+### Предварительные условия
+
+В 3X-UI (Настройки → Xray → Исходящие подключения) уже должен быть
+outbound с тегом `warp`, протокол `wireguard`. Если его нет — создайте
+через кнопку «WARP» в разделе исходящих подключений.
+
+### 1. Создать SOCKS5 inbound
+
+Перейдите: **Подключения** (левое меню) → **«+ Создать подключение»**
+
+| Параметр | Значение |
+|----------|----------|
+| **Протокол** | `socks` (если нет — `mixed`) |
+| **Примечание** | `olcrtc-warp` |
+| **Порт** | `40000` |
+| **Мониторинг IP** | `127.0.0.1` |
+| **Authentication** | выключено |
+
+Сохраните. Запомните **тег** inbound (будет в формате `inbound-40000`
+или `inbound-s40000`).
+
+> **Важно:** Мониторинг IP = `127.0.0.1` — порт доступен только локально.
+> Не ставьте `0.0.0.0`, иначе порт будет открыт наружу.
+
+### 2. Добавить правило маршрутизации
+
+Перейдите: **Настройки** → **Xray** → **Маршрутизация** → **«+ Создать правило»**
+
+| Параметр | Значение |
+|----------|----------|
+| **Входящее подключение** | тег из шага 1 (напр. `inbound-40000`) |
+| **Исходящее подключение** | `warp` |
+
+Сохраните. Нажмите «Сохранить» ещё раз в верхней панели чтобы Xray
+перечитал конфиг.
+
+### 3. Проверить
+
+```bash
+# Проверить что порт слушается
+ss -tlnp | grep 40000
+
+# Проверить что трафик идёт через WARP
+curl --proxy socks5://127.0.0.1:40000 https://ifconfig.me
+# Должен показать Cloudflare IP (104.28.x.x), не IP VPS
+```
+
+### 4. Включить в olcrtc
+
+```bash
+# Через меню (пункт 14):
+sudo bash olcrtc-setup.sh
+
+# Или вручную:
+# В /etc/olcrtc/env добавить:
+#   OLCRTC_WARP_PROXY=127.0.0.1:40000
+# И перезапустить:
+#   sudo systemctl restart olcrtc-server
+```
+
+---
+
+## Сравнение вариантов
+
+| | wireproxy | 3X-UI |
+|---|-----------|-------|
+| **Требуется** | wireproxy + wgcf | 3X-UI уже установлен |
+| **Изоляция** | Отдельный systemd-юнит | Общий процесс с Xray |
+| **Управление** | Конфиг-файл | Веб-панель |
+| **Падение** | Не влияет на 3X-UI и наоборот | Рестарт Xray отключает WARP olcrtc |
+| **Сложность** | ~5 команд в консоли | Пара кликов в UI |
+
+---
+
+## Отключение WARP
+
+```bash
+# Через меню (пункт 15):
+sudo bash olcrtc-setup.sh
+
+# Или вручную:
+# Убрать OLCRTC_WARP_PROXY из /etc/olcrtc/env
+# sudo systemctl restart olcrtc-server
+```
+
+Без `OLCRTC_WARP_PROXY` olcrtc работает как раньше — прямое подключение
+от VPS.

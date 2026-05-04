@@ -25,9 +25,9 @@ for `linux/amd64` and `linux/arm64`.
 | | |
 |---|---|
 | **Server install (one command)** | [`server-install/`](server-install/) — [README](server-install/README.md) |
+| **WARP proxy (hide VPS IP)** | [server-install/WARP-PROXY.md](server-install/WARP-PROXY.md) |
 | **Android client** | [Oleglog/Exclave_FORK](https://github.com/Oleglog/Exclave_FORK) |
 | **Upstream project** | [openlibrecommunity/olcrtc](https://github.com/openlibrecommunity/olcrtc) |
-| **Telegram** | [@openlibrecommunity](https://t.me/openlibrecommunity) |
 
 ## Server — quick start
 
@@ -140,10 +140,21 @@ Only provider API / signalling goes through the proxy. Client TCP tunnel
 traffic exits directly from the VPS. See
 [server-install/README.md § Outbound SOCKS5 proxy](server-install/README.md#outbound-socks5-proxy-when-your-vps-ip-is-blocked).
 
-## WARP proxy (Cloudflare)
+## WARP proxy (hide VPS IP)
 
-For an alternative to residential proxies, see
-[server-install/WARP-PROXY.md](server-install/WARP-PROXY.md).
+Route client tunnel traffic through Cloudflare WARP so visited sites see a
+WARP IP instead of your VPS IP. Two setup options:
+
+- **wireproxy** — standalone daemon, no dependencies
+- **3X-UI** — use an existing Xray WARP outbound as SOCKS5
+
+Enable via menu (item 14) or env:
+```bash
+# /etc/olcrtc/env
+OLCRTC_WARP_PROXY=127.0.0.1:40000
+```
+
+Full guide: **[server-install/WARP-PROXY.md](server-install/WARP-PROXY.md)**
 
 ## License
 
@@ -153,10 +164,5 @@ WTFPL (inherited from upstream). See also `LICENSE`.
 
 ---
 
-Upstream: [openlibrecommunity/olcrtc](https://github.com/openlibrecommunity/olcrtc)
-<br>
-Telegram: [@openlibrecommunity](https://t.me/openlibrecommunity)
-<br>
-Made for: [olcNG](https://github.com/zarazaex69/olcng)
 
 </div>
