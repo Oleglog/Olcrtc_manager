@@ -192,6 +192,90 @@ proxy_human() {
     fi
 }
 
+# ══════════════════════════════════════════════════════════════════════════════
+#  UI helpers (colours, separators, status indicators)
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Colours are emitted only when stdout is a TTY and NO_COLOR is unset, so
+# logs / pipes stay clean. Box-drawing uses ASCII fallbacks if the locale
+# is not UTF-8.
+
+ui_colors_enabled() {
+    [ -t 1 ] && [ -z "${NO_COLOR:-}" ]
+}
+
+ui_color() {
+    # $1 = code (e.g. "1;32"); prints ANSI escape if colours enabled.
+    if ui_colors_enabled; then
+        printf '\033[%sm' "$1"
+    fi
+}
+
+ui_reset()  { ui_color "0"; }
+ui_bold()   { ui_color "1"; }
+ui_dim()    { ui_color "2"; }
+ui_red()    { ui_color "31"; }
+ui_green()  { ui_color "32"; }
+ui_yellow() { ui_color "33"; }
+ui_cyan()   { ui_color "36"; }
+
+# Box-drawing chars; downgrade to ASCII when locale is not UTF-8.
+if [[ "${LC_ALL:-${LANG:-}}" =~ [Uu][Tt][Ff]-?8 ]]; then
+    UI_HBAR="═"
+    UI_HBAR_LIGHT="─"
+    UI_BULLET="●"
+else
+    UI_HBAR="="
+    UI_HBAR_LIGHT="-"
+    UI_BULLET="*"
+fi
+
+# Repeat a 1-column character N times. Used to build separator lines.
+ui_repeat() {
+    local ch="$1" n="$2" out=""
+    local i=0
+    while [ "$i" -lt "$n" ]; do
+        out="${out}${ch}"
+        i=$((i + 1))
+    done
+    printf '%s' "$out"
+}
+
+ui_hbar()       { ui_repeat "$UI_HBAR" "${1:-60}"; }
+ui_hbar_light() { ui_repeat "$UI_HBAR_LIGHT" "${1:-60}"; }
+
+# Colour-coded `systemctl is-active` indicator: "● running" / "● failed" / etc.
+ui_status_indicator() {
+    local svc="$1"
+    local status
+    status="$(systemctl is-active "$svc" 2>/dev/null || echo "unknown")"
+    local color
+    case "$status" in
+        active)               color="$(ui_green)"; status="running" ;;
+        failed)               color="$(ui_red)" ;;
+        activating|reloading) color="$(ui_yellow)" ;;
+        inactive|deactivating) color="$(ui_dim)" ;;
+        *)                    color="$(ui_yellow)" ;;
+    esac
+    printf '%s%s %s%s' "$color" "$UI_BULLET" "$status" "$(ui_reset)"
+}
+
+# Print a section header like:
+#   ─── Управление активным инстансом ────────────────
+ui_section() {
+    local title="$1" width="${2:-60}"
+    # Count display width of the title in characters (not bytes) — `wc -m`
+    # respects the current UTF-8 locale, so Cyrillic counts as 1 each.
+    local title_len
+    title_len="$(printf '%s' "$title" | wc -m | tr -d ' ')"
+    local remain=$((width - 3 - 1 - title_len - 1))
+    [ "$remain" -lt 3 ] && remain=3
+    local prefix suffix
+    prefix="$(ui_repeat "$UI_HBAR_LIGHT" 3)"
+    suffix="$(ui_repeat "$UI_HBAR_LIGHT" "$remain")"
+    printf '  %s%s %s %s%s\n' "$(ui_dim)" "$prefix" "$title" "$suffix" "$(ui_reset)"
+}
+
 # ── Helper: read carrier from env (backward compat OLCRTC_PROVIDER) ──────────
 get_carrier() {
     local ef="${1:-$ENV_FILE}"
@@ -618,13 +702,12 @@ is_installed() {
 run_instance_menu() {
     while true; do
         echo ""
-        echo "============================================================"
-        echo "  olcRTC — Управление инстансами"
-        echo "============================================================"
+        echo "$(ui_bold)$(ui_cyan)$(ui_hbar 60)$(ui_reset)"
+        echo "$(ui_bold)  olcRTC — Управление инстансами$(ui_reset)"
+        echo "$(ui_bold)$(ui_cyan)$(ui_hbar 60)$(ui_reset)"
         echo ""
-        echo "  Активные инстансы:"
-        echo "  ──────────────────────────────────────────────────────────"
-        local inst_n inst_ef inst_svc inst_carr inst_trans inst_room inst_name inst_status inst_lbl
+        ui_section "Активные инстансы"
+        local inst_n inst_ef inst_svc inst_carr inst_trans inst_room inst_name inst_lbl
         for inst_n in $(list_instances); do
             inst_ef="$(instance_env_file "$inst_n")"
             inst_svc="$(instance_service "$inst_n")"
@@ -635,18 +718,22 @@ run_instance_menu() {
             inst_room="$(get_env_value OLCRTC_ROOM_ID "$inst_ef")"
             inst_name="$(get_env_value OLCRTC_NAME "$inst_ef")"
             [ -z "$inst_name" ] && inst_name="${inst_carr}_olcrtc"
-            inst_status="$(systemctl is-active "$inst_svc" 2>/dev/null || echo "unknown")"
-            printf "  [%-8s]  %-10s %-14s | Room: %-12s | %s\n" "$inst_lbl" "$inst_carr" "$inst_trans" "$inst_room" "$inst_status"
+            # Build a status indicator block (with colour) plus a plain table row.
+            printf "    %s   %-10s %-12s  Room: %-14s  %s\n" \
+                "$(ui_status_indicator "$inst_svc")" \
+                "$inst_carr" "$inst_trans" "$inst_room" \
+                "$(ui_dim)[$inst_lbl]$(ui_reset)"
         done
-        echo "  ──────────────────────────────────────────────────────────"
         echo ""
-        echo "  1) Создать новый инстанс"
-        echo "  2) Показать URI / QR-код инстанса"
-        echo "  3) Настроить инстанс (carrier, транспорт, прокси, debug, имя)"
-        echo "  4) Перезапустить инстанс"
-        echo "  5) Удалить инстанс"
-        echo "  6) Статус всех инстансов"
-        echo "  0) ← Назад"
+        ui_section "Действия"
+        echo "    1) Создать новый инстанс"
+        echo "    2) Показать URI / QR-код инстанса"
+        echo "    3) Настроить инстанс $(ui_dim)(carrier, транспорт, прокси, debug, имя)$(ui_reset)"
+        echo "    4) Перезапустить инстанс"
+        echo "    5) $(ui_red)Удалить инстанс$(ui_reset)"
+        echo "    6) Статус всех инстансов"
+        echo ""
+        echo "    0) $(ui_dim)←$(ui_reset) Назад"
         echo ""
         tty_read -rp "Выберите пункт: " ichoice
 
@@ -847,14 +934,15 @@ IEOF
             cfg_lbl="$(instance_label "$cfg_n")"
 
             echo ""
-            echo "  Настройка инстанса [$cfg_lbl]:"
-            echo "  1) Сменить carrier"
-            echo "  2) Сменить транспорт"
-            echo "  3) Настроить SOCKS5-прокси"
-            echo "  4) Убрать SOCKS5-прокси"
-            echo "  5) Включить / выключить debug"
-            echo "  6) Переименовать"
-            echo "  0) ← Назад"
+            ui_section "Настройка инстанса [$cfg_lbl]"
+            echo "    1) Сменить carrier"
+            echo "    2) Сменить транспорт"
+            echo "    3) Настроить SOCKS5-прокси"
+            echo "    4) Убрать SOCKS5-прокси"
+            echo "    5) Включить / выключить debug"
+            echo "    6) Переименовать"
+            echo ""
+            echo "    0) $(ui_dim)←$(ui_reset) Назад"
             echo ""
             tty_read -rp "  Выберите: " cfg_choice
 
@@ -1004,8 +1092,7 @@ IEOF
             for inst_n in $(list_instances); do
                 inst_lbl="$(instance_label "$inst_n")"
                 inst_svc="$(instance_service "$inst_n")"
-                inst_status="$(systemctl is-active "$inst_svc" 2>/dev/null || echo "unknown")"
-                printf "    %s) [%s] %s\n" "$inst_n" "$inst_lbl" "$inst_status"
+                printf "    %s) [%s] %s\n" "$inst_n" "$inst_lbl" "$(ui_status_indicator "$inst_svc")"
             done
             echo ""
             tty_read -rp "  Номер инстанса: " rst_n
@@ -1081,7 +1168,7 @@ IEOF
             for inst_n in $(list_instances); do
                 inst_svc="$(instance_service "$inst_n")"
                 inst_lbl="$(instance_label "$inst_n")"
-                echo "  ── Инстанс [$inst_lbl] ($inst_svc) ──"
+                ui_section "Инстанс [$inst_lbl] — $inst_svc"
                 systemctl --no-pager status "$inst_svc" 2>/dev/null || true
                 echo ""
             done
@@ -1144,39 +1231,46 @@ run_menu() {
         local extra_inst
         extra_inst="$(extra_instance_count)"
 
+        # Header. Labels are padded with literal spaces (bash/printf can't
+        # pad Cyrillic because %-Ns counts bytes, not display columns).
         echo ""
-        echo "============================================================"
-        echo "  olcRTC Server Manager"
-        echo "  Активный инстанс: $MENU_LBL  (имя: $cur_name)"
-        echo "  Carrier: $cur_carrier | Transport: $cur_transport"
-        echo "  Room: $cur_room | IP: $cur_ip"
-        echo "  Прокси: $(proxy_human "$cur_proxy")"
+        echo "$(ui_bold)$(ui_cyan)$(ui_hbar 60)$(ui_reset)"
+        echo "$(ui_bold)  olcRTC Server Manager$(ui_reset)"
+        echo "$(ui_dim)$(ui_hbar_light 60)$(ui_reset)"
+        echo "  Инстанс:    $(ui_bold)$MENU_LBL$(ui_reset)   $(ui_status_indicator "$MENU_SVC")"
+        echo "  Имя:        $cur_name"
+        echo "  Carrier:    $cur_carrier  $(ui_dim)│$(ui_reset)  Transport: $cur_transport"
+        echo "  Room:       $cur_room  $(ui_dim)│$(ui_reset)  IP: $cur_ip"
+        echo "  Прокси:     $(proxy_human "$cur_proxy")"
+        echo "  Debug:      $(debug_human "$cur_debug")"
         if [ "$extra_inst" -gt 0 ]; then
-            echo "  Всего инстансов: $inst_total (основной + $extra_inst доп.)"
+            echo "  Инстансов:  $inst_total (основной + $extra_inst доп.)"
         fi
-        echo "============================================================"
+        echo "$(ui_bold)$(ui_cyan)$(ui_hbar 60)$(ui_reset)"
         echo ""
-        echo "  Управление активным инстансом:"
-        echo "  1) Статус сервиса"
-        echo "  2) Показать URI / QR-код"
-        echo "  3) Сменить carrier"
-        echo "  4) Сменить транспорт"
-        echo "  5) Пересоздать room ID  (--regenerate)"
-        echo "  6) Ротация ключа + room ID  (--regenerate-key)"
-        echo "  7) Настроить SOCKS5-прокси"
-        echo "  8) Убрать SOCKS5-прокси"
-        echo "  9) Включить / выключить debug-логирование"
-        echo " 10) Переименовать соединение (name)"
-        echo "  ---"
+        ui_section "Управление активным инстансом"
+        echo "    1) Статус сервиса"
+        echo "    2) Показать URI / QR-код"
+        echo "    3) Сменить carrier"
+        echo "    4) Сменить транспорт"
+        echo "    5) Пересоздать room ID  (--regenerate)"
+        echo "    6) Ротация ключа + room ID  (--regenerate-key)"
+        echo "    7) Настроить SOCKS5-прокси"
+        echo "    8) Убрать SOCKS5-прокси"
+        echo "    9) Включить / выключить debug-логирование"
+        echo "   10) Переименовать соединение (name)"
+        echo ""
+        ui_section "Инстансы"
         if [ "$extra_inst" -gt 0 ]; then
-            echo " 13) Сменить активный инстанс  (сейчас: $MENU_LBL)"
+            echo "   13) Сменить активный инстанс  $(ui_dim)(сейчас: $MENU_LBL)$(ui_reset)"
         fi
-        echo " 20) Управление инстансами  >>>"
-        echo "  ---"
-        echo "  Глобальные операции:"
-        echo " 11) Обновить бинарник olcRTC (для всех инстансов)"
-        echo " 12) Удалить olcRTC полностью"
-        echo "  0) Выход"
+        echo "   20) Управление инстансами  $(ui_dim)>>>$(ui_reset)"
+        echo ""
+        ui_section "Глобальные операции"
+        echo "   11) Обновить бинарник olcRTC $(ui_dim)(для всех инстансов)$(ui_reset)"
+        echo "   12) $(ui_red)Удалить olcRTC полностью$(ui_reset)"
+        echo ""
+        echo "    0) Выход"
         echo ""
         tty_read -rp "Выберите пункт: " choice
 
@@ -1493,19 +1587,21 @@ run_menu() {
                 continue
             fi
             echo ""
-            echo "  Доступные инстансы:"
-            local sw_n sw_ef sw_lbl sw_carr sw_room sw_svc sw_status
+            ui_section "Выберите активный инстанс"
+            local sw_n sw_ef sw_lbl sw_carr sw_room sw_svc
             for sw_n in $(list_instances); do
                 sw_ef="$(instance_env_file "$sw_n")"
                 sw_lbl="$(instance_label "$sw_n")"
                 sw_svc="$(instance_service "$sw_n")"
                 sw_carr="$(get_carrier "$sw_ef")"
                 sw_room="$(get_env_value OLCRTC_ROOM_ID "$sw_ef")"
-                sw_status="$(systemctl is-active "$sw_svc" 2>/dev/null || echo "unknown")"
-                local marker=" "
-                [ "$sw_n" = "$MENU_INSTANCE_N" ] && marker="*"
-                printf "   %s %s) [%-8s] %-10s | Room: %-10s | %s\n" \
-                    "$marker" "$sw_n" "$sw_lbl" "$sw_carr" "$sw_room" "$sw_status"
+                local marker="  "
+                if [ "$sw_n" = "$MENU_INSTANCE_N" ]; then
+                    marker="$(ui_green)$UI_BULLET$(ui_reset) "
+                fi
+                printf "    %s %s) %-12s %-10s  Room: %-12s  %s\n" \
+                    "$marker" "$sw_n" "$(ui_dim)[$sw_lbl]$(ui_reset)" \
+                    "$sw_carr" "$sw_room" "$(ui_status_indicator "$sw_svc")"
             done
             echo ""
             tty_read -rp "  Номер инстанса (Enter = оставить $MENU_LBL): " sw_pick
@@ -1520,7 +1616,7 @@ run_menu() {
                 continue
             fi
             MENU_INSTANCE_N="$sw_pick"
-            echo "  Активный инстанс: $(instance_label "$sw_pick")"
+            echo "  $(ui_green)→$(ui_reset) Активный инстанс: $(ui_bold)$(instance_label "$sw_pick")$(ui_reset)"
             echo ""
             tty_read -rp "[Enter для продолжения]"
             ;;
