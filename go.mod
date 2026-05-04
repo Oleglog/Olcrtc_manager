@@ -11,10 +11,10 @@ require (
 	github.com/pion/webrtc/v4 v4.2.11
 	github.com/xtaci/kcp-go/v5 v5.6.72
 	github.com/xtaci/smux v1.5.57
-	github.com/zarazaex69/b v0.0.0-20260423064626-c0bd20863b89
 	github.com/zarazaex69/gr v0.0.0-20260430043628-45b595f4fef0
 	golang.org/x/crypto v0.50.0
 	golang.org/x/mobile v0.0.0-20260410095206-2cfb76559b7b
+	golang.org/x/net v0.53.0
 	google.golang.org/genproto v0.0.0-20260209200024-4cfbd4190f57
 )
 
@@ -78,7 +78,6 @@ require (
 	go.uber.org/zap/exp v0.3.0 // indirect
 	golang.org/x/exp v0.0.0-20260212183809-81e46e3db34a // indirect
 	golang.org/x/mod v0.35.0 // indirect
-	golang.org/x/net v0.53.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.43.0 // indirect
 	golang.org/x/text v0.36.0 // indirect

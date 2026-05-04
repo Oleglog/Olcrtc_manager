@@ -16,10 +16,10 @@ import (
 // Tunable defaults sized for a fast, single-peer datachannel link. Each value
 // is an upper bound, not a fixed allocation: smux only buffers what it needs.
 //
-// MaxFrameSize is the largest single smux PDU. It must stay below the carrier
-// data-message limit on every supported provider; 64 KiB is well under what
-// Pion SCTP and LiveKit forward in practice (Pion negotiates ~1 GiB by
-// default; LiveKit imposes no hard cap on user data packets).
+// MaxFrameSize is the largest single smux PDU. smux v1.5.x rejects values
+// above 65535 (the upper bound of its uint16 wire field), so we cap at 65535
+// — the maximum supported by the library, and well within what Pion SCTP
+// (~1 GiB messages) and LiveKit forward in practice.
 //
 // MaxReceiveBuffer caps the per-session read window. With a fast link we want
 // a generous BDP buffer; 64 MiB covers ~50 ms RTT at 10 Gbit/s with headroom.
@@ -27,7 +27,7 @@ import (
 // MaxStreamBuffer caps a single tunneled connection's in-flight bytes. 4 MiB
 // keeps interactive streams snappy without starving the global window.
 const (
-	defaultMaxFrameSize     = 64 * 1024
+	defaultMaxFrameSize     = 65535
 	defaultMaxReceiveBuffer = 64 * 1024 * 1024
 	defaultMaxStreamBuffer  = 4 * 1024 * 1024
 	defaultKeepAlive        = 10 * time.Second
