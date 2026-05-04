@@ -312,6 +312,11 @@ select_transport() {
         echo "    $i) seichannel   — для wbstream/jazz${tag}"
     fi
 
+    # videochannel — listed but intentionally not selectable: the systemd
+    # launcher does not pass -video-* flags, so picking it crashes the
+    # service. Keep the line visible so users see the transport exists.
+    echo "    -) videochannel — недоступно (пока не поддерживается systemd-лаунчером)"
+
     echo ""
     local dl=""
     [ -n "$current" ] && dl=", Enter = оставить"
