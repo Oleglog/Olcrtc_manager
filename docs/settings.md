@@ -9,7 +9,14 @@
 | datachannel | ✗ | ✓ | ✓ |
 | vp8channel | ✓ | ✓ | ✓ |
 | seichannel | ✗ | ✓ | ✓ |
-| videochannel | ✓ | ✓ | ✓ |
+| videochannel | ✓¹ | ✓¹ | ✓¹ |
+
+¹ videochannel поддерживается ядром (и Docker entrypoint), но не systemd-лаунчером
+из `server-install/`. `olcrtc-setup.sh` намеренно не предлагает videochannel и
+отвергает `--transport videochannel`, потому что без `-video-*` флагов бинарь
+останавливается с `ErrVideoWidthRequired` и сервис падает. Для запуска
+videochannel используйте `script/srv.sh` или Docker-контейнер
+(`script/docker/olcrtc-entrypoint.sh`), которые задают видеофлаги.
 
 Скорость по убыванию: datachannel (~6 МБ/с) > vp8channel > seichannel > videochannel (~200 КБ/с)
 
