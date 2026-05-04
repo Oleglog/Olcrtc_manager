@@ -17,7 +17,7 @@
 
 set -euo pipefail
 
-INSTALLER_VERSION="0.1.3"
+INSTALLER_VERSION="0.4.0-multipath-pre1"
 PROVIDER_DEFAULT="wb_stream"
 DNS_DEFAULT="1.1.1.1:53"
 
