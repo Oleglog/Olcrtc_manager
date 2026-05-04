@@ -37,6 +37,8 @@ type config struct {
 	socksProxyPort int
 	socksProxyUser string
 	socksProxyPass string
+	warpProxyAddr  string
+	warpProxyPort  int
 	videoWidth     int
 	videoHeight    int
 	videoFPS       int
@@ -121,6 +123,8 @@ func parseFlags() config {
 	flag.IntVar(&cfg.socksProxyPort, "socks-proxy-port", 0, "SOCKS5 proxy port (server only)")
 	flag.StringVar(&cfg.socksProxyUser, "socks-proxy-user", "", "SOCKS5 proxy username (RFC 1929, server only)")
 	flag.StringVar(&cfg.socksProxyPass, "socks-proxy-pass", "", "SOCKS5 proxy password (RFC 1929, server only)")
+	flag.StringVar(&cfg.warpProxyAddr, "warp-proxy", "", "WARP SOCKS5 proxy address for client tunnel traffic (server only)")
+	flag.IntVar(&cfg.warpProxyPort, "warp-proxy-port", 40000, "WARP SOCKS5 proxy port (server only)")
 	flag.IntVar(&cfg.videoWidth, "video-w", 0, "Video logical width (videochannel only)")
 	flag.IntVar(&cfg.videoHeight, "video-h", 0, "Video logical height (videochannel only)")
 	flag.IntVar(&cfg.videoFPS, "video-fps", 0, "Video frames per second (videochannel only)")
@@ -185,6 +189,8 @@ func toSessionConfig(cfg config) session.Config {
 		SOCKSProxyPort:  cfg.socksProxyPort,
 		SOCKSProxyUser:  cfg.socksProxyUser,
 		SOCKSProxyPass:  cfg.socksProxyPass,
+		WarpProxyAddr:  cfg.warpProxyAddr,
+		WarpProxyPort:  cfg.warpProxyPort,
 		VideoWidth:      cfg.videoWidth,
 		VideoHeight:     cfg.videoHeight,
 		VideoFPS:        cfg.videoFPS,

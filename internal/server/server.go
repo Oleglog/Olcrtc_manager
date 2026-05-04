@@ -20,6 +20,7 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/names"
 	"github.com/openlibrecommunity/olcrtc/internal/protect"
 	"github.com/xtaci/smux"
+	"golang.org/x/net/proxy"
 )
 
 var (
@@ -48,6 +49,8 @@ type Server struct {
 	socksProxyPort int
 	socksProxyUser string
 	socksProxyPass string
+	warpProxyAddr  string
+	warpProxyPort  int
 }
 
 // ConnectRequest is a message from the client to establish a new connection.
@@ -69,6 +72,8 @@ func Run(
 	socksProxyAddr string,
 	socksProxyPort int,
 	socksProxyUser, socksProxyPass string,
+	warpProxyAddr string,
+	warpProxyPort int,
 	videoWidth int,
 	videoHeight int,
 	videoFPS int,
@@ -110,6 +115,8 @@ func Run(
 		socksProxyPort: socksProxyPort,
 		socksProxyUser: socksProxyUser,
 		socksProxyPass: socksProxyPass,
+		warpProxyAddr:  warpProxyAddr,
+		warpProxyPort:  warpProxyPort,
 	}
 	s.setupResolver()
 
@@ -410,15 +417,31 @@ func (s *Server) dispatch(stream *smux.Stream, req ConnectRequest) {
 }
 
 // dial opens a TCP connection to req.Addr:req.Port for client tunnel
-// traffic. It always dials directly from the VPS (never via the
-// configured SOCKS5 proxy). The proxy exists to make carrier HTTP/WS
-// signalling appear to come from a residential / RU IP; routing client
-// traffic through it would force every endpoint (Telegram, etc.) to see
-// the proxy's geolocation, breaking services that are geo-restricted
-// against that region.
+// traffic. If a WARP proxy is configured, all client traffic is routed
+// through it so the remote endpoint sees a Cloudflare WARP IP instead of
+// the VPS IP. The carrier SOCKS5 proxy (used for signalling) is never
+// used here.
 func (s *Server) dial(req ConnectRequest) (net.Conn, error) {
 	addr := net.JoinHostPort(req.Addr, strconv.Itoa(req.Port))
 
+	// If WARP proxy is configured, route client traffic through it.
+	if s.warpProxyAddr != "" {
+		proxyAddr := net.JoinHostPort(s.warpProxyAddr, strconv.Itoa(s.warpProxyPort))
+		dialer, err := proxy.SOCKS5("tcp", proxyAddr, nil, &net.Dialer{
+			Timeout:  10 * time.Second,
+			Resolver: s.resolver,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("warp proxy setup failed: %w", err)
+		}
+		conn, err := dialer.Dial("tcp4", addr)
+		if err != nil {
+			return nil, fmt.Errorf("dial via warp failed: %w", err)
+		}
+		return conn, nil
+	}
+
+	// Without WARP — direct connection.
 	dialer := &net.Dialer{
 		Timeout:   10 * time.Second,
 		KeepAlive: 30 * time.Second,

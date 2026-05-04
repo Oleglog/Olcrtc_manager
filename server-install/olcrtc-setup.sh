@@ -941,6 +941,7 @@ OLCRTC_KEY=$new_key
 OLCRTC_DNS=$DNS_DEFAULT
 OLCRTC_DEBUG=
 OLCRTC_SOCKS_PROXY=$new_proxy
+OLCRTC_WARP_PROXY=
 OLCRTC_NAME=$new_name
 OLCRTC_VP8_FPS=$new_vp8_fps
 OLCRTC_VP8_BATCH=$new_vp8_batch
@@ -1323,6 +1324,7 @@ run_menu() {
         cur_name="$(get_env_value OLCRTC_NAME "$MENU_ENV")"
         cur_debug="$(get_env_value OLCRTC_DEBUG "$MENU_ENV")"
         cur_proxy="$(get_env_value OLCRTC_SOCKS_PROXY "$MENU_ENV")"
+        cur_warp="$(get_env_value OLCRTC_WARP_PROXY "$MENU_ENV")"
         cur_ip="$(get_public_ip)"
 
         [ -z "$cur_name" ] && cur_name="${cur_carrier}_olcrtc"
@@ -1347,6 +1349,9 @@ run_menu() {
         echo "  $A Carrier:    $UI_I_CARRIER $cur_carrier  $(ui_dim)$UI_PIPE$(ui_reset)  $UI_I_TRANSPORT Transport: $(ui_bold)$cur_transport$(ui_reset)"
         echo "  $A Room:       $UI_I_ROOM $cur_room  $(ui_dim)$UI_PIPE$(ui_reset)  $UI_I_IP IP: $cur_ip"
         echo "  $A Прокси:     $UI_I_PROXY_ON $(proxy_human "$cur_proxy")"
+        if [ -n "$cur_warp" ]; then
+            echo "  $A WARP:       $UI_I_PROXY_ON $cur_warp"
+        fi
         echo "  $A Debug:      $UI_I_DEBUG $(debug_human "$cur_debug")"
         if [ "$extra_inst" -gt 0 ]; then
             echo "  $A Инстансов:  $UI_I_INSTANCE $inst_total (основной + $extra_inst доп.)"
@@ -1366,6 +1371,8 @@ run_menu() {
         printf '   %s   8) Убрать SOCKS5-прокси\n'                            "$UI_I_PROXY_OFF"
         printf '   %s   9) Включить / выключить debug-логирование\n'          "$UI_I_DEBUG"
         printf '   %s  10) Переименовать соединение (name)\n'                 "$UI_I_RENAME"
+        printf '   %s  14) Настроить WARP-прокси  %s(скрытие IP VPS)%s\n'       "$UI_I_PROXY_ON" "$(ui_dim)" "$(ui_reset)"
+        printf '   %s  15) Убрать WARP-прокси\n'                               "$UI_I_PROXY_OFF"
         echo ""
 
         ui_section "Инстансы"
@@ -1771,6 +1778,38 @@ run_menu() {
             exit 0
             ;;
 
+        14) # Настроить WARP-прокси
+            echo ""
+            echo "  WARP-прокси направляет клиентский tunnel-трафик через Cloudflare WARP,"
+            echo "  скрывая реальный IP VPS от посещаемых сайтов."
+            echo ""
+            local cur_warp_val
+            cur_warp_val="$(get_env_value OLCRTC_WARP_PROXY "$MENU_ENV")"
+            if [ -n "$cur_warp_val" ]; then
+                echo "  Текущее значение: $cur_warp_val"
+            fi
+            tty_read -rp "  Введите адрес WARP-прокси host:port [Enter = 127.0.0.1:40000]: " new_warp
+            [ -z "$new_warp" ] && new_warp="127.0.0.1:40000"
+            if [[ "$new_warp" != *":"* ]]; then
+                echo "  [!] Неверный формат. Ожидается host:port"
+                tty_read -rp "[Enter для продолжения]"
+                continue
+            fi
+            set_env_value "OLCRTC_WARP_PROXY" "$new_warp" "$MENU_ENV"
+            systemctl restart "$MENU_SVC"
+            echo "  WARP-прокси установлен: $new_warp"
+            echo ""
+            tty_read -rp "[Enter для продолжения]"
+            ;;
+
+        15) # Убрать WARP-прокси
+            set_env_value "OLCRTC_WARP_PROXY" "" "$MENU_ENV"
+            systemctl restart "$MENU_SVC"
+            echo "  WARP-прокси удалён"
+            echo ""
+            tty_read -rp "[Enter для продолжения]"
+            ;;
+
         20) # Управление инстансами
             run_instance_menu
             ;;
@@ -1928,6 +1967,17 @@ if [ -n "${OLCRTC_SOCKS_PROXY:-}" ]; then
     fi
 fi
 
+if [ -n "${OLCRTC_WARP_PROXY:-}" ]; then
+    warp="$OLCRTC_WARP_PROXY"
+    if [[ "$warp" != *":"* ]]; then
+        echo "olcrtc-launcher: OLCRTC_WARP_PROXY must be host:port (got '$warp')" >&2
+        exit 68
+    fi
+    warp_host="${warp%:*}"
+    warp_port="${warp##*:}"
+    ARGS+=(-warp-proxy "$warp_host" -warp-proxy-port "$warp_port")
+fi
+
 exec /usr/local/bin/olcrtc "${ARGS[@]}"
 LAUNCHER
     chmod 0755 /usr/local/bin/olcrtc-launcher
@@ -1996,6 +2046,7 @@ UNIT
     # Read previous env to preserve untouched fields
     EXISTING_ROOM=""
     EXISTING_SOCKS_PROXY=""
+    EXISTING_WARP_PROXY=""
     EXISTING_DEBUG=""
     EXISTING_NAME=""
     EXISTING_TRANSPORT=""
@@ -2005,6 +2056,7 @@ UNIT
     if [ -f "$ENV_FILE" ]; then
         EXISTING_ROOM="$(get_env_value OLCRTC_ROOM_ID)"
         EXISTING_SOCKS_PROXY="$(get_env_value OLCRTC_SOCKS_PROXY)"
+        EXISTING_WARP_PROXY="$(get_env_value OLCRTC_WARP_PROXY)"
         EXISTING_DEBUG="$(get_env_value OLCRTC_DEBUG)"
         EXISTING_NAME="$(get_env_value OLCRTC_NAME)"
         EXISTING_TRANSPORT="$(get_env_value OLCRTC_TRANSPORT)"
@@ -2121,6 +2173,7 @@ OLCRTC_KEY=$KEY
 OLCRTC_DNS=$DNS_DEFAULT
 OLCRTC_DEBUG=$DEBUG_FLAG
 OLCRTC_SOCKS_PROXY=$SOCKS_PROXY
+OLCRTC_WARP_PROXY=$EXISTING_WARP_PROXY
 OLCRTC_NAME=$NAME
 OLCRTC_VP8_FPS=$VP8_FPS
 OLCRTC_VP8_BATCH=$VP8_BATCH

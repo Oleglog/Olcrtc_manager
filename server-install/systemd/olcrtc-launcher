@@ -23,6 +23,8 @@
 #                                         user:pass@host:port    (RFC 1929)
 #                                         socks5://[user:pass@]host:port
 #                                         socks5h://[user:pass@]host:port
+#   OLCRTC_WARP_PROXY        optional: WARP SOCKS5 proxy for client tunnel traffic.
+#                                       Form: host:port (e.g. 127.0.0.1:40000)
 
 set -euo pipefail
 
@@ -96,6 +98,17 @@ if [ -n "${OLCRTC_SOCKS_PROXY:-}" ]; then
     if [ -n "$proxy_pass" ]; then
         ARGS+=(-socks-proxy-pass "$proxy_pass")
     fi
+fi
+
+if [ -n "${OLCRTC_WARP_PROXY:-}" ]; then
+    warp="$OLCRTC_WARP_PROXY"
+    if [[ "$warp" != *":"* ]]; then
+        echo "olcrtc-launcher: OLCRTC_WARP_PROXY must be host:port (got '$warp')" >&2
+        exit 68
+    fi
+    warp_host="${warp%:*}"
+    warp_port="${warp##*:}"
+    ARGS+=(-warp-proxy "$warp_host" -warp-proxy-port "$warp_port")
 fi
 
 exec /usr/local/bin/olcrtc "${ARGS[@]}"

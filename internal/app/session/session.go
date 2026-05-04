@@ -94,6 +94,8 @@ type Config struct {
 	SOCKSProxyPort  int
 	SOCKSProxyUser  string
 	SOCKSProxyPass  string
+	WarpProxyAddr  string
+	WarpProxyPort  int
 	VideoWidth      int
 	VideoHeight     int
 	VideoFPS        int
@@ -278,6 +280,8 @@ func Run(ctx context.Context, cfg Config) error {
 			cfg.SOCKSProxyPort,
 			cfg.SOCKSProxyUser,
 			cfg.SOCKSProxyPass,
+			cfg.WarpProxyAddr,
+			cfg.WarpProxyPort,
 			cfg.VideoWidth,
 			cfg.VideoHeight,
 			cfg.VideoFPS,
