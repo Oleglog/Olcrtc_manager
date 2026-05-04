@@ -232,6 +232,54 @@ transport_human() {
     esac
 }
 
+# ── Helper: carrier↔transport compatibility matrix ──────────────────────────
+# Returns 0 if the transport is supported by olcrtc-launcher (the production
+# systemd launcher, server-install/systemd/olcrtc-launcher) for the given
+# carrier, otherwise 1.
+#
+# Note: videochannel is intentionally excluded — the production launcher does
+# not pass the required -video-w/-video-h/-video-fps/-video-bitrate/-video-hw
+# flags, so the binary aborts with ErrVideoWidthRequired and systemd reports
+# the service as failed (looks like a crash). Until the launcher is extended,
+# the setup script must not let users land in that state.
+is_transport_supported() {
+    local carrier="$1" transport="$2"
+    case "$transport" in
+        vp8channel)
+            return 0
+            ;;
+        datachannel|seichannel)
+            [ "$carrier" != "telemost" ] && return 0
+            return 1
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+# ── Helper: pick a sane default transport for a carrier ─────────────────────
+# Used when the previously-saved transport becomes incompatible after a
+# carrier change. Mirrors is_transport_supported.
+default_transport_for() {
+    local carrier="$1"
+    case "$carrier" in
+        telemost) echo "vp8channel" ;;
+        *)        echo "datachannel" ;;
+    esac
+}
+
+# ── Helper: list supported transports for a carrier (newline-separated) ─────
+supported_transports_for() {
+    local carrier="$1" t
+    for t in vp8channel datachannel seichannel; do
+        if is_transport_supported "$carrier" "$t"; then
+            echo "$t"
+        fi
+    done
+    return 0
+}
+
 # ── Helper: interactive transport selection ──────────────────────────────────
 # Usage: select_transport <carrier> [current_transport]
 # On success sets REPLY_TRANSPORT (and optionally REPLY_VP8_FPS, REPLY_VP8_BATCH)
@@ -244,28 +292,25 @@ select_transport() {
     echo "  Транспорт:"
 
     # vp8channel — works with all carriers
-    i=$((i+1)); opts+=("vp8channel")
-    local tag=""; [ "$current" = "vp8channel" ] && tag=" ←"
-    echo "    $i) vp8channel   — универсальный, работает со всеми${tag}"
+    if is_transport_supported "$carrier" vp8channel; then
+        i=$((i+1)); opts+=("vp8channel")
+        local tag=""; [ "$current" = "vp8channel" ] && tag=" ←"
+        echo "    $i) vp8channel   — универсальный, работает со всеми${tag}"
+    fi
 
     # datachannel — not with telemost
-    if [ "$carrier" != "telemost" ]; then
+    if is_transport_supported "$carrier" datachannel; then
         i=$((i+1)); opts+=("datachannel")
         tag=""; [ "$current" = "datachannel" ] && tag=" ←"
         echo "    $i) datachannel  — самый быстрый (~6 МБ/с)${tag}"
     fi
 
     # seichannel — not with telemost
-    if [ "$carrier" != "telemost" ]; then
+    if is_transport_supported "$carrier" seichannel; then
         i=$((i+1)); opts+=("seichannel")
         tag=""; [ "$current" = "seichannel" ] && tag=" ←"
         echo "    $i) seichannel   — для wbstream/jazz${tag}"
     fi
-
-    # videochannel — works with all
-    i=$((i+1)); opts+=("videochannel")
-    tag=""; [ "$current" = "videochannel" ] && tag=" ←"
-    echo "    $i) videochannel — медленный (~200 КБ/с), крайний случай${tag}"
 
     echo ""
     local dl=""
@@ -483,8 +528,11 @@ Options:
     --carrier <wbstream|telemost|jazz>
                           Pick a carrier (default: $CARRIER_DEFAULT).
     --provider <name>     Deprecated alias for --carrier.
-    --transport <datachannel|vp8channel|seichannel|videochannel>
+    --transport <datachannel|vp8channel|seichannel>
                           Pick a transport (default: $TRANSPORT_DEFAULT).
+                          Note: videochannel is not yet supported by the
+                          systemd launcher and is intentionally rejected
+                          here to avoid crashing the service.
     --regenerate          Drop the saved room ID and create a new one.
     --regenerate-key      Drop the encryption key AND room ID, regenerate both.
     --socks-proxy <[user:pass@]host:port>
@@ -823,12 +871,13 @@ IEOF
                 esac
                 set_env_value "OLCRTC_CARRIER" "$cfg_carr" "$cfg_ef"
                 # Check transport compatibility
-                local cfg_cur_trans
+                local cfg_cur_trans cfg_new_trans
                 cfg_cur_trans="$(get_env_value OLCRTC_TRANSPORT "$cfg_ef")"
                 [ -z "$cfg_cur_trans" ] && cfg_cur_trans="datachannel"
-                if [ "$cfg_carr" = "telemost" ] && { [ "$cfg_cur_trans" = "datachannel" ] || [ "$cfg_cur_trans" = "seichannel" ]; }; then
-                    echo "  [!] Транспорт $cfg_cur_trans не совместим с telemost, переключаю на vp8channel"
-                    set_env_value "OLCRTC_TRANSPORT" "vp8channel" "$cfg_ef"
+                if ! is_transport_supported "$cfg_carr" "$cfg_cur_trans"; then
+                    cfg_new_trans="$(default_transport_for "$cfg_carr")"
+                    echo "  [!] Транспорт $cfg_cur_trans не совместим с $cfg_carr, переключаю на $cfg_new_trans"
+                    set_env_value "OLCRTC_TRANSPORT" "$cfg_new_trans" "$cfg_ef"
                 fi
                 if [ "$cfg_carr" = "telemost" ]; then
                     tty_read -rp "  Введите Room ID для Telemost: " cfg_room
@@ -1134,9 +1183,11 @@ run_menu() {
             set_env_value "OLCRTC_CARRIER" "$new_carrier"
 
             # Check transport compatibility
-            if [ "$new_carrier" = "telemost" ] && { [ "$cur_transport" = "datachannel" ] || [ "$cur_transport" = "seichannel" ]; }; then
-                echo "  [!] Транспорт $cur_transport не совместим с telemost, переключаю на vp8channel"
-                set_env_value "OLCRTC_TRANSPORT" "vp8channel"
+            if ! is_transport_supported "$new_carrier" "$cur_transport"; then
+                local new_trans
+                new_trans="$(default_transport_for "$new_carrier")"
+                echo "  [!] Транспорт $cur_transport не совместим с $new_carrier, переключаю на $new_trans"
+                set_env_value "OLCRTC_TRANSPORT" "$new_trans"
             fi
 
             if [ "$new_carrier" = "telemost" ]; then
@@ -1707,6 +1758,32 @@ UNIT
     else
         TRANSPORT="$SET_TRANSPORT"
     fi
+
+    # Validate that the resolved transport is supported by the systemd
+    # launcher for the chosen carrier. This prevents the service from
+    # starting in a state where the binary aborts because of missing flags
+    # (most notably -video-* for videochannel).
+    if ! is_transport_supported "$CARRIER" "$TRANSPORT"; then
+        if [ "$SET_TRANSPORT" != "__keep__" ]; then
+            echo "[!] Transport '$TRANSPORT' is not supported with carrier '$CARRIER'." >&2
+            echo "    Supported transports for $CARRIER:" >&2
+            supported_transports_for "$CARRIER" | sed 's/^/      - /' >&2
+            if [ "$TRANSPORT" = "videochannel" ]; then
+                echo "    videochannel currently requires manual launcher configuration." >&2
+            fi
+            exit 1
+        fi
+        # SET_TRANSPORT was __keep__ but the existing env contains an
+        # unsupported transport (e.g. videochannel from an older install).
+        # Fall back to a safe default and force room regeneration.
+        local fallback_transport
+        fallback_transport="$(default_transport_for "$CARRIER")"
+        echo "[!] Saved transport '$TRANSPORT' is not supported with carrier '$CARRIER'."
+        echo "    Falling back to '$fallback_transport' and regenerating room ID."
+        TRANSPORT="$fallback_transport"
+        EXISTING_ROOM=""
+    fi
+
     VP8_FPS="${EXISTING_VP8_FPS:-}"
     VP8_BATCH="${EXISTING_VP8_BATCH:-}"
 
