@@ -903,6 +903,18 @@ run_instance_menu() {
                 new_proxy="$proxy_ans"
             fi
 
+            # WARP proxy
+            local main_warp new_warp=""
+            main_warp="$(get_env_value OLCRTC_WARP_PROXY)"
+            if [ -n "$main_warp" ]; then
+                tty_read -rp "  WARP-прокси [Enter = как основной ($main_warp), n = без WARP]: " warp_ans
+                case "$warp_ans" in
+                    n|N) new_warp="" ;;
+                    "") new_warp="$main_warp" ;;
+                    *) new_warp="$warp_ans" ;;
+                esac
+            fi
+
             # Create directories
             echo "[*] Создаю директории для инстанса #$new_id..."
             install -d -m 0750 -o root -g olcrtc "/etc/olcrtc/$new_id"
@@ -941,7 +953,7 @@ OLCRTC_KEY=$new_key
 OLCRTC_DNS=$DNS_DEFAULT
 OLCRTC_DEBUG=
 OLCRTC_SOCKS_PROXY=$new_proxy
-OLCRTC_WARP_PROXY=
+OLCRTC_WARP_PROXY=$new_warp
 OLCRTC_NAME=$new_name
 OLCRTC_VP8_FPS=$new_vp8_fps
 OLCRTC_VP8_BATCH=$new_vp8_batch
