@@ -832,6 +832,61 @@ sub_is_running() {
     curl -sf --max-time 2 "${base}/api/subscriptions" >/dev/null 2>&1
 }
 
+# Build olcrtc:// URI string from an instance env file (no QR, just the string).
+build_instance_uri() {
+    local ef="$1"
+    local carrier room key name transport vp8_fps vp8_batch
+    carrier="$(get_carrier "$ef")"
+    room="$(get_env_value OLCRTC_ROOM_ID "$ef")"
+    key="$(get_env_value OLCRTC_KEY "$ef")"
+    name="$(get_env_value OLCRTC_NAME "$ef")"
+    [ -z "$name" ] && name="${carrier}_olcrtc"
+    transport="$(get_env_value OLCRTC_TRANSPORT "$ef")"
+    vp8_fps="$(get_env_value OLCRTC_VP8_FPS "$ef")"
+    vp8_batch="$(get_env_value OLCRTC_VP8_BATCH "$ef")"
+
+    local uri="olcrtc://${carrier}@room/${room}?key=${key}"
+    if [ -n "$transport" ] && [ "$transport" != "datachannel" ]; then
+        uri="${uri}&transport=${transport}"
+        if [ "$transport" = "vp8channel" ]; then
+            [ -n "$vp8_fps" ] && uri="${uri}&vp8_fps=${vp8_fps}"
+            [ -n "$vp8_batch" ] && uri="${uri}&vp8_batch=${vp8_batch}"
+        fi
+    fi
+    uri="${uri}#${name}"
+    echo "$uri"
+}
+
+# Interactive subscription picker. Prints the selected slug to stdout.
+# Returns 1 if user cancelled or no subscriptions exist.
+pick_subscription() {
+    local base="$1"
+    local subs_json
+    subs_json="$(curl -sf "${base}/api/subscriptions" 2>/dev/null)" || subs_json="[]"
+    if [ "$subs_json" = "null" ] || [ "$subs_json" = "[]" ]; then
+        echo "  (нет подписок)" >&2
+        return 1
+    fi
+    local slugs
+    slugs="$(echo "$subs_json" | python3 -c "
+import sys, json
+subs = json.load(sys.stdin)
+for i, s in enumerate(subs):
+    sys.stderr.write(f'    {i+1}) [{s[\"slug\"]}] {s[\"name\"]}\n')
+    print(s['slug'])
+")" || return 1
+    local slug_count
+    slug_count="$(echo "$slugs" | wc -l)"
+    echo "" >&2
+    local pick
+    tty_read -rp "  Номер или slug подписки: " pick
+    if echo "$pick" | grep -qE '^[0-9]+$' && [ "$pick" -ge 1 ] 2>/dev/null && [ "$pick" -le "$slug_count" ] 2>/dev/null; then
+        echo "$slugs" | sed -n "${pick}p"
+    else
+        echo "$pick"
+    fi
+}
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  SUBSCRIPTION MANAGEMENT SUBMENU
 # ══════════════════════════════════════════════════════════════════════════════
@@ -979,15 +1034,49 @@ except Exception as e:
 
         3)  # Добавить инстанс в подписку
             echo ""
-            tty_read -rp "  Slug подписки: " add_slug
+            echo "  Выберите подписку:"
+            local add_slug
+            add_slug="$(pick_subscription "$BASE")" || {
+                tty_read -rp "[Enter для продолжения]"
+                continue
+            }
             if [ -z "$add_slug" ]; then
-                echo "  [!] Slug не может быть пустым"
+                echo "  [!] Подписка не выбрана"
                 tty_read -rp "[Enter для продолжения]"
                 continue
             fi
             echo ""
-            echo "  Введите полную olcrtc:// URI (можно скопировать из вывода QR-кода):"
-            tty_read -rp "  URI: " add_uri
+            echo "  Выбрана подписка: [$add_slug]"
+            echo ""
+            # Auto-detect installed olcrtc instances
+            echo "  Установленные инстансы:"
+            local inst_uris=() inst_labels=()
+            local ai_n ai_ef ai_lbl ai_uri ai_idx=0
+            for ai_n in $(list_instances); do
+                ai_ef="$(instance_env_file "$ai_n")"
+                [ -f "$ai_ef" ] || continue
+                ai_lbl="$(instance_label "$ai_n")"
+                ai_uri="$(build_instance_uri "$ai_ef")"
+                ai_idx=$((ai_idx + 1))
+                inst_uris+=("$ai_uri")
+                inst_labels+=("$ai_lbl")
+                local ai_disp="${ai_uri}"
+                [ ${#ai_disp} -gt 80 ] && ai_disp="${ai_disp:0:77}..."
+                echo "    ${ai_idx}) ${ai_lbl}: ${ai_disp}"
+            done
+            echo "    0) Ввести URI вручную"
+            echo ""
+            local add_uri=""
+            tty_read -rp "  Выберите инстанс: " add_pick
+            if [ "$add_pick" = "0" ] || [ -z "$add_pick" ]; then
+                tty_read -rp "  URI: " add_uri
+            elif echo "$add_pick" | grep -qE '^[0-9]+$' && [ "$add_pick" -ge 1 ] 2>/dev/null && [ "$add_pick" -le "$ai_idx" ] 2>/dev/null; then
+                add_uri="${inst_uris[$((add_pick - 1))]}"
+            else
+                echo "  [!] Неверный выбор"
+                tty_read -rp "[Enter для продолжения]"
+                continue
+            fi
             if [ -z "$add_uri" ]; then
                 echo "  [!] URI не может быть пустой"
                 tty_read -rp "[Enter для продолжения]"
@@ -1006,11 +1095,16 @@ except Exception as e:
             tty_read -rp "[Enter для продолжения]"
             ;;
 
-        4)  # Удалить инстанс из подписки
+        4)  # Убрать инстанс из подписки
             echo ""
-            tty_read -rp "  Slug подписки: " ri_slug
+            echo "  Выберите подписку:"
+            local ri_slug
+            ri_slug="$(pick_subscription "$BASE")" || {
+                tty_read -rp "[Enter для продолжения]"
+                continue
+            }
             if [ -z "$ri_slug" ]; then
-                echo "  [!] Slug не может быть пустым"
+                echo "  [!] Подписка не выбрана"
                 tty_read -rp "[Enter для продолжения]"
                 continue
             fi
@@ -1052,9 +1146,14 @@ for inst in insts:
 
         5)  # Открепить все инстансы от подписки
             echo ""
-            tty_read -rp "  Slug подписки: " da_slug
+            echo "  Выберите подписку:"
+            local da_slug
+            da_slug="$(pick_subscription "$BASE")" || {
+                tty_read -rp "[Enter для продолжения]"
+                continue
+            }
             if [ -z "$da_slug" ]; then
-                echo "  [!] Slug не может быть пустым"
+                echo "  [!] Подписка не выбрана"
                 tty_read -rp "[Enter для продолжения]"
                 continue
             fi
@@ -1078,9 +1177,14 @@ for inst in insts:
 
         6)  # Удалить подписку
             echo ""
-            tty_read -rp "  Slug подписки для удаления: " ds_slug
+            echo "  Выберите подписку:"
+            local ds_slug
+            ds_slug="$(pick_subscription "$BASE")" || {
+                tty_read -rp "[Enter для продолжения]"
+                continue
+            }
             if [ -z "$ds_slug" ]; then
-                echo "  [!] Slug не может быть пустым"
+                echo "  [!] Подписка не выбрана"
                 tty_read -rp "[Enter для продолжения]"
                 continue
             fi
