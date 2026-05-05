@@ -50,8 +50,13 @@ type config struct {
 	videoTileModule int
 	videoTileRS     int
 	vp8FPS          int
-	vp8BatchSize    int
+        vp8BatchSize    int
+        subEnabled      bool
+        subPort         int
+        subDBPath       string
+        subAPIToken     string
 }
+
 
 func main() {
 	if err := run(); err != nil {
@@ -140,6 +145,10 @@ func parseFlags() config {
 		"Tile Reed-Solomon parity percent 0..200 (videochannel tile only, default 20)")
 	flag.IntVar(&cfg.vp8FPS, "vp8-fps", 0, "VP8 frames per second (vp8channel only, default 25)")
 	flag.IntVar(&cfg.vp8BatchSize, "vp8-batch", 0, "VP8 frames per tick (vp8channel only, default 1)")
+        flag.BoolVar(&cfg.subEnabled, "sub-enabled", false, "Enable subscription HTTP server")
+        flag.IntVar(&cfg.subPort, "sub-port", 2096, "Subscription server listen port")
+        flag.StringVar(&cfg.subDBPath, "sub-db", "", "Subscription database path")
+        flag.StringVar(&cfg.subAPIToken, "sub-token", "", "Subscription API bearer token")
 	flag.Parse()
 
 	return cfg
@@ -203,7 +212,11 @@ func toSessionConfig(cfg config) session.Config {
 		VideoTileRS:     cfg.videoTileRS,
 		VP8FPS:          cfg.vp8FPS,
 		VP8BatchSize:    cfg.vp8BatchSize,
-	}
+                SubEnabled:      cfg.subEnabled,
+                SubPort:         cfg.subPort,
+                SubDBPath:       cfg.subDBPath,
+                SubAPIToken:     cfg.subAPIToken,
+        }
 }
 
 func firstNonEmpty(values ...string) string {
