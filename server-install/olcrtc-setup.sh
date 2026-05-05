@@ -2419,7 +2419,7 @@ if [ -n "${OLCRTC_SUB_ENABLED:-}" ] && [ "$OLCRTC_SUB_ENABLED" = "1" ]; then
     ARGS+=(-sub-enabled)
     sub_port="${OLCRTC_SUB_PORT:-2096}"
     ARGS+=(-sub-port "$sub_port")
-    ARGS+=(-sub-db "data/subscriptions.db")
+    ARGS+=(-sub-db "/var/lib/olcrtc/subscriptions.db")
 fi
 
 exec /usr/local/bin/olcrtc "${ARGS[@]}"

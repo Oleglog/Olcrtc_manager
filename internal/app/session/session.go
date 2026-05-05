@@ -277,7 +277,7 @@ func Run(ctx context.Context, cfg Config) error {
 	case modeSRV:
 		if cfg.SubEnabled {
 			if err := startSubscriptionServer(ctx, cfg); err != nil {
-				return fmt.Errorf("subscription server: %w", err)
+				logger.Warnf("subscription server failed to start (continuing without it): %v", err)
 			}
 		}
 		if err := server.Run(
