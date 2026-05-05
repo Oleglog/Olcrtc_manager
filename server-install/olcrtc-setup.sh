@@ -817,7 +817,8 @@ generate_slug() {
 # Derive the subscription API base URL from the env file. Reads
 # OLCRTC_SUB_PORT (default 2096).
 sub_api_base() {
-    local ef="${1:-$ENV_FILE}"
+    local ef="${1:-}"
+    [ -z "$ef" ] && ef="$ENV_FILE"
     local port
     port="$(get_env_value OLCRTC_SUB_PORT "$ef")"
     [ -z "$port" ] && port="2096"
@@ -827,7 +828,7 @@ sub_api_base() {
 # Check if subscription server is reachable.
 sub_is_running() {
     local base
-    base="$(sub_api_base "$1")"
+    base="$(sub_api_base "${1:-}")"
     curl -sf --max-time 2 "${base}/api/subscriptions" >/dev/null 2>&1
 }
 
