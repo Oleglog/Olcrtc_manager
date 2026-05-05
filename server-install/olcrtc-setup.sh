@@ -16,7 +16,7 @@
 
 set -euo pipefail
 
-INSTALLER_VERSION="0.3.0"
+INSTALLER_VERSION="0.4.0"
 CARRIER_DEFAULT="wbstream"
 TRANSPORT_DEFAULT="datachannel"
 DNS_DEFAULT="1.1.1.1:53"
@@ -260,6 +260,10 @@ if [[ "${LC_ALL:-${LANG:-}}" =~ [Uu][Tt][Ff]-?8 ]]; then
     UI_I_NAME="🏷️"
     UI_I_INSTANCE="📦"
     UI_I_INFO="ℹ️"
+    UI_I_SUB="📋"
+    UI_I_LINK="🔗"
+    UI_I_EXPORT="📤"
+    UI_I_IMPORT="📥"
 else
     UI_HBAR="="
     UI_HBAR_LIGHT="-"
@@ -298,6 +302,10 @@ else
     UI_I_NAME="[n]"
     UI_I_INSTANCE="[#]"
     UI_I_INFO="[i]"
+    UI_I_SUB="[S]"
+    UI_I_LINK="[L]"
+    UI_I_EXPORT="[E]"
+    UI_I_IMPORT="[I]"
 fi
 
 # Repeat a 1-column character N times. Used to build separator lines.
@@ -787,6 +795,392 @@ is_installed() {
     [ -f /etc/systemd/system/olcrtc-server.service ] && \
     [ -f "$ENV_FILE" ] && return 0
     return 1
+}
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  SUBSCRIPTION HELPERS
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Generate a random 6-character slug (A-Za-z0-9).
+generate_slug() {
+    local chars="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+    local slug=""
+    local i=0
+    while [ "$i" -lt 6 ]; do
+        local idx=$(( RANDOM % 62 ))
+        slug="${slug}${chars:$idx:1}"
+        i=$((i + 1))
+    done
+    echo "$slug"
+}
+
+# Derive the subscription API base URL from the env file. Reads
+# OLCRTC_SUB_PORT (default 2096).
+sub_api_base() {
+    local ef="${1:-$ENV_FILE}"
+    local port
+    port="$(get_env_value OLCRTC_SUB_PORT "$ef")"
+    [ -z "$port" ] && port="2096"
+    echo "http://127.0.0.1:${port}"
+}
+
+# Check if subscription server is reachable.
+sub_is_running() {
+    local base
+    base="$(sub_api_base "$1")"
+    curl -sf --max-time 2 "${base}/api/subscriptions" >/dev/null 2>&1
+}
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  SUBSCRIPTION MANAGEMENT SUBMENU
+# ══════════════════════════════════════════════════════════════════════════════
+
+run_subscription_menu() {
+    local BASE
+    BASE="$(sub_api_base)"
+
+    if ! sub_is_running; then
+        echo ""
+        echo "  [!] Сервер подписок не запущен или недоступен."
+        echo "      Убедитесь, что OLCRTC_SUB_ENABLED=1 в env и сервис запущен."
+        echo ""
+        tty_read -rp "[Enter для продолжения]"
+        return
+    fi
+
+    while true; do
+        echo ""
+        ui_banner_top 60
+        printf '%s   %s  %solcRTC — Управление подписками%s\n' \
+            "$(ui_bold)$(ui_cyan)" "$UI_I_SUB" "$(ui_bold)" "$(ui_reset)"
+        ui_banner_bottom 60
+        echo ""
+
+        # Show existing subscriptions
+        ui_section "Подписки"
+        echo ""
+        local subs_json
+        subs_json="$(curl -sf "${BASE}/api/subscriptions" 2>/dev/null)" || subs_json="[]"
+        if [ "$subs_json" = "null" ] || [ "$subs_json" = "[]" ]; then
+            echo "    (нет подписок)"
+        else
+            # Parse JSON array with lightweight awk — each subscription on one line.
+            echo "$subs_json" | python3 -c "
+import sys, json
+try:
+    subs = json.load(sys.stdin)
+    if not subs:
+        print('    (нет подписок)')
+    else:
+        for s in subs:
+            slug = s.get('slug','')
+            name = s.get('name','')
+            print(f'    {slug}  —  {name}')
+except:
+    print('    (ошибка чтения)')
+" 2>/dev/null || echo "    (ошибка чтения JSON)"
+        fi
+        echo ""
+
+        ui_section "Действия"
+        echo ""
+        printf '   %s   1) Список подписок\n'                       "$UI_I_SUB"
+        printf '   %s   2) Создать подписку\n'                      "$UI_I_NEW"
+        printf '   %s   3) Добавить инстанс в подписку\n'           "$UI_I_LINK"
+        printf '   %s   4) Убрать инстанс из подписки\n'            "$UI_I_DELETE"
+        printf '   %s   5) Открепить все инстансы от подписки\n'    "$UI_I_DELETE"
+        printf '   %s   6) Удалить подписку\n'                      "$UI_I_DELETE"
+        printf '   %s   7) Экспорт подписок в JSON\n'               "$UI_I_EXPORT"
+        printf '   %s   8) Импорт подписок из JSON\n'               "$UI_I_IMPORT"
+        echo ""
+        printf '   %s   0) Назад\n'                                 "$UI_I_BACK"
+        echo ""
+        tty_read -rp "$(ui_bold)→$(ui_reset) Выберите пункт: " schoice
+
+        case "$schoice" in
+        1)  # Список подписок с инстансами
+            echo ""
+            ui_section "Все подписки"
+            echo ""
+            local all_subs
+            all_subs="$(curl -sf "${BASE}/api/subscriptions" 2>/dev/null)" || all_subs="[]"
+            python3 -c "
+import sys, json, urllib.request
+base = sys.argv[1]
+try:
+    subs = json.loads(sys.argv[2])
+    if not subs:
+        print('    (нет подписок)')
+        sys.exit(0)
+    for s in subs:
+        slug = s['slug']
+        name = s['name']
+        print(f'  [{slug}] {name}')
+        try:
+            req = urllib.request.Request(f'{base}/api/subscriptions/{slug}/instances')
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                insts = json.loads(resp.read())
+            if not insts:
+                print('      (нет инстансов)')
+            else:
+                for inst in insts:
+                    iid = inst.get('id','')
+                    uri = inst.get('raw_uri','')
+                    label = inst.get('label','')
+                    lbl = f' ({label})' if label else ''
+                    # Truncate long URIs for display
+                    disp = uri if len(uri) <= 80 else uri[:77] + '...'
+                    print(f'      #{iid}{lbl}: {disp}')
+        except:
+            print('      (ошибка чтения инстансов)')
+        print()
+except Exception as e:
+    print(f'    Ошибка: {e}')
+" "$BASE" "$all_subs" 2>/dev/null || echo "    (ошибка)"
+            tty_read -rp "[Enter для продолжения]"
+            ;;
+
+        2)  # Создать подписку
+            echo ""
+            tty_read -rp "  Имя подписки: " sub_name
+            if [ -z "$sub_name" ]; then
+                echo "  [!] Имя не может быть пустым"
+                tty_read -rp "[Enter для продолжения]"
+                continue
+            fi
+            local sub_slug
+            tty_read -rp "  Slug (Enter = сгенерировать автоматически): " sub_slug
+            if [ -z "$sub_slug" ]; then
+                sub_slug="$(generate_slug)"
+            fi
+            local create_resp
+            create_resp="$(curl -sf -X POST "${BASE}/api/subscriptions" \
+                -H 'Content-Type: application/json' \
+                -d "{\"name\":\"${sub_name}\",\"slug\":\"${sub_slug}\"}" 2>&1)"
+            local create_code=$?
+            if [ $create_code -ne 0 ]; then
+                echo "  [!] Ошибка создания подписки: $create_resp"
+            else
+                echo ""
+                echo "  Подписка создана:"
+                echo "    Slug: $sub_slug"
+                echo "    Имя:  $sub_name"
+                local pub_ip
+                pub_ip="$(get_public_ip)"
+                local sub_port
+                sub_port="$(get_env_value OLCRTC_SUB_PORT)"
+                [ -z "$sub_port" ] && sub_port="2096"
+                echo "    URL:  http://${pub_ip}:${sub_port}/sub/${sub_slug}"
+            fi
+            echo ""
+            tty_read -rp "[Enter для продолжения]"
+            ;;
+
+        3)  # Добавить инстанс в подписку
+            echo ""
+            tty_read -rp "  Slug подписки: " add_slug
+            if [ -z "$add_slug" ]; then
+                echo "  [!] Slug не может быть пустым"
+                tty_read -rp "[Enter для продолжения]"
+                continue
+            fi
+            echo ""
+            echo "  Введите полную olcrtc:// URI (можно скопировать из вывода QR-кода):"
+            tty_read -rp "  URI: " add_uri
+            if [ -z "$add_uri" ]; then
+                echo "  [!] URI не может быть пустой"
+                tty_read -rp "[Enter для продолжения]"
+                continue
+            fi
+            local add_resp
+            add_resp="$(curl -sf -X POST "${BASE}/api/subscriptions/${add_slug}/instances" \
+                -H 'Content-Type: application/json' \
+                -d "{\"raw_uri\":\"${add_uri}\"}" 2>&1)"
+            if [ $? -ne 0 ]; then
+                echo "  [!] Ошибка добавления инстанса: $add_resp"
+            else
+                echo "  Инстанс добавлен в подписку [$add_slug]."
+            fi
+            echo ""
+            tty_read -rp "[Enter для продолжения]"
+            ;;
+
+        4)  # Удалить инстанс из подписки
+            echo ""
+            tty_read -rp "  Slug подписки: " ri_slug
+            if [ -z "$ri_slug" ]; then
+                echo "  [!] Slug не может быть пустым"
+                tty_read -rp "[Enter для продолжения]"
+                continue
+            fi
+            # Show instances
+            local ri_insts
+            ri_insts="$(curl -sf "${BASE}/api/subscriptions/${ri_slug}/instances" 2>/dev/null)"
+            if [ -z "$ri_insts" ] || [ "$ri_insts" = "null" ] || [ "$ri_insts" = "[]" ]; then
+                echo "  (нет инстансов или подписка не найдена)"
+                tty_read -rp "[Enter для продолжения]"
+                continue
+            fi
+            python3 -c "
+import sys, json
+insts = json.loads(sys.argv[1])
+for inst in insts:
+    iid = inst.get('id','')
+    uri = inst.get('raw_uri','')
+    label = inst.get('label','')
+    lbl = f' ({label})' if label else ''
+    disp = uri if len(uri) <= 80 else uri[:77] + '...'
+    print(f'    #{iid}{lbl}: {disp}')
+" "$ri_insts" 2>/dev/null || echo "    (ошибка)"
+            echo ""
+            tty_read -rp "  ID инстанса для удаления: " ri_id
+            if [ -z "$ri_id" ]; then
+                echo "  [!] ID не может быть пустым"
+                tty_read -rp "[Enter для продолжения]"
+                continue
+            fi
+            curl -sf -X DELETE "${BASE}/api/subscriptions/${ri_slug}/instances/${ri_id}" >/dev/null 2>&1
+            if [ $? -eq 0 ]; then
+                echo "  Инстанс #${ri_id} удалён."
+            else
+                echo "  [!] Ошибка удаления инстанса"
+            fi
+            echo ""
+            tty_read -rp "[Enter для продолжения]"
+            ;;
+
+        5)  # Открепить все инстансы от подписки
+            echo ""
+            tty_read -rp "  Slug подписки: " da_slug
+            if [ -z "$da_slug" ]; then
+                echo "  [!] Slug не может быть пустым"
+                tty_read -rp "[Enter для продолжения]"
+                continue
+            fi
+            tty_read -rp "  Открепить все инстансы от подписки [$da_slug]? [y/N] " da_confirm
+            if [ "$da_confirm" != "y" ] && [ "$da_confirm" != "Y" ]; then
+                echo "  Отменено."
+                tty_read -rp "[Enter для продолжения]"
+                continue
+            fi
+            local da_resp
+            da_resp="$(curl -sf -X DELETE "${BASE}/api/subscriptions/${da_slug}?detach=true" 2>/dev/null)"
+            if [ $? -eq 0 ]; then
+                echo "  Все инстансы откреплены от подписки [$da_slug]."
+                echo "  Подписка сохранена (пустая)."
+            else
+                echo "  [!] Ошибка: $da_resp"
+            fi
+            echo ""
+            tty_read -rp "[Enter для продолжения]"
+            ;;
+
+        6)  # Удалить подписку
+            echo ""
+            tty_read -rp "  Slug подписки для удаления: " ds_slug
+            if [ -z "$ds_slug" ]; then
+                echo "  [!] Slug не может быть пустым"
+                tty_read -rp "[Enter для продолжения]"
+                continue
+            fi
+            # Check if subscription has instances
+            local ds_insts
+            ds_insts="$(curl -sf "${BASE}/api/subscriptions/${ds_slug}/instances" 2>/dev/null)" || ds_insts="[]"
+            local ds_count
+            ds_count="$(echo "$ds_insts" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null)" || ds_count="0"
+
+            if [ "$ds_count" != "0" ] && [ "$ds_count" != "" ]; then
+                echo ""
+                echo "  В подписке [$ds_slug] есть $ds_count инстанс(ов)."
+                echo "    1) Удалить подписку вместе с инстансами"
+                echo "    2) Открепить инстансы, затем удалить подписку"
+                echo "    0) Отмена"
+                echo ""
+                tty_read -rp "  Выберите действие: " ds_action
+                case "$ds_action" in
+                1)
+                    curl -sf -X DELETE "${BASE}/api/subscriptions/${ds_slug}" >/dev/null 2>&1
+                    if [ $? -eq 0 ]; then
+                        echo "  Подписка [$ds_slug] и все инстансы удалены."
+                    else
+                        echo "  [!] Ошибка удаления подписки"
+                    fi
+                    ;;
+                2)
+                    curl -sf -X DELETE "${BASE}/api/subscriptions/${ds_slug}?detach=true" >/dev/null 2>&1
+                    curl -sf -X DELETE "${BASE}/api/subscriptions/${ds_slug}" >/dev/null 2>&1
+                    if [ $? -eq 0 ]; then
+                        echo "  Инстансы откреплены, подписка [$ds_slug] удалена."
+                    else
+                        echo "  [!] Ошибка удаления подписки"
+                    fi
+                    ;;
+                *)
+                    echo "  Отменено."
+                    ;;
+                esac
+            else
+                tty_read -rp "  Удалить подписку [$ds_slug]? [y/N] " ds_confirm
+                if [ "$ds_confirm" = "y" ] || [ "$ds_confirm" = "Y" ]; then
+                    curl -sf -X DELETE "${BASE}/api/subscriptions/${ds_slug}" >/dev/null 2>&1
+                    if [ $? -eq 0 ]; then
+                        echo "  Подписка [$ds_slug] удалена."
+                    else
+                        echo "  [!] Ошибка удаления подписки"
+                    fi
+                else
+                    echo "  Отменено."
+                fi
+            fi
+            echo ""
+            tty_read -rp "[Enter для продолжения]"
+            ;;
+
+        7)  # Экспорт подписок
+            echo ""
+            local export_default="/tmp/olcrtc-subscriptions.json"
+            tty_read -rp "  Файл для экспорта [Enter = $export_default]: " export_file
+            [ -z "$export_file" ] && export_file="$export_default"
+            if curl -sf "${BASE}/api/export" -o "$export_file" 2>/dev/null; then
+                echo "  Подписки экспортированы в: $export_file"
+            else
+                echo "  [!] Ошибка экспорта"
+            fi
+            echo ""
+            tty_read -rp "[Enter для продолжения]"
+            ;;
+
+        8)  # Импорт подписок
+            echo ""
+            tty_read -rp "  Файл для импорта: " import_file
+            if [ -z "$import_file" ] || [ ! -f "$import_file" ]; then
+                echo "  [!] Файл не найден: $import_file"
+                tty_read -rp "[Enter для продолжения]"
+                continue
+            fi
+            tty_read -rp "  Перезаписать существующие подписки с совпадающим slug? [y/N] " imp_overwrite
+            local imp_ow_param=""
+            if [ "$imp_overwrite" = "y" ] || [ "$imp_overwrite" = "Y" ]; then
+                imp_ow_param="?overwrite=true"
+            fi
+            local imp_resp
+            imp_resp="$(curl -sf -X POST "${BASE}/api/import${imp_ow_param}" \
+                -H 'Content-Type: application/json' \
+                -d @"$import_file" 2>&1)"
+            if [ $? -eq 0 ]; then
+                echo "  Результат: $imp_resp"
+            else
+                echo "  [!] Ошибка импорта: $imp_resp"
+            fi
+            echo ""
+            tty_read -rp "[Enter для продолжения]"
+            ;;
+
+        0)  return ;;
+
+        *)  echo "  [!] Неверный пункт меню" ;;
+        esac
+    done
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1397,6 +1791,12 @@ run_menu() {
             "$UI_I_INSTANCES" "$(ui_dim)" ">>>" "$(ui_reset)"
         echo ""
 
+        ui_section "Подписки"
+        echo ""
+        printf '   %s  30) Управление подписками  %s%s%s\n' \
+            "$UI_I_SUB" "$(ui_dim)" ">>>" "$(ui_reset)"
+        echo ""
+
         ui_section "Глобальные операции"
         echo ""
         printf '   %s  11) Обновить бинарник olcRTC  %s(для всех инстансов)%s\n' \
@@ -1781,6 +2181,26 @@ run_menu() {
             done
             rm -f /etc/systemd/system/olcrtc-server@.service
             systemctl daemon-reload
+            # Subscription database
+            local sub_db_found=0
+            for _sdb in /var/lib/olcrtc/subscriptions.db /var/lib/olcrtc-*/subscriptions.db; do
+                [ -f "$_sdb" ] && sub_db_found=1 && break
+            done
+            if [ "$sub_db_found" -eq 1 ]; then
+                tty_read -rp "  Удалить базу данных подписок? (y/N): " del_sub_db
+                if [ "$del_sub_db" = "y" ] || [ "$del_sub_db" = "Y" ]; then
+                    rm -f /var/lib/olcrtc/subscriptions.db /var/lib/olcrtc-*/subscriptions.db 2>/dev/null || true
+                    echo "  База подписок удалена."
+                else
+                    echo "  База подписок сохранена для переноса на новый сервер."
+                    # Copy out before dirs are deleted
+                    if [ -f /var/lib/olcrtc/subscriptions.db ]; then
+                        cp /var/lib/olcrtc/subscriptions.db /tmp/olcrtc-subscriptions.db 2>/dev/null || true
+                        echo "  Копия: /tmp/olcrtc-subscriptions.db"
+                    fi
+                fi
+            fi
+
             echo "[*] Удаляю файлы..."
             rm -rf /etc/olcrtc /var/lib/olcrtc /var/lib/olcrtc-* /usr/local/bin/olcrtc /usr/local/bin/olcrtc-launcher
             echo "[*] Удаляю пользователя olcrtc..."
@@ -1824,6 +2244,10 @@ run_menu() {
 
         20) # Управление инстансами
             run_instance_menu
+            ;;
+
+        30) # Управление подписками
+            run_subscription_menu
             ;;
 
         0)  # Выход
@@ -1990,6 +2414,14 @@ if [ -n "${OLCRTC_WARP_PROXY:-}" ]; then
     ARGS+=(-warp-proxy "$warp_host" -warp-proxy-port "$warp_port")
 fi
 
+# Subscription server
+if [ -n "${OLCRTC_SUB_ENABLED:-}" ] && [ "$OLCRTC_SUB_ENABLED" = "1" ]; then
+    ARGS+=(-sub-enabled)
+    sub_port="${OLCRTC_SUB_PORT:-2096}"
+    ARGS+=(-sub-port "$sub_port")
+    ARGS+=(-sub-db "data/subscriptions.db")
+fi
+
 exec /usr/local/bin/olcrtc "${ARGS[@]}"
 LAUNCHER
     chmod 0755 /usr/local/bin/olcrtc-launcher
@@ -2146,6 +2578,31 @@ UNIT
     VP8_FPS="${EXISTING_VP8_FPS:-}"
     VP8_BATCH="${EXISTING_VP8_BATCH:-}"
 
+    # Decide subscription settings
+    EXISTING_SUB_ENABLED=""
+    EXISTING_SUB_PORT=""
+    if [ -f "$ENV_FILE" ]; then
+        EXISTING_SUB_ENABLED="$(get_env_value OLCRTC_SUB_ENABLED)"
+        EXISTING_SUB_PORT="$(get_env_value OLCRTC_SUB_PORT)"
+    fi
+    if [ -n "$EXISTING_SUB_ENABLED" ]; then
+        SUB_ENABLED="$EXISTING_SUB_ENABLED"
+        SUB_PORT="${EXISTING_SUB_PORT:-2096}"
+        echo "[*] Subscription server: $([ "$SUB_ENABLED" = "1" ] && echo "enabled (port $SUB_PORT)" || echo "disabled")"
+    else
+        echo ""
+        tty_read -rp "[?] Включить сервер подписок? (y/N): " sub_ans
+        if [ "$sub_ans" = "y" ] || [ "$sub_ans" = "Y" ]; then
+            SUB_ENABLED="1"
+            tty_read -rp "[?] Порт сервера подписок [Enter = 2096]: " sub_port_ans
+            SUB_PORT="${sub_port_ans:-2096}"
+            echo "[*] Subscription server enabled on port $SUB_PORT"
+        else
+            SUB_ENABLED=""
+            SUB_PORT=""
+        fi
+    fi
+
     # Decide name
     if [ -n "$SET_NAME" ]; then
         NAME="$SET_NAME"
@@ -2189,6 +2646,8 @@ OLCRTC_WARP_PROXY=$EXISTING_WARP_PROXY
 OLCRTC_NAME=$NAME
 OLCRTC_VP8_FPS=$VP8_FPS
 OLCRTC_VP8_BATCH=$VP8_BATCH
+OLCRTC_SUB_ENABLED=$SUB_ENABLED
+OLCRTC_SUB_PORT=$SUB_PORT
 EOF
     chown root:olcrtc "$ENV_FILE"
     chmod 0640 "$ENV_FILE"

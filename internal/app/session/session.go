@@ -11,7 +11,10 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/client"
 	"github.com/openlibrecommunity/olcrtc/internal/link"
 	"github.com/openlibrecommunity/olcrtc/internal/link/direct"
+	"github.com/openlibrecommunity/olcrtc/internal/logger"
 	"github.com/openlibrecommunity/olcrtc/internal/server"
+	subserver "github.com/openlibrecommunity/olcrtc/internal/subscription/server"
+	"github.com/openlibrecommunity/olcrtc/internal/subscription/store"
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
 	"github.com/openlibrecommunity/olcrtc/internal/transport/datachannel"
 	"github.com/openlibrecommunity/olcrtc/internal/transport/seichannel"
@@ -94,8 +97,8 @@ type Config struct {
 	SOCKSProxyPort  int
 	SOCKSProxyUser  string
 	SOCKSProxyPass  string
-	WarpProxyAddr  string
-	WarpProxyPort  int
+	WarpProxyAddr   string
+	WarpProxyPort   int
 	VideoWidth      int
 	VideoHeight     int
 	VideoFPS        int
@@ -108,6 +111,10 @@ type Config struct {
 	VideoTileRS     int
 	VP8FPS          int
 	VP8BatchSize    int
+	SubEnabled      bool
+	SubPort         int
+	SubDBPath       string
+	SubAPIToken     string
 }
 
 // RegisterDefaults registers built-in providers and transports.
@@ -268,6 +275,11 @@ func Run(ctx context.Context, cfg Config) error {
 
 	switch cfg.Mode {
 	case modeSRV:
+		if cfg.SubEnabled {
+			if err := startSubscriptionServer(ctx, cfg); err != nil {
+				return fmt.Errorf("subscription server: %w", err)
+			}
+		}
 		if err := server.Run(
 			ctx,
 			cfg.Link,
@@ -329,6 +341,32 @@ func Run(ctx context.Context, cfg Config) error {
 	default:
 		return ErrModeRequired
 	}
+}
+
+func startSubscriptionServer(ctx context.Context, cfg Config) error {
+	dbPath := cfg.SubDBPath
+	if dbPath == "" {
+		dbPath = "data/subscriptions.db"
+	}
+	port := cfg.SubPort
+	if port == 0 {
+		port = 2096
+	}
+
+	st, err := store.Open(dbPath)
+	if err != nil {
+		return fmt.Errorf("open subscription db: %w", err)
+	}
+
+	srv := subserver.New(st, port, cfg.SubAPIToken)
+	go func() {
+		if err := srv.Start(ctx); err != nil {
+			logger.Errorf("subscription server stopped: %v", err)
+		}
+		_ = st.Close()
+	}()
+
+	return nil
 }
 
 func buildRoomURL(carrierName, roomID string) string {

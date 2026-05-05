@@ -76,6 +76,25 @@ done
 rm -f /etc/systemd/system/olcrtc-server@.service
 systemctl daemon-reload
 
+# Subscription database
+sub_db_found=0
+for _sdb in /var/lib/olcrtc/subscriptions.db /var/lib/olcrtc-*/subscriptions.db; do
+    [ -f "$_sdb" ] && sub_db_found=1 && break
+done
+if [ "$sub_db_found" -eq 1 ]; then
+    tty_read -rp "  Удалить базу данных подписок? (y/N): " del_sub_db
+    if [ "$del_sub_db" = "y" ] || [ "$del_sub_db" = "Y" ]; then
+        rm -f /var/lib/olcrtc/subscriptions.db /var/lib/olcrtc-*/subscriptions.db 2>/dev/null || true
+        echo "  База подписок удалена."
+    else
+        echo "  База подписок сохранена для переноса на новый сервер."
+        if [ -f /var/lib/olcrtc/subscriptions.db ]; then
+            cp /var/lib/olcrtc/subscriptions.db /tmp/olcrtc-subscriptions.db 2>/dev/null || true
+            echo "  Копия: /tmp/olcrtc-subscriptions.db"
+        fi
+    fi
+fi
+
 echo "[*] Удаляю файлы..."
 rm -rf /etc/olcrtc /var/lib/olcrtc /var/lib/olcrtc-* /usr/local/bin/olcrtc /usr/local/bin/olcrtc-launcher
 

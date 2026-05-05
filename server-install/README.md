@@ -54,14 +54,11 @@ Speed (descending): **datachannel** (~6 MB/s) > **vp8channel** > **seichannel** 
 
 ## Quick start (default — wbstream + datachannel)
 
-**Option A — from a clean checkout of master** (binary auto-downloaded from
-the matching Release):
+**Option A — one-liner** (recommended, downloads and runs the interactive
+setup script):
 
 ```bash
-# On your VPS, as root:
-git clone https://github.com/Oleglog/Olcrtc_manager
-cd Olcrtc_manager
-sudo ./server-install/install.sh
+curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/master/server-install/olcrtc-setup.sh | sudo bash
 ```
 
 **Option B — from a release tarball** (binary already inside):
@@ -71,7 +68,7 @@ curl -fsSL -o /tmp/olcrtc.tgz \
     https://github.com/Oleglog/Olcrtc_manager/releases/latest/download/olcrtc-server-installer-0.1.3.tgz
 rm -rf /tmp/olcrtc-server-installer-*
 tar -xzf /tmp/olcrtc.tgz -C /tmp
-sudo /tmp/olcrtc-server-installer-*/install.sh
+sudo bash /tmp/olcrtc-server-installer-*/olcrtc-setup.sh
 ```
 
 **Option C — build from source** (no GitHub access on the VPS / reproducible
@@ -80,7 +77,7 @@ build required):
 ```bash
 cd Olcrtc_manager
 ./server-install/build-from-source.sh   # produces server-install/bin/olcrtc-linux-{amd64,arm64}
-sudo ./server-install/install.sh
+sudo bash server-install/olcrtc-setup.sh
 ```
 
 The installer prints the credentials you need to enter into the **olcRTC**
@@ -102,38 +99,63 @@ Android app at the end:
 
 ## Picking a different carrier / transport
 
+Use the interactive menu after the server is installed:
+
 ```bash
-sudo ./install.sh --carrier telemost --transport vp8channel
-sudo ./install.sh --carrier jazz --transport datachannel
-sudo ./install.sh --carrier wbstream                       # default transport = datachannel
+sudo bash olcrtc-setup.sh   # → menu item 3) Сменить carrier
+                             # → menu item 4) Сменить транспорт
+```
+
+Or pass CLI flags during initial install:
+
+```bash
+sudo bash olcrtc-setup.sh --carrier telemost --transport vp8channel
+sudo bash olcrtc-setup.sh --carrier jazz --transport datachannel
+sudo bash olcrtc-setup.sh --carrier wbstream                       # default transport = datachannel
 ```
 
 The legacy `--provider` flag is still accepted as an alias for `--carrier`.
 
 For **telemost**, the room ID is whatever string you choose — it is not
-provisioned by Yandex. You can override the auto-generated `olcrtc-XXXX`
-ID by setting `OLCRTC_ROOM_ID=...` before running the installer:
+provisioned by Yandex. You can pass it as a CLI flag:
 
 ```bash
-sudo OLCRTC_ROOM_ID=my-vpn-room ./install.sh --provider telemost
+sudo bash olcrtc-setup.sh --carrier telemost --telemost-id my-vpn-room
 ```
 
-## Re-running the installer
+## Re-running the setup script
 
-The installer is idempotent — re-running keeps the existing key, room ID,
-proxy and debug settings unless you ask otherwise:
+The setup script is idempotent — re-running keeps the existing key, room ID,
+proxy and debug settings unless you ask otherwise. The **recommended** way is
+through the interactive menu:
 
 ```bash
-sudo ./install.sh                                   # update binary / unit file, keep everything
-sudo ./install.sh --regenerate                      # keep key, get a new room ID
-sudo ./install.sh --regenerate-key                  # rotate everything (key + room)
-sudo ./install.sh --carrier jazz                    # change carrier
-sudo ./install.sh --transport vp8channel            # change transport
-sudo ./install.sh --socks-proxy host:port           # route outbound through SOCKS5 (NO_AUTH)
-sudo ./install.sh --socks-proxy user:pass@h:port    # route outbound through SOCKS5 (USER/PASSWORD)
-sudo ./install.sh --socks-proxy ""                  # remove existing SOCKS5 proxy
-sudo ./install.sh --debug                           # enable -debug logging
-sudo ./install.sh --no-debug                        # disable -debug logging
+sudo bash olcrtc-setup.sh
+```
+
+| Menu item | Equivalent CLI flag |
+|-----------|---------------------|
+| 3) Сменить carrier | `--carrier jazz` |
+| 4) Сменить транспорт | `--transport vp8channel` |
+| 5) Пересоздать room ID | `--regenerate` |
+| 6) Ротация ключа + room ID | `--regenerate-key` |
+| 7) Настроить SOCKS5-прокси | `--socks-proxy host:port` |
+| 8) Убрать SOCKS5-прокси | `--socks-proxy ""` |
+| 9) Debug-логирование | `--debug` / `--no-debug` |
+| 11) Обновить бинарник | (re-run the script) |
+
+CLI flags also work for non-interactive / scripted usage:
+
+```bash
+sudo bash olcrtc-setup.sh --regenerate                      # keep key, get a new room ID
+sudo bash olcrtc-setup.sh --regenerate-key                  # rotate everything (key + room)
+sudo bash olcrtc-setup.sh --carrier jazz                    # change carrier
+sudo bash olcrtc-setup.sh --transport vp8channel            # change transport
+sudo bash olcrtc-setup.sh --socks-proxy host:port           # route outbound through SOCKS5 (NO_AUTH)
+sudo bash olcrtc-setup.sh --socks-proxy user:pass@h:port    # route outbound through SOCKS5 (USER/PASSWORD)
+sudo bash olcrtc-setup.sh --socks-proxy ""                  # remove existing SOCKS5 proxy
+sudo bash olcrtc-setup.sh --debug                           # enable -debug logging
+sudo bash olcrtc-setup.sh --no-debug                        # disable -debug logging
 ```
 
 Rotating the key invalidates every existing client; you will need to update
@@ -150,15 +172,17 @@ or is blocked by wbstream / jazz, rent a residential SOCKS5 proxy. Both
 `NO_AUTH` (IP-whitelisted) and `RFC 1929 USER/PASSWORD` are supported —
 use whichever your provider gives you:
 
+Use the interactive menu item **7) Настроить SOCKS5-прокси**, or pass flags:
+
 ```bash
 # IP-whitelisted proxy (no credentials):
-sudo ./install.sh --socks-proxy 1.2.3.4:1080
+sudo bash olcrtc-setup.sh --socks-proxy 1.2.3.4:1080
 
 # Username/password proxy (RFC 1929):
-sudo ./install.sh --socks-proxy alice:hunter2@1.2.3.4:1080
+sudo bash olcrtc-setup.sh --socks-proxy alice:hunter2@1.2.3.4:1080
 
 # Optional `socks5://` / `socks5h://` scheme is accepted and stripped:
-sudo ./install.sh --socks-proxy socks5://alice:hunter2@1.2.3.4:1080
+sudo bash olcrtc-setup.sh --socks-proxy socks5://alice:hunter2@1.2.3.4:1080
 ```
 
 This writes `OLCRTC_SOCKS_PROXY=...` into `/etc/olcrtc/env`. The launcher
@@ -184,14 +208,17 @@ therefore exits straight from the VPS, with the VPS's geolocation.
 
 ## Debug logging
 
+Use the interactive menu item **9) Включить / выключить debug-логирование**,
+or pass flags:
+
 ```bash
-sudo ./install.sh --debug
+sudo bash olcrtc-setup.sh --debug
 journalctl -u olcrtc-server -f
 ```
 
 You will see ICE candidate negotiation, DTLS state changes, and per-stream
 errors. Useful for diagnosing reconnects on Telemost or one-off DTLS
-timeouts. Re-run with `--no-debug` to switch back.
+timeouts. Re-run with `--no-debug` (or toggle via the menu) to switch back.
 
 ## Manage the service
 
@@ -226,6 +253,122 @@ system user (`olcrtc`). Up to 20 additional instances are supported.
 
 The template unit (`olcrtc-server@.service`) is created automatically when
 the first additional instance is added and removed when the last one is deleted.
+
+## Subscriptions
+
+The subscription system lets you publish a permanent URL (e.g.
+`http://IP:2096/sub/xJGHpw`) that clients can add once. After recreating
+the server you import the same subscriptions, add the new instance URI, and
+clients pick up the change automatically — no QR re-scan needed.
+
+### Enabling subscriptions
+
+During first install `olcrtc-setup.sh` asks:
+
+```
+Enable subscription server? (y/N): y
+Subscription server port [Enter = 2096]: 2096
+```
+
+This writes `OLCRTC_SUB_ENABLED=1` and `OLCRTC_SUB_PORT=2096` into
+`/etc/olcrtc/env`. The embedded HTTP server starts alongside the main tunnel
+on port **2096** (configurable).
+
+### Managing subscriptions (menu item 30)
+
+```bash
+sudo bash olcrtc-setup.sh   # → menu item 30) Управление подписками
+```
+
+The subscription submenu offers:
+
+| # | Action | Description |
+|---|--------|-------------|
+| 1 | **List subscriptions** | Show all subscriptions with their instances |
+| 2 | **Create subscription** | Enter a name, optionally specify a slug (6-char random by default) |
+| 3 | **Add instance** | Choose a subscription slug, paste the full `olcrtc://` URI |
+| 4 | **Remove instance** | Choose a subscription, then remove a single instance by ID |
+| 5 | **Detach all instances** | Remove all instances from a subscription (subscription stays, empty) |
+| 6 | **Delete subscription** | Remove subscription; if it has instances, asks whether to delete or detach them first |
+| 7 | **Export** | Save all subscriptions to a JSON file |
+| 8 | **Import** | Load subscriptions from a previously exported JSON file |
+
+### Typical workflow
+
+**First-time setup:**
+
+1. Install olcrtc via `olcrtc-setup.sh`, answer **y** to enable subscriptions.
+2. After install, open the menu → **30) Управление подписками** → **2) Создать подписку** (e.g. name `my-vpn`, slug auto-generated → `xJGHpw`).
+3. Copy the `olcrtc://` URI from the QR/URI output (menu item **2** in the main menu).
+4. **30 → 3) Добавить инстанс** → paste the URI into subscription `xJGHpw`.
+5. Client app adds the subscription URL: `http://<IP>:2096/sub/xJGHpw`.
+
+**Server recreation (keep the same subscription URL):**
+
+1. Before destroying the server, export: **30 → 7) Экспорт** → saves `/tmp/olcrtc-subscriptions.json`.
+2. On the new server, install with subscriptions enabled, then import: **30 → 8) Импорт**.
+3. The subscription `xJGHpw` is restored with the same slug.
+4. Add the new instance URI: **30 → 3)**.
+5. Clients refresh the subscription and get the new parameters.
+
+### Multiple instances per subscription
+
+A single subscription can hold several `olcrtc://` URIs with different
+carriers or transports. The client fetches all URIs from
+`GET /sub/{slug}` (plain text, one per line) and selects the best one.
+
+### Subscription data
+
+| Path | Contents |
+|------|----------|
+| `/var/lib/olcrtc/subscriptions.db` | SQLite database (created at first start) |
+| `OLCRTC_SUB_ENABLED=1` in env | Enables the HTTP server |
+| `OLCRTC_SUB_PORT=2096` in env | HTTP server listen port |
+
+When uninstalling, both `olcrtc-setup.sh` (menu item **12**) and
+`olcrtc-uninstall.sh` ask whether to delete the subscription database.
+If you answer **N**, a copy is saved to `/tmp/olcrtc-subscriptions.db`.
+
+### HTTP API reference
+
+Public (open to the internet if the port is reachable):
+
+| Method | Path | Response |
+|--------|------|----------|
+| `GET` | `/sub/{slug}` | Plain-text list of `olcrtc://` URIs, one per line |
+
+Management (localhost only, used by `olcrtc-setup.sh` via `curl`):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/subscriptions` | List all subscriptions (JSON) |
+| `POST` | `/api/subscriptions` | Create subscription `{name, slug}` |
+| `DELETE` | `/api/subscriptions/{slug}` | Delete subscription + instances |
+| `DELETE` | `/api/subscriptions/{slug}?detach=true` | Remove all instances, keep subscription |
+| `GET` | `/api/subscriptions/{slug}/instances` | List instances (JSON) |
+| `POST` | `/api/subscriptions/{slug}/instances` | Add instance `{raw_uri}` |
+| `DELETE` | `/api/subscriptions/{slug}/instances/{id}` | Remove instance |
+| `GET` | `/api/export` | Export all subscriptions (JSON) |
+| `POST` | `/api/import` | Import subscriptions (JSON) |
+
+### Optional: custom domain
+
+You can point a domain like `sub.example.com` at your VPS and proxy to the
+subscription port via nginx:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name sub.example.com;
+    ssl_certificate     /etc/letsencrypt/live/sub.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/sub.example.com/privkey.pem;
+    location / {
+        proxy_pass http://127.0.0.1:2096;
+    }
+}
+```
+
+Clients then use `https://sub.example.com/sub/xJGHpw` — no port number needed.
 
 ## Uninstall
 
@@ -280,6 +423,7 @@ For `telemost`, no API call is needed — the user-supplied ID is the room.
 | `/etc/olcrtc/<N>/key.hex` | root:olcrtc | 0640 | Key for additional instance N |
 | `/var/lib/olcrtc-<N>/` | olcrtc:olcrtc | 0750 | State directory for instance N |
 | `/etc/systemd/system/olcrtc-server@.service` | root:root | 0644 | Systemd template unit (auto-created) |
+| `/var/lib/olcrtc/subscriptions.db` | olcrtc:olcrtc | 0750 | Subscription SQLite database (if enabled) |
 
 ## Licenses
 
@@ -297,18 +441,13 @@ For `telemost`, no API call is needed — the user-supplied ID is the room.
 ### Самый быстрый путь
 
 ```bash
-curl -fsSL -o /tmp/olcrtc.tgz \
-    https://github.com/Oleglog/Olcrtc_manager/releases/latest/download/olcrtc-server-installer-0.1.3.tgz
-rm -rf /tmp/olcrtc-server-installer-*
-tar -xzf /tmp/olcrtc.tgz -C /tmp
-sudo /tmp/olcrtc-server-installer-*/install.sh
+curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/master/server-install/olcrtc-setup.sh | sudo bash
 ```
 
 С residential SOCKS5-прокси (если IP VPS заблокирован у wbstream / jazz / telemost):
 
 ```bash
-sudo /tmp/olcrtc-server-installer-*/install.sh \
-    --socks-proxy USER:PASS@HOST:PORT
+sudo bash olcrtc-setup.sh --socks-proxy USER:PASS@HOST:PORT
 ```
 
 ### Что произойдёт
@@ -323,29 +462,36 @@ sudo /tmp/olcrtc-server-installer-*/install.sh \
 
 ### Сменить carrier / транспорт
 
+Через интерактивное меню (пункты **3** и **4**), или флагами CLI:
+
 ```bash
-sudo ./install.sh --carrier wbstream                          # по умолчанию
-sudo ./install.sh --carrier jazz --transport datachannel      # SaluteJazz + быстрый транспорт
-sudo ./install.sh --carrier telemost --transport vp8channel   # Yandex Telemost
+sudo bash olcrtc-setup.sh --carrier wbstream                          # по умолчанию
+sudo bash olcrtc-setup.sh --carrier jazz --transport datachannel      # SaluteJazz + быстрый транспорт
+sudo bash olcrtc-setup.sh --carrier telemost --transport vp8channel   # Yandex Telemost
 ```
 
 Старый флаг `--provider` принимается как алиас для `--carrier`.
 
 ### Повторный запуск (идемпотентность)
 
-Инсталлер можно запускать сколько угодно раз — он не трогает ключ/комнату/прокси, если ты не попросишь явно:
+Скрипт можно запускать сколько угодно раз. Рекомендуется использовать интерактивное меню:
 
 ```bash
-sudo ./install.sh                             # обновить бинарник/юнит, всё остальное сохранить
-sudo ./install.sh --regenerate                # сменить комнату (ключ остаётся)
-sudo ./install.sh --regenerate-key            # сменить и ключ, и комнату
-sudo ./install.sh --carrier jazz              # сменить carrier
-sudo ./install.sh --transport vp8channel      # сменить транспорт
-sudo ./install.sh --socks-proxy host:port     # включить SOCKS5 (NO_AUTH)
-sudo ./install.sh --socks-proxy u:p@h:port    # включить SOCKS5 (USER/PASSWORD)
-sudo ./install.sh --socks-proxy ""            # выключить SOCKS5
-sudo ./install.sh --debug                     # включить verbose-логирование
-sudo ./install.sh --no-debug                  # выключить verbose-логирование
+sudo bash olcrtc-setup.sh   # открывается интерактивное меню управления
+```
+
+Для скриптового использования доступны CLI-флаги:
+
+```bash
+sudo bash olcrtc-setup.sh --regenerate                # сменить комнату (ключ остаётся)
+sudo bash olcrtc-setup.sh --regenerate-key            # сменить и ключ, и комнату
+sudo bash olcrtc-setup.sh --carrier jazz              # сменить carrier
+sudo bash olcrtc-setup.sh --transport vp8channel      # сменить транспорт
+sudo bash olcrtc-setup.sh --socks-proxy host:port     # включить SOCKS5 (NO_AUTH)
+sudo bash olcrtc-setup.sh --socks-proxy u:p@h:port    # включить SOCKS5 (USER/PASSWORD)
+sudo bash olcrtc-setup.sh --socks-proxy ""            # выключить SOCKS5
+sudo bash olcrtc-setup.sh --debug                     # включить verbose-логирование
+sudo bash olcrtc-setup.sh --no-debug                  # выключить verbose-логирование
 ```
 
 ### Проверка после установки
@@ -381,6 +527,53 @@ sudo bash olcrtc-setup.sh   # → пункт 20) Управление инста
 (`/etc/olcrtc/<N>/env`), ключ (`/etc/olcrtc/<N>/key.hex`) и state-директорию
 (`/var/lib/olcrtc-<N>/`). Все инстансы используют один бинарник и одного
 системного пользователя. Лимит — 20 дополнительных инстансов.
+
+### Подписки
+
+Система подписок позволяет создать постоянный URL (например
+`http://IP:2096/sub/xJGHpw`), который клиент добавляет один раз. После
+пересоздания сервера достаточно импортировать подписки, добавить новый
+инстанс — и клиент подхватит новые параметры без повторного сканирования QR.
+
+**Включение при установке:**
+
+При первом запуске `olcrtc-setup.sh` спросит:
+
+```
+Включить сервер подписок? (y/N): y
+Порт сервера подписок [Enter = 2096]: 2096
+```
+
+**Управление подписками:**
+
+```bash
+sudo bash olcrtc-setup.sh   # → пункт 30) Управление подписками
+```
+
+Подменю:
+
+| # | Действие | Описание |
+|---|----------|----------|
+| 1 | **Список подписок** | Все подписки с инстансами |
+| 2 | **Создать подписку** | Ввести имя, slug генерируется автоматически (6 символов) |
+| 3 | **Добавить инстанс** | Выбрать подписку, вставить полную `olcrtc://` URI |
+| 4 | **Убрать инстанс** | Выбрать подписку, убрать один инстанс по ID |
+| 5 | **Открепить все инстансы** | Убрать все инстансы из подписки (подписка остаётся пустой) |
+| 6 | **Удалить подписку** | Удалить подписку; если есть инстансы — спросит удалить или открепить |
+| 7 | **Экспорт** | Сохранить подписки в JSON-файл |
+| 8 | **Импорт** | Загрузить подписки из JSON-файла |
+
+**Сценарий «обновление сервера»:**
+
+1. Экспорт: пункт **30 → 7** → сохраняет `/tmp/olcrtc-subscriptions.json`.
+2. На новом сервере: установить с подписками, импорт: **30 → 8**.
+3. Slug `xJGHpw` восстановлен → добавить новый инстанс через **30 → 3**.
+4. Клиент обновляет подписку — получает новые параметры.
+
+**Привязка домена (опционально):**
+
+Настроить nginx reverse-proxy с `sub.example.com` → `127.0.0.1:2096`
+(подробности в английской версии выше, секция *Subscriptions → Optional: custom domain*).
 
 ### Удаление
 
