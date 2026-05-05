@@ -353,22 +353,164 @@ Management (localhost only, used by `olcrtc-setup.sh` via `curl`):
 
 ### Optional: custom domain
 
-You can point a domain like `sub.example.com` at your VPS and proxy to the
-subscription port via nginx:
+By default clients access subscriptions via `http://<IP>:2096/sub/{slug}`.
+Binding a domain adds HTTPS and hides the port:
+`https://sub.example.com/sub/{slug}`.
 
-```nginx
+#### 1. DNS
+
+Add an **A record** `sub.example.com → <VPS IP>` at your DNS provider.
+
+#### 2. TLS certificate (Let's Encrypt)
+
+```bash
+sudo apt install certbot python3-certbot-nginx   # if not installed
+
+# Option A — certbot nginx plugin (easiest when port 80 is free or nginx owns it):
+sudo certbot --nginx -d sub.example.com
+
+# Option B — standalone (stop whatever uses port 80 first):
+sudo systemctl stop nginx
+sudo certbot certonly --standalone -d sub.example.com
+sudo systemctl start nginx
+
+# Option C — webroot (nginx is running, no plugin):
+sudo certbot certonly --webroot -w /var/www/html -d sub.example.com
+```
+
+#### 3a. Standard nginx (no SNI multiplexer)
+
+If your nginx does **not** use a `stream {}` SNI pre-read block (i.e. no
+3x-ui / xray / reality on port 443), a simple `http {}` server block is
+enough:
+
+```bash
+sudo tee /etc/nginx/sites-available/olcrtc-sub <<'EOF'
 server {
-    listen 443 ssl;
+    listen 80;
     server_name sub.example.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name sub.example.com;
+
     ssl_certificate     /etc/letsencrypt/live/sub.example.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/sub.example.com/privkey.pem;
+
     location / {
         proxy_pass http://127.0.0.1:2096;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
     }
+}
+EOF
+
+sudo ln -sf /etc/nginx/sites-available/olcrtc-sub /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+#### 3b. nginx with SNI multiplexer (3x-ui / xray / reality)
+
+If your server already runs **3x-ui** or another TLS service that uses an
+nginx `stream {}` block with `ssl_preread` to route connections by SNI, all
+TLS traffic on port 443 is intercepted **before** it reaches `http {}`
+server blocks. A regular `listen 443 ssl` will never see traffic.
+
+Typical stream config (`/etc/nginx/stream-enabled/*.conf` or similar):
+
+```nginx
+map $ssl_preread_server_name $sni_name {
+    hostnames;
+    panel.example.com        xray;
+    www.example.com          www;
+    default                  xray;      # unknown SNI → xray
+}
+upstream xray { server 127.0.0.1:8443; }
+upstream www  { server 127.0.0.1:7443; }
+
+server {
+    listen 443;
+    proxy_pass $sni_name;
+    ssl_preread on;
+    proxy_protocol on;        # may or may not be present
 }
 ```
 
-Clients then use `https://sub.example.com/sub/xJGHpw` — no port number needed.
+**Steps:**
+
+1. **Add upstream** for the subscription server (pick a free local port,
+   e.g. 9443):
+
+   ```bash
+   # Add upstream + SNI entry (adjust the stream config path)
+   sudo sed -i '/upstream www {/i\upstream olcrtc_sub {\n    server 127.0.0.1:9443;\n}\n' \
+       /etc/nginx/stream-enabled/*.conf
+   sudo sed -i '/default/i\    sub.example.com            olcrtc_sub;' \
+       /etc/nginx/stream-enabled/*.conf
+   ```
+
+2. **Create the HTTP server block** listening on the internal port:
+
+   ```bash
+   sudo tee /etc/nginx/sites-available/olcrtc-sub <<'EOF'
+   server {
+       listen 80;
+       server_name sub.example.com;
+       return 301 https://$host$request_uri;
+   }
+
+   server {
+       listen 127.0.0.1:9443 ssl http2 proxy_protocol;
+       server_name sub.example.com;
+       real_ip_header proxy_protocol;
+       set_real_ip_from 127.0.0.1;
+
+       ssl_certificate     /etc/letsencrypt/live/sub.example.com/fullchain.pem;
+       ssl_certificate_key /etc/letsencrypt/live/sub.example.com/privkey.pem;
+
+       location / {
+           proxy_pass http://127.0.0.1:2096;
+           proxy_set_header Host $host;
+           proxy_set_header X-Real-IP $remote_addr;
+       }
+   }
+   EOF
+
+   sudo ln -sf /etc/nginx/sites-available/olcrtc-sub /etc/nginx/sites-enabled/
+   ```
+
+   > **Note**: if your stream block does NOT have `proxy_protocol on;`,
+   > remove `proxy_protocol` from the `listen` directive and remove the
+   > `real_ip_header` / `set_real_ip_from` lines.
+
+3. **Test and reload:**
+
+   ```bash
+   sudo nginx -t && sudo systemctl reload nginx
+   ```
+
+4. **Verify:**
+
+   ```bash
+   curl -sf https://sub.example.com/sub/{slug}
+   ```
+
+Existing 3x-ui / xray routes are **not affected** — only the new SNI entry
+is added; `default` still falls through to xray.
+
+#### 4. Optional: close port 2096 externally
+
+Once the domain works, you can block direct access to the subscription port:
+
+```bash
+sudo ufw deny 2096/tcp    # or: iptables -A INPUT -p tcp --dport 2096 -j DROP
+```
+
+nginx reaches `127.0.0.1:2096` locally — the firewall does not interfere.
+
+Clients then use only: `https://sub.example.com/sub/{slug}`
 
 ## Uninstall
 
@@ -572,8 +714,88 @@ sudo bash olcrtc-setup.sh   # → пункт 30) Управление подпи
 
 **Привязка домена (опционально):**
 
-Настроить nginx reverse-proxy с `sub.example.com` → `127.0.0.1:2096`
-(подробности в английской версии выше, секция *Subscriptions → Optional: custom domain*).
+По умолчанию клиент обращается к `http://<IP>:2096/sub/{slug}`.
+С доменом: `https://sub.example.com/sub/{slug}` — HTTPS, без порта.
+
+1. **DNS** — A-запись `sub.example.com → IP VPS`.
+2. **Сертификат** — `sudo certbot --nginx -d sub.example.com`
+   (или `certbot certonly --standalone` / `--webroot`).
+3. **nginx** — два варианта:
+
+   **3а. Обычный nginx** (порт 443 свободен, нет 3x-ui):
+
+   ```bash
+   sudo tee /etc/nginx/sites-available/olcrtc-sub <<'EOF'
+   server {
+       listen 80;
+       server_name sub.example.com;
+       return 301 https://$host$request_uri;
+   }
+   server {
+       listen 443 ssl http2;
+       server_name sub.example.com;
+       ssl_certificate     /etc/letsencrypt/live/sub.example.com/fullchain.pem;
+       ssl_certificate_key /etc/letsencrypt/live/sub.example.com/privkey.pem;
+       location / {
+           proxy_pass http://127.0.0.1:2096;
+           proxy_set_header Host $host;
+           proxy_set_header X-Real-IP $remote_addr;
+       }
+   }
+   EOF
+   sudo ln -sf /etc/nginx/sites-available/olcrtc-sub /etc/nginx/sites-enabled/
+   sudo nginx -t && sudo systemctl reload nginx
+   ```
+
+   **3б. nginx + SNI мультиплексор (3x-ui / xray / reality):**
+
+   Если на сервере 3x-ui, порт 443 перехватывает `stream {}` блок с
+   `ssl_preread` → обычный `listen 443 ssl` не получит трафик.
+
+   Решение: добавить upstream + SNI-правило в stream-конфиг, а HTTP-блок
+   слушает на внутреннем порту (например 9443):
+
+   ```bash
+   # 1. Upstream + SNI запись в stream-конфиге
+   sudo sed -i '/upstream www {/i\upstream olcrtc_sub {\n    server 127.0.0.1:9443;\n}\n' \
+       /etc/nginx/stream-enabled/*.conf
+   sudo sed -i '/default/i\    sub.example.com            olcrtc_sub;' \
+       /etc/nginx/stream-enabled/*.conf
+
+   # 2. HTTP server block на внутреннем порту
+   sudo tee /etc/nginx/sites-available/olcrtc-sub <<'EOF'
+   server {
+       listen 80;
+       server_name sub.example.com;
+       return 301 https://$host$request_uri;
+   }
+   server {
+       listen 127.0.0.1:9443 ssl http2 proxy_protocol;
+       server_name sub.example.com;
+       real_ip_header proxy_protocol;
+       set_real_ip_from 127.0.0.1;
+       ssl_certificate     /etc/letsencrypt/live/sub.example.com/fullchain.pem;
+       ssl_certificate_key /etc/letsencrypt/live/sub.example.com/privkey.pem;
+       location / {
+           proxy_pass http://127.0.0.1:2096;
+           proxy_set_header Host $host;
+           proxy_set_header X-Real-IP $remote_addr;
+       }
+   }
+   EOF
+   sudo ln -sf /etc/nginx/sites-available/olcrtc-sub /etc/nginx/sites-enabled/
+   sudo nginx -t && sudo systemctl reload nginx
+   ```
+
+   > Если в stream-блоке **нет** `proxy_protocol on;`, уберите
+   > `proxy_protocol` из `listen` и строки `real_ip_header` /
+   > `set_real_ip_from`.
+
+   Маршруты 3x-ui **не затрагиваются** — добавляется только новое
+   SNI-правило; `default` по-прежнему уходит в xray.
+
+4. **Закрыть порт 2096 снаружи (опционально):**
+   `sudo ufw deny 2096/tcp` — nginx ходит к `127.0.0.1:2096` локально.
 
 ### Удаление
 
