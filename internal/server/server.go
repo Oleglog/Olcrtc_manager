@@ -129,6 +129,11 @@ func Run(
 		return err
 	}
 
+	go func() {
+		<-runCtx.Done()
+		s.closeSession()
+	}()
+
 	s.serve(runCtx)
 
 	s.shutdown()
@@ -283,6 +288,19 @@ func (s *Server) reinstallSession(dead *smux.Session) {
 	s.installSession()
 }
 
+func (s *Server) closeSession() {
+	s.sessMu.Lock()
+	if s.session != nil {
+		_ = s.session.Close()
+		s.session = nil
+	}
+	if s.conn != nil {
+		_ = s.conn.Close()
+		s.conn = nil
+	}
+	s.sessMu.Unlock()
+}
+
 func (s *Server) onData(data []byte) {
 	s.sessMu.RLock()
 	conn := s.conn
@@ -336,14 +354,7 @@ func (s *Server) serve(ctx context.Context) {
 }
 
 func (s *Server) shutdown() {
-	s.sessMu.Lock()
-	if s.session != nil {
-		_ = s.session.Close()
-	}
-	if s.conn != nil {
-		_ = s.conn.Close()
-	}
-	s.sessMu.Unlock()
+	s.closeSession()
 	if s.ln != nil {
 		_ = s.ln.Close()
 	}

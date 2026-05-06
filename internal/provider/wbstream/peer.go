@@ -190,12 +190,27 @@ func (p *Peer) Close() error {
 		p.cancel()
 		close(p.done)
 		if p.room != nil {
+			p.unpublishLocalTracks()
 			p.room.Disconnect()
 		}
 		close(p.sendQueue)
 		p.wg.Wait()
 	}
 	return nil
+}
+
+func (p *Peer) unpublishLocalTracks() {
+	if p.room == nil || p.room.LocalParticipant == nil {
+		return
+	}
+	for _, publication := range p.room.LocalParticipant.TrackPublications() {
+		if publication.SID() == "" {
+			continue
+		}
+		if err := p.room.LocalParticipant.UnpublishTrack(publication.SID()); err != nil {
+			log.Printf("WB Stream unpublish track error: %v", err)
+		}
+	}
 }
 
 // SetReconnectCallback is a stub for WB Stream.
