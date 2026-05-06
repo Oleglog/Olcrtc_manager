@@ -35,6 +35,10 @@ func New(ctx context.Context, cfg link.Config) (link.Link, error) {
 		VideoTileRS:     cfg.VideoTileRS,
 		VP8FPS:          cfg.VP8FPS,
 		VP8BatchSize:    cfg.VP8BatchSize,
+		SEIFPS:          cfg.SEIFPS,
+		SEIBatchSize:    cfg.SEIBatchSize,
+		SEIFragmentSize: cfg.SEIFragmentSize,
+		SEIAckTimeoutMS: cfg.SEIAckTimeoutMS,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create transport for direct link: %w", err)

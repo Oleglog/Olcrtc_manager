@@ -34,25 +34,29 @@ type Transport interface {
 
 // Config holds common transport configuration.
 type Config struct {
-	Carrier      string
-	RoomURL      string
-	Name         string
-	OnData       func([]byte)
-	DNSServer    string
-	ProxyAddr    string
-	ProxyPort    int
-	VideoWidth   int
-	VideoHeight  int
-	VideoFPS     int
-	VideoBitrate string
-	VideoHW      string
+	Carrier         string
+	RoomURL         string
+	Name            string
+	OnData          func([]byte)
+	DNSServer       string
+	ProxyAddr       string
+	ProxyPort       int
+	VideoWidth      int
+	VideoHeight     int
+	VideoFPS        int
+	VideoBitrate    string
+	VideoHW         string
 	VideoQRSize     int
 	VideoQRRecovery string
 	VideoCodec      string
 	VideoTileModule int
 	VideoTileRS     int
-	VP8FPS       int
-	VP8BatchSize int
+	VP8FPS          int
+	VP8BatchSize    int
+	SEIFPS          int
+	SEIBatchSize    int
+	SEIFragmentSize int
+	SEIAckTimeoutMS int
 }
 
 // Factory creates a transport instance.

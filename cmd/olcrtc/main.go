@@ -12,8 +12,8 @@ import (
 	"syscall"
 	"time"
 
-	lksdk "github.com/livekit/server-sdk-go/v2"
 	protoLogger "github.com/livekit/protocol/logger"
+	lksdk "github.com/livekit/server-sdk-go/v2"
 	"github.com/openlibrecommunity/olcrtc/internal/app/session"
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 	"github.com/openlibrecommunity/olcrtc/internal/names"
@@ -23,42 +23,45 @@ import (
 var ErrDataDirRequired = errors.New("data directory required (use -data data)")
 
 type config struct {
-	mode           string
-	link           string
-	transport      string
-	carrier        string
-	roomID         string
-	provider       string
-	socksPort      int
-	socksHost      string
-	keyHex         string
-	debug          bool
-	dataDir        string
-	dnsServer      string
-	socksProxyAddr string
-	socksProxyPort int
-	socksProxyUser string
-	socksProxyPass string
-	warpProxyAddr  string
-	warpProxyPort  int
-	videoWidth     int
-	videoHeight    int
-	videoFPS       int
-	videoBitrate   string
-	videoHW        string
+	mode            string
+	link            string
+	transport       string
+	carrier         string
+	roomID          string
+	provider        string
+	socksPort       int
+	socksHost       string
+	keyHex          string
+	debug           bool
+	dataDir         string
+	dnsServer       string
+	socksProxyAddr  string
+	socksProxyPort  int
+	socksProxyUser  string
+	socksProxyPass  string
+	warpProxyAddr   string
+	warpProxyPort   int
+	videoWidth      int
+	videoHeight     int
+	videoFPS        int
+	videoBitrate    string
+	videoHW         string
 	videoQRSize     int
 	videoQRRecovery string
 	videoCodec      string
 	videoTileModule int
 	videoTileRS     int
 	vp8FPS          int
-        vp8BatchSize    int
-        subEnabled      bool
-        subPort         int
-        subDBPath       string
-        subAPIToken     string
+	vp8BatchSize    int
+	subEnabled      bool
+	subPort         int
+	subDBPath       string
+	subAPIToken     string
+	seiFPS          int
+	seiBatchSize    int
+	seiFragmentSize int
+	seiAckTimeoutMS int
 }
-
 
 func main() {
 	if err := run(); err != nil {
@@ -147,10 +150,14 @@ func parseFlags() config {
 		"Tile Reed-Solomon parity percent 0..200 (videochannel tile only, default 20)")
 	flag.IntVar(&cfg.vp8FPS, "vp8-fps", 0, "VP8 frames per second (vp8channel only, default 25)")
 	flag.IntVar(&cfg.vp8BatchSize, "vp8-batch", 0, "VP8 frames per tick (vp8channel only, default 1)")
-        flag.BoolVar(&cfg.subEnabled, "sub-enabled", false, "Enable subscription HTTP server")
-        flag.IntVar(&cfg.subPort, "sub-port", 2096, "Subscription server listen port")
-        flag.StringVar(&cfg.subDBPath, "sub-db", "", "Subscription database path")
-        flag.StringVar(&cfg.subAPIToken, "sub-token", "", "Subscription API bearer token")
+	flag.IntVar(&cfg.seiFPS, "fps", 0, "Frames per second for transports that use video timing (seichannel)")
+	flag.IntVar(&cfg.seiBatchSize, "batch", 0, "Transport frames per tick for batched transports (seichannel)")
+	flag.IntVar(&cfg.seiFragmentSize, "frag", 0, "Fragment size in bytes for fragmented transports (seichannel)")
+	flag.IntVar(&cfg.seiAckTimeoutMS, "ack-ms", 0, "ACK timeout in milliseconds for reliable visual transports (seichannel)")
+	flag.BoolVar(&cfg.subEnabled, "sub-enabled", false, "Enable subscription HTTP server")
+	flag.IntVar(&cfg.subPort, "sub-port", 2096, "Subscription server listen port")
+	flag.StringVar(&cfg.subDBPath, "sub-db", "", "Subscription database path")
+	flag.StringVar(&cfg.subAPIToken, "sub-token", "", "Subscription API bearer token")
 	flag.Parse()
 
 	return cfg
@@ -204,8 +211,8 @@ func toSessionConfig(cfg config) session.Config {
 		SOCKSProxyPort:  cfg.socksProxyPort,
 		SOCKSProxyUser:  cfg.socksProxyUser,
 		SOCKSProxyPass:  cfg.socksProxyPass,
-		WarpProxyAddr:  cfg.warpProxyAddr,
-		WarpProxyPort:  cfg.warpProxyPort,
+		WarpProxyAddr:   cfg.warpProxyAddr,
+		WarpProxyPort:   cfg.warpProxyPort,
 		VideoWidth:      cfg.videoWidth,
 		VideoHeight:     cfg.videoHeight,
 		VideoFPS:        cfg.videoFPS,
@@ -218,11 +225,15 @@ func toSessionConfig(cfg config) session.Config {
 		VideoTileRS:     cfg.videoTileRS,
 		VP8FPS:          cfg.vp8FPS,
 		VP8BatchSize:    cfg.vp8BatchSize,
-                SubEnabled:      cfg.subEnabled,
-                SubPort:         cfg.subPort,
-                SubDBPath:       cfg.subDBPath,
-                SubAPIToken:     cfg.subAPIToken,
-        }
+		SubEnabled:      cfg.subEnabled,
+		SubPort:         cfg.subPort,
+		SubDBPath:       cfg.subDBPath,
+		SubAPIToken:     cfg.subAPIToken,
+		SEIFPS:          cfg.seiFPS,
+		SEIBatchSize:    cfg.seiBatchSize,
+		SEIFragmentSize: cfg.seiFragmentSize,
+		SEIAckTimeoutMS: cfg.seiAckTimeoutMS,
+	}
 }
 
 func firstNonEmpty(values ...string) string {

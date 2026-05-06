@@ -24,6 +24,8 @@ const (
 	defaultFragmentSize          = 900
 	defaultAckTimeout            = 3 * time.Second
 	defaultFrameInterval         = 50 * time.Millisecond
+	defaultFPS                   = 20
+	defaultBatchSize             = 1
 	defaultConnectTimeout        = 30 * time.Second
 	maxSendAttempts              = 4
 	sampleBuilderMaxLate         = 128
@@ -72,23 +74,27 @@ type inboundMessage struct {
 }
 
 type streamTransport struct {
-	stream      carrier.VideoTrack
-	track       *webrtc.TrackLocalStaticSample
-	onData      func([]byte)
-	outbound    chan []byte
-	outboundAck chan []byte
-	closeCh     chan struct{}
-	writerDone  chan struct{}
-	nextSeq     atomic.Uint32
-	closed      atomic.Bool
-	writerUp    atomic.Bool
-	sendMu      sync.Mutex
-	startWriter sync.Once
-	ackMu       sync.Mutex
-	ackWaiters  map[uint32]chan uint32
-	recvMu      sync.Mutex
-	inbound     map[uint32]*inboundMessage
-	delivered   map[uint32]uint32
+	stream        carrier.VideoTrack
+	track         *webrtc.TrackLocalStaticSample
+	onData        func([]byte)
+	outbound      chan []byte
+	outboundAck   chan []byte
+	closeCh       chan struct{}
+	writerDone    chan struct{}
+	nextSeq       atomic.Uint32
+	closed        atomic.Bool
+	writerUp      atomic.Bool
+	sendMu        sync.Mutex
+	startWriter   sync.Once
+	ackMu         sync.Mutex
+	ackWaiters    map[uint32]chan uint32
+	recvMu        sync.Mutex
+	inbound       map[uint32]*inboundMessage
+	delivered     map[uint32]uint32
+	fragmentSize  int
+	ackTimeout    time.Duration
+	frameInterval time.Duration
+	batchSize     int
 }
 
 // New creates a seichannel transport backed by a carrier-specific provider.
@@ -129,17 +135,38 @@ func New(ctx context.Context, cfg transport.Config) (transport.Transport, error)
 		return nil, fmt.Errorf("create local video track: %w", err)
 	}
 
+	fps := cfg.SEIFPS
+	if fps <= 0 {
+		fps = defaultFPS
+	}
+	batchSize := cfg.SEIBatchSize
+	if batchSize <= 0 {
+		batchSize = defaultBatchSize
+	}
+	fragmentSize := cfg.SEIFragmentSize
+	if fragmentSize <= 0 {
+		fragmentSize = defaultFragmentSize
+	}
+	ackTimeout := defaultAckTimeout
+	if cfg.SEIAckTimeoutMS > 0 {
+		ackTimeout = time.Duration(cfg.SEIAckTimeoutMS) * time.Millisecond
+	}
+
 	tr := &streamTransport{
-		stream:      stream,
-		track:       track,
-		onData:      cfg.OnData,
-		outbound:    make(chan []byte, 256),
-		outboundAck: make(chan []byte, 64),
-		closeCh:     make(chan struct{}),
-		writerDone:  make(chan struct{}),
-		ackWaiters:  make(map[uint32]chan uint32),
-		inbound:     make(map[uint32]*inboundMessage),
-		delivered:   make(map[uint32]uint32),
+		stream:        stream,
+		track:         track,
+		onData:        cfg.OnData,
+		outbound:      make(chan []byte, 256),
+		outboundAck:   make(chan []byte, 64),
+		closeCh:       make(chan struct{}),
+		writerDone:    make(chan struct{}),
+		ackWaiters:    make(map[uint32]chan uint32),
+		inbound:       make(map[uint32]*inboundMessage),
+		delivered:     make(map[uint32]uint32),
+		fragmentSize:  fragmentSize,
+		ackTimeout:    ackTimeout,
+		frameInterval: time.Second / time.Duration(fps),
+		batchSize:     batchSize,
 	}
 
 	if err := stream.AddTrack(track); err != nil {
@@ -178,7 +205,7 @@ func (p *streamTransport) Send(data []byte) error {
 
 	seq := p.nextSeq.Add(1)
 	crc := crc32.ChecksumIEEE(data)
-	fragments := fragmentPayload(data, defaultFragmentSize)
+	fragments := fragmentPayload(data, p.effectiveFragmentSize())
 	waiter := make(chan uint32, 1)
 
 	p.ackMu.Lock()
@@ -198,7 +225,7 @@ func (p *streamTransport) Send(data []byte) error {
 			}
 		}
 
-		timer := time.NewTimer(defaultAckTimeout)
+		timer := time.NewTimer(p.effectiveAckTimeout())
 		select {
 		case ackCRC := <-waiter:
 			timer.Stop()
@@ -260,14 +287,42 @@ func (p *streamTransport) Features() transport.Features {
 		Reliable:        true,
 		Ordered:         true,
 		MessageOriented: true,
-		MaxPayloadSize:  defaultMaxPayloadSize,
+		MaxPayloadSize:  p.effectiveFragmentSize() * 8,
 	}
+}
+
+func (p *streamTransport) effectiveFragmentSize() int {
+	if p.fragmentSize <= 0 {
+		return defaultFragmentSize
+	}
+	return p.fragmentSize
+}
+
+func (p *streamTransport) effectiveAckTimeout() time.Duration {
+	if p.ackTimeout <= 0 {
+		return defaultAckTimeout
+	}
+	return p.ackTimeout
+}
+
+func (p *streamTransport) effectiveFrameInterval() time.Duration {
+	if p.frameInterval <= 0 {
+		return defaultFrameInterval
+	}
+	return p.frameInterval
+}
+
+func (p *streamTransport) effectiveBatchSize() int {
+	if p.batchSize <= 0 {
+		return defaultBatchSize
+	}
+	return p.batchSize
 }
 
 func (p *streamTransport) writerLoop() {
 	defer close(p.writerDone)
 
-	ticker := time.NewTicker(defaultFrameInterval)
+	ticker := time.NewTicker(p.effectiveFrameInterval())
 	defer ticker.Stop()
 
 	idle := buildVideoAccessUnit(nil)
@@ -277,22 +332,30 @@ func (p *streamTransport) writerLoop() {
 		case <-p.closeCh:
 			return
 		case <-ticker.C:
-			payload, ok := p.nextOutboundFrame()
-			if !ok {
+			if !p.writeBatch(idle) {
 				return
 			}
-
-			sample := idle
-			if payload != nil {
-				sample = buildVideoAccessUnit(payload)
-			}
-
-			_ = p.track.WriteSample(media.Sample{
-				Data:     sample,
-				Duration: defaultFrameInterval,
-			})
 		}
 	}
+}
+
+func (p *streamTransport) writeBatch(idle []byte) bool {
+	frameInterval := p.effectiveFrameInterval()
+	for i := 0; i < p.effectiveBatchSize(); i++ {
+		payload, ok := p.nextOutboundFrame()
+		if !ok {
+			return false
+		}
+		if payload == nil {
+			if i > 0 {
+				return true
+			}
+			_ = p.track.WriteSample(media.Sample{Data: idle, Duration: frameInterval})
+			return true
+		}
+		_ = p.track.WriteSample(media.Sample{Data: buildVideoAccessUnit(payload), Duration: frameInterval})
+	}
+	return true
 }
 
 func (p *streamTransport) nextOutboundFrame() ([]byte, bool) {

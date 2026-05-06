@@ -86,6 +86,10 @@ func Run(
 	videoTileRS int,
 	vp8FPS int,
 	vp8BatchSize int,
+	seiFPS int,
+	seiBatchSize int,
+	seiFragmentSize int,
+	seiAckTimeoutMS int,
 ) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -125,6 +129,7 @@ func Run(
 		videoWidth, videoHeight, videoFPS, videoBitrate, videoHW,
 		videoQRSize, videoQRRecovery, videoCodec, videoTileModule, videoTileRS,
 		vp8FPS, vp8BatchSize,
+		seiFPS, seiBatchSize, seiFragmentSize, seiAckTimeoutMS,
 	); err != nil {
 		return err
 	}
@@ -196,6 +201,7 @@ func (s *Server) bringUpLink(
 	videoCodec string,
 	videoTileModule, videoTileRS int,
 	vp8FPS, vp8BatchSize int,
+	seiFPS, seiBatchSize, seiFragmentSize, seiAckTimeoutMS int,
 ) error {
 	ln, err := link.New(ctx, linkName, link.Config{
 		Transport:       transportName,
@@ -218,6 +224,10 @@ func (s *Server) bringUpLink(
 		VideoTileRS:     videoTileRS,
 		VP8FPS:          vp8FPS,
 		VP8BatchSize:    vp8BatchSize,
+		SEIFPS:          seiFPS,
+		SEIBatchSize:    seiBatchSize,
+		SEIFragmentSize: seiFragmentSize,
+		SEIAckTimeoutMS: seiAckTimeoutMS,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create link: %w", err)
