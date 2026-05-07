@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	protoLogger "github.com/livekit/protocol/logger"
 	lksdk "github.com/livekit/server-sdk-go/v2"
 	"github.com/pion/webrtc/v4"
 )
@@ -92,7 +93,13 @@ func (p *Peer) Connect(ctx context.Context) error {
 		},
 	}
 
-	room, err := lksdk.ConnectToRoomWithToken(wsURL, token, roomCB, lksdk.WithAutoSubscribe(true))
+	room, err := lksdk.ConnectToRoomWithToken(
+		wsURL,
+		token,
+		roomCB,
+		lksdk.WithAutoSubscribe(true),
+		lksdk.WithLogger(protoLogger.GetDiscardLogger()),
+	)
 	if err != nil {
 		return fmt.Errorf("connect to room: %w", err)
 	}
