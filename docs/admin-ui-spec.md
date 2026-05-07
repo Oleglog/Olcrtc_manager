@@ -17,6 +17,9 @@
 - Автоматическая привязка домена + Let's Encrypt, если домен есть
 - Автоподбор свободного порта
 - Раздача подписок клиентам (`/sub/{slug}`) — порт 2096 не нужен снаружи
+- Настройка SOCKS5-прокси для carrier signalling и WARP-прокси для tunnel-трафика
+- Настройка транспортов `datachannel`, `vp8channel`, `seichannel` с transport-specific параметрами
+- Включение/выключение debug-логирования и просмотр `journalctl` логов
 
 ### Что остаётся в `olcrtc-setup.sh`
 
@@ -188,7 +191,7 @@ olcrtc-admin -port 9999    # принудительно указать порт
 | `POST` | `/api/instances/{n}/restart` | Перезапустить инстанс (systemctl restart) |
 | `POST` | `/api/instances/{n}/stop` | Остановить инстанс |
 | `POST` | `/api/instances/{n}/start` | Запустить инстанс |
-| `PUT` | `/api/instances/{n}/config` | Обновить конфигурацию (carrier, transport, name, etc.) |
+| `PUT` | `/api/instances/{n}/config` | Обновить конфигурацию (carrier, transport, name, dns, proxy, debug, etc.) |
 | `POST` | `/api/instances/{n}/rotate-key` | Сгенерировать новый ключ шифрования |
 | `POST` | `/api/instances/{n}/rotate-room` | Пересоздать room ID |
 | `DELETE` | `/api/instances/{n}` | Удалить доп. инстанс (нельзя удалить #0) |
@@ -232,7 +235,13 @@ olcrtc-admin -port 9999    # принудительно указать порт
   "name": "my_server",
   "vp8_fps": 30,
   "vp8_batch": 2,
+  "sei_fps": 20,
+  "sei_batch": 1,
+  "sei_frag": 900,
+  "sei_ack_ms": 3000,
   "socks_proxy": "",
+  "warp_proxy": "",
+  "debug": false,
   "dns": "1.1.1.1:53"
 }
 ```
@@ -280,6 +289,8 @@ Admin-сервис проксирует эти запросы к `http://127.0.0
   "admin_port": 8443,
   "sub_port": 2096,
   "sub_enabled": true,
+  "socks_proxy": "",
+  "warp_proxy": "",
   "domain": "",
   "tls_mode": "self-signed",
   "tls_expires": "2027-05-05T00:00:00Z",
@@ -386,10 +397,18 @@ Admin-сервис проксирует эти запросы к `http://127.0.0
 │  Имя:        [wbstream_olcrtc   ]      │
 │  DNS:        [1.1.1.1:53        ]      │
 │  SOCKS:      [                  ]      │
+│  WARP:       [                  ]      │
+│  Debug:      [ ] включить              │
 │                                        │
 │  ── VP8 (если transport=vp8channel) ── │
 │  FPS:        [30   ]                   │
 │  Batch:      [2    ]                   │
+│                                        │
+│  ── SEI (если transport=seichannel) ── │
+│  FPS:        [20   ]                   │
+│  Batch:      [1    ]                   │
+│  Fragment:   [900  ]                   │
+│  ACK ms:     [3000 ]                   │
 │                                        │
 │  ── Ключи ──────────────────────────── │
 │  [🔑 Пересоздать ключ + Room ID]      │
@@ -525,11 +544,17 @@ $ curl -fsSL .../olcrtc-setup.sh | sudo bash
 | Сменить carrier / transport | Web UI → Настройки инстанса |
 | Пересоздать Room ID | Web UI → Настройки инстанса |
 | Пересоздать ключ | Web UI → Настройки инстанса |
+| Настроить SOCKS5-прокси | Web UI → Настройки инстанса |
+| Настроить WARP-прокси | Web UI → Настройки инстанса |
+| Включить / выключить debug | Web UI → Настройки инстанса |
+| Переименовать соединение | Web UI → Настройки инстанса |
 | Управление подписками (8 пунктов) | Web UI → Подписки |
 | Создать / удалить доп. инстанс | Web UI → Инстансы |
 | Просмотр логов | Web UI → Настройки → Логи |
 | Рестарт сервиса | Web UI → Dashboard |
 | Переключение инстансов | Web UI → Dashboard |
+| Обновить бинарник olcRTC | Web UI → Settings / CLI `--update` |
+| Полное удаление | CLI `--uninstall` |
 
 ### Что остаётся в `olcrtc-setup.sh`
 
@@ -542,6 +567,7 @@ $ curl -fsSL .../olcrtc-setup.sh | sudo bash
 - Генерация admin-токена
 - Запуск обоих сервисов
 - Вывод URL + токена
+- Повторный запуск без флагов: только статус + URL, **без интерактивного меню**
 
 ### Повторный запуск `olcrtc-setup.sh`
 
@@ -563,6 +589,7 @@ $ sudo bash olcrtc-setup.sh
     --regenerate-key  Пересоздать ключ + Room ID
     --uninstall       Полное удаление
     --show-token      Показать токен для входа в Admin UI
+    --status          Показать статус без интерактивного меню
 ```
 
 То есть повторный запуск **без флагов** — просто показывает статус и URL.
@@ -581,6 +608,35 @@ $ sudo bash olcrtc-setup.sh
 | `/etc/olcrtc/admin.env` | `PORT`, `DOMAIN`, `TOKEN` |
 | `/var/lib/olcrtc/admin-tls/` | Сертификаты (self-signed или ACME) |
 | `/etc/systemd/system/olcrtc-admin.service` | Systemd unit |
+
+### Миграция существующих установок
+
+При обновлении с текущего menu-based `olcrtc-setup.sh` установщик должен:
+
+1. Найти существующие env-файлы:
+   - `/etc/olcrtc/env`
+   - `/etc/olcrtc/{n}/env`
+2. Сохранить все текущие параметры:
+   - `OLCRTC_CARRIER`
+   - `OLCRTC_TRANSPORT`
+   - `OLCRTC_ROOM_ID`
+   - `OLCRTC_KEY`
+   - `OLCRTC_DNS`
+   - `OLCRTC_SOCKS_PROXY`
+   - `OLCRTC_WARP_PROXY`
+   - `OLCRTC_NAME`
+   - `OLCRTC_DEBUG`
+   - `OLCRTC_VP8_FPS`
+   - `OLCRTC_VP8_BATCH`
+   - `OLCRTC_SEI_FPS`
+   - `OLCRTC_SEI_BATCH`
+   - `OLCRTC_SEI_FRAG`
+   - `OLCRTC_SEI_ACK`
+   - `OLCRTC_SUB_ENABLED`
+   - `OLCRTC_SUB_PORT`
+3. Установить `olcrtc-admin` и создать `/etc/olcrtc/admin.env`
+4. Не пересоздавать ключи и room ID без явного флага
+5. Не останавливать рабочие туннели дольше, чем нужно для `systemctl daemon-reload`
 
 ### Systemd unit
 
@@ -622,6 +678,7 @@ WantedBy=multi-user.target
 | `-tls-dir` | `/var/lib/olcrtc/admin-tls` | Каталог для сертификатов |
 | `-acme-email` | "" | Email для Let's Encrypt (опционально) |
 | `-config-dir` | `/etc/olcrtc` | Каталог с env-файлами инстансов |
+| `-show-token` | false | Показать токен из `admin.env` и выйти |
 
 ---
 
@@ -686,6 +743,7 @@ go build -o olcrtc-admin ./cmd/olcrtc-admin
 - [ ] API: `/api/instances` (список + статус)
 - [ ] API: `/api/instances/{n}/uri` (URI + QR)
 - [ ] API: `/api/instances/{n}/restart`, `/stop`, `/start`
+- [ ] API: `/api/system/logs/{service}?lines=100`
 - [ ] SPA: dashboard с инстансами, URI, QR-код, статус
 - [ ] Systemd unit для olcrtc-admin
 
@@ -698,7 +756,9 @@ go build -o olcrtc-admin ./cmd/olcrtc-admin
 
 ### v0.3 — Полное управление инстансами
 
-- [ ] API: изменение конфигурации (carrier, transport, name, dns, proxy)
+- [ ] API: изменение конфигурации (carrier, transport, name, dns, SOCKS5, WARP, debug)
+- [ ] API/UI: VP8 параметры (`vp8_fps`, `vp8_batch`)
+- [ ] API/UI: SEI параметры (`sei_fps`, `sei_batch`, `sei_frag`, `sei_ack_ms`)
 - [ ] API: ротация ключей и room ID
 - [ ] API: создание / удаление доп. инстансов
 - [ ] SPA: формы настройки, создание/удаление инстансов
