@@ -16,7 +16,7 @@
 
 set -euo pipefail
 
-INSTALLER_VERSION="0.4.1"
+INSTALLER_VERSION="0.4.2"
 CARRIER_DEFAULT="wbstream"
 TRANSPORT_DEFAULT="datachannel"
 DNS_DEFAULT="1.1.1.1:53"
@@ -1622,6 +1622,17 @@ IEOF
                     set_env_value "OLCRTC_VP8_BATCH" "$REPLY_VP8_BATCH" "$cfg_ef"
                 fi
 
+                if [ "$REPLY_TRANSPORT" = "seichannel" ]; then
+                    tty_read -rp "  SEI FPS [Enter = 20]: " cfg_sei_fps
+                    set_env_value "OLCRTC_SEI_FPS" "${cfg_sei_fps:-20}" "$cfg_ef"
+                    tty_read -rp "  SEI batch size [Enter = 1]: " cfg_sei_batch
+                    set_env_value "OLCRTC_SEI_BATCH" "${cfg_sei_batch:-1}" "$cfg_ef"
+                    tty_read -rp "  SEI fragment size [Enter = 900]: " cfg_sei_frag
+                    set_env_value "OLCRTC_SEI_FRAG" "${cfg_sei_frag:-900}" "$cfg_ef"
+                    tty_read -rp "  SEI ACK timeout ms [Enter = 3000]: " cfg_sei_ack
+                    set_env_value "OLCRTC_SEI_ACK" "${cfg_sei_ack:-3000}" "$cfg_ef"
+                fi
+
                 if [ "$REPLY_TRANSPORT" = "$cfg_cur_trans" ]; then
                     systemctl restart "$cfg_svc"
                     echo "  Транспорт уже $REPLY_TRANSPORT — настройки обновлены, room сохранён."
@@ -2468,6 +2479,11 @@ fi
 # VP8 channel options
 if [ "$transport" = "vp8channel" ]; then
     ARGS+=(-vp8-fps "${OLCRTC_VP8_FPS:-60}" -vp8-batch "${OLCRTC_VP8_BATCH:-8}")
+fi
+
+# SEI channel options
+if [ "$transport" = "seichannel" ]; then
+    ARGS+=(-fps "${OLCRTC_SEI_FPS:-20}" -batch "${OLCRTC_SEI_BATCH:-1}" -frag "${OLCRTC_SEI_FRAG:-900}" -ack-ms "${OLCRTC_SEI_ACK:-3000}")
 fi
 
 if [ -n "${OLCRTC_SOCKS_PROXY:-}" ]; then
