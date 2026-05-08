@@ -157,8 +157,7 @@ OLCRTC_WARP_PROXY=127.0.0.1:40000
 Full guide: **[server-install/WARP-PROXY.md](server-install/WARP-PROXY.md)**
 
 ## License
-
-WTFPL (inherited from upstream). See also `LICENSE`.
+Apache License 2.0. See `LICENSE` for details.
 
 <div align="center">
 
