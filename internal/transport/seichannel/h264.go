@@ -190,7 +190,8 @@ func unescapeRBSP(rbsp []byte) []byte {
 func mustDecodeHex(value string) []byte {
 	data, err := hex.DecodeString(value)
 	if err != nil {
-		panic(err)
+		// Hardcoded constants — if this fires the binary is corrupt.
+		panic(fmt.Sprintf("mustDecodeHex: invalid hardcoded constant %q: %v", value, err))
 	}
 	return data
 }
