@@ -20,6 +20,8 @@ adds a one-command systemd installer, interactive management menu, SOCKS5
 proxy support for signalling, multi-instance support, and pre-built binaries
 for `linux/amd64` and `linux/arm64`.
 
+The olcbox URI and QR code will be made in the future.
+
 ## Quick links
 
 | | |
