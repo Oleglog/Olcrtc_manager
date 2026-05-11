@@ -133,8 +133,8 @@ if [ -z "$KEY" ]; then
 fi
 
 echo ""
-read -p "DNS server [default: 1.1.1.1:53]: " DNS_INPUT
-DNS=${DNS_INPUT:-1.1.1.1:53}
+read -p "DNS server [default: 8.8.8.8:53]: " DNS_INPUT
+DNS=${DNS_INPUT:-8.8.8.8:53}
 
 echo ""
 read -p "SOCKS5 ip [default: 127.0.0.1]: " IP_INPUT
