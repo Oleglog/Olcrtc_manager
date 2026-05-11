@@ -148,12 +148,26 @@ caddy_config_path() {
 
 # port_listener — prints the program name listening on the given port (best
 # effort). E.g. `port_listener 443` -> "caddy" or "nginx" or empty.
+#
+# Uses a single awk invocation so the function never returns non-zero on "no
+# match" (which under `set -euo pipefail` killed the whole script silently
+# when grep -oP / sed couldn't find anything).
 port_listener() {
     local port="$1"
-    ss -tlnp 2>/dev/null \
-        | awk -v p=":${port} " '$4 ~ p { print }' \
-        | head -1 \
-        | grep -oP '"[^"]+"' | head -1 | tr -d '"'
+    ss -tlnp 2>/dev/null | awk -v port="$port" '
+        # ss columns: State Recv-Q Send-Q Local-Addr:Port Peer-Addr:Port Users
+        # Match e.g. *:443, 0.0.0.0:443, [::]:443, 127.0.0.1:443 — anchored to
+        # end-of-field so :2096 does not match :2.
+        $4 ~ ":" port "$" {
+            if (match($0, /users:\(\("[^"]+"/)) {
+                s = substr($0, RSTART, RLENGTH)
+                sub(/^users:\(\("/, "", s)
+                sub(/"$/, "", s)
+                print s
+                exit
+            }
+        }
+    '
 }
 
 # ── Download helpers ─────────────────────────────────────────────────────────
