@@ -346,54 +346,119 @@ do_caddy_setup() {
         return 1
     fi
 
-    if ! caddy_reload_robust "$caddyfile"; then
-        echo "  [!] caddy reload не удался ни одним из способов." >&2
-        echo "      Конфиг в $caddyfile уже отредактирован, сделайте reload вручную:" >&2
-        echo "        sudo systemctl restart caddy" >&2
-        echo "      Или верните бэкап, если нужно: cp $backup_path $caddyfile" >&2
-        return 1
+    if caddy_reload_robust "$caddyfile"; then
+        echo "         caddy перезагружен ✓"
+        return 0
     fi
-    echo "         caddy перезагружен ✓"
+
+    # Reload failed but the Caddyfile is already updated and valid. Treat this
+    # as a soft-fail: surface manual reload instructions and return 2 so the
+    # caller knows to save env vars but skip the success banner.
+    echo "  [!] caddy reload не удался автоматически." >&2
+    caddy_print_manual_reload_help "$caddyfile"
+    echo "         Бэкап Caddyfile (если нужен откат): $backup_path" >&2
+    return 2
 }
 
-# caddy_reload_robust <caddyfile> — tries every common way to reload caddy and
-# surfaces stderr from each attempt so the user sees the real error instead of
+# caddy_running_pid — print PID of any running caddy process (best effort).
+caddy_running_pid() {
+    pgrep -x caddy 2>/dev/null | head -1 || true
+}
+
+# caddy_systemd_owns — return 0 if caddy.service is the active manager of the
+# caddy process. Returns non-zero if caddy runs outside systemd (e.g. spawned
+# by 3x-ui or started manually with `caddy run`).
+caddy_systemd_owns() {
+    systemctl list-unit-files caddy.service >/dev/null 2>&1 || return 1
+    systemctl is-active --quiet caddy 2>/dev/null
+}
+
+# caddy_reload_robust <caddyfile> — try every common way to reload caddy and
+# surface stderr from each attempt so the user sees the real error instead of
 # a vague "caddy reload failed". Order of attempts:
-#   1. systemctl reload caddy        (zero-downtime, requires admin API)
-#   2. caddy reload --config ...     (same path, useful when systemd doesn't
-#                                     manage caddy or unit name differs)
-#   3. systemctl restart caddy       (last resort; brief downtime)
-# Returns 0 on first success, non-zero only if all three fail.
+#   0. caddy --watch         (inotify-driven auto-reload; just sleep briefly)
+#   1. systemctl reload      (zero-downtime, but only if systemd owns caddy)
+#   2. caddy reload --config (CLI, uses admin API; works without systemd)
+#   3. systemctl restart     (last resort; ONLY if systemd owns caddy —
+#                             otherwise it would conflict on :443 with the
+#                             non-systemd caddy process)
+# Returns 0 on first success, non-zero only if every applicable method failed.
 caddy_reload_robust() {
     local caddyfile="$1"
     local out=""
+    local pid
+    pid="$(caddy_running_pid)"
 
-    if systemctl list-unit-files caddy.service >/dev/null 2>&1; then
+    # Method 0: caddy started with --watch reloads itself on file change. We
+    # already modified the file, so just give it a moment to inotify-trigger.
+    if [ -n "$pid" ] && [ -r "/proc/$pid/cmdline" ]; then
+        local cmdline=""
+        cmdline="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
+        if echo "$cmdline" | grep -q -- '--watch'; then
+            echo "         caddy запущен с --watch (PID $pid) — ждём авто-reload..." >&2
+            sleep 2
+            return 0
+        fi
+    fi
+
+    # Method 1: systemctl reload (only meaningful if systemd owns caddy).
+    if caddy_systemd_owns; then
         if out="$(systemctl reload caddy 2>&1)"; then
             return 0
         fi
         echo "         systemctl reload caddy: $out" >&2
     fi
 
+    # Method 2: CLI reload via admin API. Works even when caddy is started
+    # outside systemd, IF the admin endpoint is enabled (default localhost:2019).
     if command -v caddy >/dev/null 2>&1; then
         if out="$(caddy reload --config "$caddyfile" --adapter caddyfile 2>&1)"; then
             return 0
         fi
-        echo "         caddy reload (CLI): $out" >&2
+        # Caddy CLI emits JSON info/warn lines on stderr before the actual
+        # error — keep only the Error: line for readability.
+        local err
+        err="$(echo "$out" | grep -E '^(Error|error)' | head -1 || true)"
+        echo "         caddy reload (CLI): ${err:-$out}" >&2
     fi
 
-    if systemctl list-unit-files caddy.service >/dev/null 2>&1; then
+    # Method 3: systemctl restart — ONLY if systemd-owned. If caddy is running
+    # outside systemd, restarting the systemd unit would race for :443 with
+    # the existing caddy process and fail anyway (we saw this exact mode).
+    if caddy_systemd_owns; then
         echo "         Пробую systemctl restart caddy (downtime ~1с)..." >&2
         if out="$(systemctl restart caddy 2>&1)"; then
-            # Wait briefly for caddy to come up so the next operation doesn't
-            # race with the restart.
             sleep 1
             return 0
         fi
         echo "         systemctl restart caddy: $out" >&2
+    elif [ -n "$pid" ]; then
+        echo "         systemctl restart caddy пропущен — caddy работает вне systemd" >&2
+        echo "         (PID $pid; restart встал бы в конфликт за порт :443)." >&2
     fi
 
     return 1
+}
+
+# caddy_print_manual_reload_help — explain what the user needs to do when all
+# automatic reload paths fail. Prints to stderr.
+caddy_print_manual_reload_help() {
+    local caddyfile="$1"
+    echo "         Caddyfile уже обновлён: $caddyfile" >&2
+    echo "         Чтобы caddy подхватил новый конфиг, сделайте одно из:" >&2
+    echo "           • если caddy запущен через 3x-ui панель — рестартуйте через панель;" >&2
+    echo "           • вручную: kill -TERM <PID> и запустите caddy заново тем же способом;" >&2
+    echo "           • или (если /etc/systemd/system/caddy.service настроен):" >&2
+    echo "               sudo systemctl restart caddy" >&2
+    local pid
+    pid="$(caddy_running_pid)"
+    if [ -n "$pid" ]; then
+        local cmd=""
+        cmd="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
+        echo "         Сейчас запущен:" >&2
+        echo "           PID  $pid" >&2
+        echo "           CMD  ${cmd:-<unreadable>}" >&2
+    fi
 }
 
 # do_caddy_remove <domain?> — strip the olcrtc:sub block from the Caddyfile and
@@ -421,8 +486,10 @@ do_caddy_remove() {
         cp "$backup_path" "$caddyfile"
         return 1
     fi
-    caddy_reload_robust "$caddyfile" || \
-        echo "  [!] caddy reload не удался — caddy продолжит работать со старым конфигом." >&2
+    if ! caddy_reload_robust "$caddyfile"; then
+        echo "  [!] caddy reload не удался — caddy пока работает со старым конфигом." >&2
+        caddy_print_manual_reload_help "$caddyfile"
+    fi
     echo "  Удалён блок olcrtc:sub из $caddyfile ✓"
 }
 
@@ -694,18 +761,38 @@ ACME
     # ── 6. Configure front-door (nginx or caddy) ──
     if [ "$caddy_mode" -eq 1 ]; then
         echo "  [6/6] Настройка caddy..."
-        do_caddy_setup "$domain" "$sub_port" "$caddyfile" || return 1
-        echo ""
-        echo "[✓] Домен $domain привязан к подпискам через caddy"
-        echo "    URL подписок: https://$domain/sub/<UUID>?type=plain"
-        echo "    Используется caddy на :443 (3x-ui / xray не затронуты)"
-        echo "    Caddy сам выпустит/обновит Let's Encrypt сертификат."
-        # Persist domain/port in admin env so admin UI knows about it.
+        local caddy_rc=0
+        do_caddy_setup "$domain" "$sub_port" "$caddyfile" || caddy_rc=$?
+        # Return codes from do_caddy_setup:
+        #   0 — config written + caddy reloaded.
+        #   1 — hard failure (validate failed / nothing changed / rolled back).
+        #   2 — config written, but auto-reload didn't work. Manual reload by
+        #       user is needed; we still persist env so admin UI is in sync.
+        if [ "$caddy_rc" -eq 1 ]; then
+            return 1
+        fi
+
+        # Persist domain/port in admin env so admin UI knows about it. This
+        # happens regardless of reload outcome because the Caddyfile change
+        # is durable.
         if [ -f "$ADMIN_ENV" ]; then
             set_env_value OLCRTC_SUB_DOMAIN "$domain" "$ADMIN_ENV"
         fi
         if [ -f "$ENV_FILE" ]; then
             set_env_value OLCRTC_SUB_DOMAIN "$domain" "$ENV_FILE"
+        fi
+
+        echo ""
+        if [ "$caddy_rc" -eq 0 ]; then
+            echo "[✓] Домен $domain привязан к подпискам через caddy"
+            echo "    URL подписок: https://$domain/sub/<UUID>?type=plain"
+            echo "    Используется caddy на :443 (3x-ui / xray не затронуты)"
+            echo "    Caddy сам выпустит/обновит Let's Encrypt сертификат."
+        else
+            echo "[!] Caddyfile обновлён, но caddy ещё не перезагружен."
+            echo "    Сделайте reload вручную (см. инструкцию выше) — после"
+            echo "    этого подписки откроются по: https://$domain/sub/<UUID>?type=plain"
+            echo "    Состояние в admin: OLCRTC_SUB_DOMAIN=$domain (сохранено)"
         fi
         return 0
     fi
