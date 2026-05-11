@@ -183,7 +183,6 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
 	mainEnv := InstanceEnvPath(s.cfg.ConfigDir, 0)
 	vals := ReadInstanceEnv(mainEnv)
 	vals["OLCRTC_KEY"] = hex.EncodeToString(key)
-	vals["OLCRTC_ROOM_ID"] = ""
 	vals["OLCRTC_NAME"] = fmt.Sprintf("%s_olcrtc_%d", vals["OLCRTC_CARRIER"], newID+1)
 	if err := WriteInstanceEnv(envPath, vals); err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
