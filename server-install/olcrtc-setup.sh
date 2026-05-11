@@ -302,17 +302,30 @@ echo "              ✓"
 
 # ── 4. Interactive config ────────────────────────────────────────────────────
 echo "  [4/7] Настройка:"
+echo ""
+echo "        Доступные carrier:"
+echo "          wbstream  — Wildberries Stream (рекомендуется)"
+echo "          jazz      — SaluteJazz"
+echo "          telemost  — Yandex Telemost"
 if [ -z "$CARRIER" ]; then
     tty_read -rp "        Carrier [wbstream]: " CARRIER
     CARRIER="${CARRIER:-wbstream}"
 fi
 CARRIER="$(normalize_carrier "$CARRIER")"
 
+echo ""
+echo "        Доступные transport:"
+echo "          datachannel  — самый быстрый (~6 МБ/с)"
+echo "          vp8channel   — универсальный, работает со всеми"
+echo "          seichannel   — для wbstream/jazz"
 if [ -z "$TRANSPORT" ]; then
     tty_read -rp "        Transport [datachannel]: " TRANSPORT
     TRANSPORT="${TRANSPORT:-datachannel}"
 fi
 
+echo ""
+echo "        Подписки — публичные ссылки с URIs для клиентов."
+echo "        URL: https://IP:PORT/sub/XXXXXX"
 SUB_ENABLED=""
 while [ "$SUB_ENABLED" != "y" ] && [ "$SUB_ENABLED" != "n" ] && [ "$SUB_ENABLED" != "Y" ] && [ "$SUB_ENABLED" != "N" ] && [ "$SUB_ENABLED" != "" ]; do
     tty_read -rp "        Подписки [Y/n]: " SUB_ENABLED
@@ -320,6 +333,7 @@ while [ "$SUB_ENABLED" != "y" ] && [ "$SUB_ENABLED" != "n" ] && [ "$SUB_ENABLED"
 done
 if [ "$SUB_ENABLED" = "" ]; then SUB_ENABLED="y"; fi
 
+echo ""
 if [ -z "$SET_NAME" ]; then
     DEFAULT_NAME="${CARRIER}_olcrtc"
     tty_read -rp "        Имя инстанса [${DEFAULT_NAME}]: " SET_NAME
@@ -441,6 +455,8 @@ else
     done
 fi
 ADMIN_TOKEN="$(openssl rand -hex 32)"
+OLCRTC_ADMIN_DOMAIN=""
+OLCRTC_SUB_PORT=2096
 cat > "$ADMIN_ENV" <<EOF
 OLCRTC_ADMIN_PORT=${ADMIN_PORT}
 OLCRTC_ADMIN_TOKEN=${ADMIN_TOKEN}

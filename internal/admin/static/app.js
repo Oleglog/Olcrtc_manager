@@ -309,8 +309,30 @@ async function renderDashboard(app) {
   addSubBtn.innerHTML = ''+icon('plus')+' Создать подписку';
   addSubBtn.onclick = () => showCreateSubModal();
 
+  const exportBtn = el('button', 'btn btn-secondary btn-sm mt-3 ml-2');
+  exportBtn.textContent = 'Экспорт JSON';
+  exportBtn.onclick = async () => {
+    try {
+      const data = await api('/subs/export');
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'olcrtc-subscriptions.json';
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('Экспортировано');
+    } catch (e) { alert('Ошибка экспорта: ' + e.message); }
+  };
+
+  const importBtn = el('button', 'btn btn-secondary btn-sm mt-3 ml-2');
+  importBtn.textContent = 'Импорт JSON';
+  importBtn.onclick = () => showImportSubModal();
+
   subSection.appendChild(subList);
   subSection.appendChild(addSubBtn);
+  subSection.appendChild(exportBtn);
+  subSection.appendChild(importBtn);
   wrap.appendChild(subSection);
 
   app.appendChild(wrap);
@@ -693,6 +715,45 @@ async function showLogsModal(service) {
   btnRow.appendChild(closeBtn);
   div.appendChild(btnRow);
   await load();
+}
+
+function showImportSubModal() {
+  const div = el('div', '');
+  div.innerHTML = '<h3 class="text-lg font-semibold mb-3">Импорт подписок</h3>';
+  const ta = el('textarea', 'mb-3');
+  ta.placeholder = 'Вставьте JSON с подписками...';
+  ta.rows = 8;
+  div.appendChild(ta);
+
+  const cbRow = el('div', 'mb-3 flex items-center gap-2');
+  const owCb = el('input', '');
+  owCb.type = 'checkbox';
+  cbRow.appendChild(owCb);
+  cbRow.appendChild(el('label', 'text-sm', 'Перезаписать существующие'));
+  div.appendChild(cbRow);
+
+  const btnRow = el('div', 'flex gap-2 justify-end');
+  const impBtn = el('button', 'btn btn-primary');
+  impBtn.textContent = 'Импортировать';
+  const cancelBtn = el('button', 'btn btn-secondary');
+  cancelBtn.textContent = 'Отмена';
+  const overlay = showModal(div);
+
+  impBtn.onclick = async () => {
+    try {
+      const data = JSON.parse(ta.value);
+      const url = '/subs/import' + (owCb.checked ? '?overwrite=true' : '');
+      const res = await api(url, { method: 'POST', body: JSON.stringify(data) });
+      showToast('Импортировано: ' + (res.created || 0) + ' создано, ' + (res.skipped || 0) + ' пропущено');
+      closeModal(overlay); render();
+    } catch (e) {
+      alert('Ошибка: ' + e.message);
+    }
+  };
+  cancelBtn.onclick = () => closeModal(overlay);
+  btnRow.appendChild(impBtn);
+  btnRow.appendChild(cancelBtn);
+  div.appendChild(btnRow);
 }
 
 function showToast(msg) {
