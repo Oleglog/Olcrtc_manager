@@ -1,3 +1,9 @@
+# !!!ВСЕМ РАЗРАБАМ OLCRTC КЛЕНТОВ И ПАНЕЛЕЙ!!!
+
+## через +- неделю будем смержена ветка с серьезными изменениями ломающими всю совместимость, посмотреть изменения можно здесь (https://github.com/openlibrecommunity/olcrtc/tree/refactor/universal-carrier) , советую пеерчитать доку / кинуть ее в ии и на основе этого обновить панели,  тоесть создать ветку с поддержкой новой версии, проверить что все работает, и ждать как ветка refactor/universal-carrier станет master. получается у вас есть неделя чтобы обновить клиенты
+
+
+
 <div align="center">
 
 <img src="https://github.com/openlibrecommunity/material/blob/master/olcrtc.png" width="250" height="250">
