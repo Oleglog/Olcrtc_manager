@@ -357,11 +357,10 @@ echo ""
 echo "        Подписки — публичные ссылки с URIs для клиентов."
 echo "        URL: https://IP:PORT/sub/XXXXXX"
 SUB_ENABLED=""
-while [ "$SUB_ENABLED" != "y" ] && [ "$SUB_ENABLED" != "n" ] && [ "$SUB_ENABLED" != "Y" ] && [ "$SUB_ENABLED" != "N" ] && [ "$SUB_ENABLED" != "" ]; do
+while [ "$SUB_ENABLED" != "y" ] && [ "$SUB_ENABLED" != "n" ] && [ "$SUB_ENABLED" != "Y" ] && [ "$SUB_ENABLED" != "N" ]; do
     tty_read -rp "        Подписки [Y/n]: " SUB_ENABLED
     SUB_ENABLED="${SUB_ENABLED:-y}"
 done
-if [ "$SUB_ENABLED" = "" ]; then SUB_ENABLED="y"; fi
 
 echo ""
 if [ -z "$SET_NAME" ]; then
