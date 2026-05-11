@@ -203,13 +203,46 @@ ensure_sites_dirs() {
 }
 
 find_certbot() {
-    # Check standard path, then snap.
+    # 1. Already in PATH — best case.
     if command -v certbot >/dev/null 2>&1; then return 0; fi
-    if [ -x /snap/bin/certbot ]; then
-        ln -sf /snap/bin/certbot /usr/local/bin/certbot 2>/dev/null || true
-        return 0
-    fi
+    # 2. Probe every place certbot can land depending on how it was installed
+    #    (apt, snap, pip, certbot-auto, control panels like 3x-ui).
+    for p in /snap/bin/certbot /usr/local/bin/certbot /usr/bin/certbot \
+             /opt/certbot/bin/certbot /root/.local/bin/certbot; do
+        if [ -x "$p" ]; then
+            # Make it accessible without rebuilding PATH each call.
+            ln -sf "$p" /usr/local/bin/certbot 2>/dev/null || true
+            return 0
+        fi
+    done
     return 1
+}
+
+# apt_install — wrapper around apt-get that:
+#   1. forces non-interactive frontend (no debconf prompts that hang forever),
+#   2. shows package-manager output to the user instead of silently swallowing
+#      it (so a broken DNS / locked dpkg / 404 mirror is visible),
+#   3. returns the apt exit code so callers can react.
+apt_install() {
+    if ! command -v apt-get >/dev/null 2>&1; then
+        return 127
+    fi
+    DEBIAN_FRONTEND=noninteractive apt-get update -qq -o=Dpkg::Use-Pty=0 || return $?
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -q -o=Dpkg::Use-Pty=0 \
+        -o Dpkg::Options::="--force-confdef" \
+        -o Dpkg::Options::="--force-confold" \
+        "$@"
+}
+
+# snap_install_certbot — best-effort certbot install via snap when apt fails or
+# isn't available (e.g. CentOS/Rocky/Fedora hosts running 3x-ui). Returns 0 on
+# success, non-zero otherwise.
+snap_install_certbot() {
+    command -v snap >/dev/null 2>&1 || return 1
+    snap install --classic certbot >/dev/null 2>&1 || return 1
+    [ -x /snap/bin/certbot ] || return 1
+    ln -sf /snap/bin/certbot /usr/local/bin/certbot 2>/dev/null || true
+    return 0
 }
 
 # ── Domain setup ─────────────────────────────────────────────────────────────
@@ -268,7 +301,10 @@ do_setup_domain() {
             echo "      Установите nginx вручную и запустите скрипт снова." >&2
             return 1
         fi
-        apt-get update -qq && apt-get install -y -qq nginx >/dev/null 2>&1
+        if ! apt_install nginx; then
+            echo "  [!] apt-get install nginx завершился с ошибкой." >&2
+            return 1
+        fi
         if ! nginx_present; then
             echo "  [!] Не удалось установить nginx." >&2
             return 1
@@ -277,15 +313,35 @@ do_setup_domain() {
     ensure_sites_dirs
 
     # ── 3. Install certbot if missing ──
-    if ! find_certbot; then
-        echo "  [3/6] Установка certbot..."
-        apt-get update -qq && apt-get install -y -qq certbot python3-certbot-nginx >/dev/null 2>&1
-        if ! find_certbot; then
-            echo "  [!] Не удалось установить certbot." >&2
-            return 1
-        fi
-    else
+    if find_certbot; then
         echo "  [3/6] certbot уже установлен ✓"
+    else
+        echo "  [3/6] Установка certbot..."
+        # Try apt first — most Debian/Ubuntu hosts. Show output so the user
+        # can see what went wrong if it fails (locked dpkg, 404 mirror, etc).
+        # On hosts without nginx-plugin support (e.g. snap-only) we still get
+        # core certbot via the fallback below.
+        apt_ok=0
+        if apt_install certbot python3-certbot-nginx; then
+            apt_ok=1
+        elif apt_install certbot; then
+            apt_ok=1
+        fi
+        if [ "$apt_ok" -ne 1 ] || ! find_certbot; then
+            echo "  [3/6] apt не справился, пробуем snap..."
+            if ! snap_install_certbot; then
+                echo "  [!] Не удалось установить certbot ни через apt, ни через snap." >&2
+                echo "      Установите certbot вручную и повторите:" >&2
+                echo "        Debian/Ubuntu:  sudo apt install -y certbot python3-certbot-nginx" >&2
+                echo "        snap (универс.): sudo snap install --classic certbot && \\" >&2
+                echo "                          sudo ln -sf /snap/bin/certbot /usr/local/bin/certbot" >&2
+                return 1
+            fi
+            if ! find_certbot; then
+                echo "  [!] certbot установлен, но не найден в PATH." >&2
+                return 1
+            fi
+        fi
     fi
 
     # ── 4. Detect SNI multiplexer (3x-ui / xray) ──
