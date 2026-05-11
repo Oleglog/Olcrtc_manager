@@ -179,7 +179,7 @@ async function renderDashboard(app) {
       <div><span class="text-gray-400">Uptime:</span> ${sys.uptime || '-'}</div>
       <div><span class="text-gray-400">TLS:</span> ${sys.tls_mode || '-'} ${sys.domain ? '('+sys.domain+')' : ''}</div>
       <div><span class="text-gray-400">Admin:</span> ${sys.admin_port || '-'}</div>
-      <div><span class="text-gray-400">Подписки:</span> ${sys.sub_domain_active ? '<span class="text-green-400">HTTPS</span> ('+sys.sub_domain+')' : sys.sub_enabled ? 'вкл ('+sys.sub_port+')' : 'выкл'}</div>
+      <div><span class="text-gray-400">Подписки:</span> ${sys.sub_enabled ? 'вкл ('+sys.sub_port+')' : 'выкл'}</div>
       <div><span class="text-gray-400">Инстансы:</span> ${sys.instances_running || 0}/${sys.instances_total || 0}</div>
       <div><span class="text-gray-400">Версия:</span> ${sys.version || '-'}</div>
     </div>`;
@@ -363,12 +363,12 @@ async function renderSettings(app) {
 
   const card = el('div', 'card p-4 space-y-6');
 
-  // Domain (Admin UI)
+  // Domain
   const domBlock = el('div', '');
-  domBlock.innerHTML = '<h3 class="font-semibold mb-2">Домен Admin UI</h3>';
+  domBlock.innerHTML = '<h3 class="font-semibold mb-2">Домен</h3>';
   const domCurrent = el('div', 'text-sm text-gray-400 mb-2', sys.domain ? 'Текущий: ' + sys.domain : 'Текущий: (не привязан)');
   const domInp = el('input', '');
-  domInp.placeholder = 'admin.example.com';
+  domInp.placeholder = 'sub.example.com';
   const domBtn = el('button', 'btn btn-primary mt-2');
   domBtn.textContent = 'Привязать домен';
   domBtn.onclick = async () => {
@@ -398,104 +398,6 @@ async function renderSettings(app) {
   domBlock.appendChild(domBtn);
   if (sys.domain) domBlock.appendChild(unbindBtn);
   card.appendChild(domBlock);
-
-  // Subscription Domain
-  const subDomBlock = el('div', '');
-  subDomBlock.innerHTML = '<h3 class="font-semibold mb-2">Домен для подписок</h3>';
-
-  let subDomStatus = {};
-  try { subDomStatus = await api('/system/sub-domain'); } catch (e) {}
-
-  if (subDomStatus.domain) {
-    const statusDiv = el('div', 'text-sm mb-2');
-    statusDiv.innerHTML = '<span class="text-green-400">HTTPS активен</span> — ' + subDomStatus.domain;
-    subDomBlock.appendChild(statusDiv);
-    const urlDiv = el('div', 'text-sm text-gray-400 mb-2', 'URL: ' + subDomStatus.sub_url);
-    subDomBlock.appendChild(urlDiv);
-    if (subDomStatus.cert_expires) {
-      const certDiv = el('div', 'text-sm text-gray-400 mb-2', 'Сертификат до: ' + new Date(subDomStatus.cert_expires).toLocaleDateString());
-      subDomBlock.appendChild(certDiv);
-    }
-    const subUnbindBtn = el('button', 'btn btn-danger mt-2');
-    subUnbindBtn.textContent = 'Отвязать домен подписок';
-    subUnbindBtn.onclick = async () => {
-      if (!confirm('Отвязать домен подписок? Подписки будут доступны только по IP.')) return;
-      subUnbindBtn.disabled = true;
-      subUnbindBtn.textContent = 'Отвязка...';
-      try {
-        const res = await api('/system/sub-domain', { method: 'DELETE' });
-        showToast(res.message || 'Домен отвязан');
-        render();
-      } catch (e) {
-        try {
-          const err = JSON.parse(e.message);
-          alert(err.message || e.message);
-        } catch { alert(e.message); }
-        subUnbindBtn.disabled = false;
-        subUnbindBtn.textContent = 'Отвязать домен подписок';
-      }
-    };
-    subDomBlock.appendChild(subUnbindBtn);
-  } else {
-    const noSubDom = el('div', 'text-sm text-gray-400 mb-2', 'Не привязан. Подписки доступны по: http://' + (sys.public_ip || 'IP') + ':' + (sys.sub_port || '2096') + '/sub/{slug}');
-    subDomBlock.appendChild(noSubDom);
-
-    const hintDiv = el('div', 'text-xs text-yellow-400 mb-2', 'Перед привязкой убедитесь, что A-запись домена указывает на IP этого сервера.');
-    subDomBlock.appendChild(hintDiv);
-
-    const subDomInp = el('input', '');
-    subDomInp.placeholder = 'sub.example.com';
-    subDomBlock.appendChild(subDomInp);
-
-    const subDomBtn = el('button', 'btn btn-primary mt-2');
-    subDomBtn.textContent = 'Привязать домен подписок';
-
-    const progressDiv = el('div', 'mt-2 text-sm hidden');
-    subDomBlock.appendChild(progressDiv);
-
-    subDomBtn.onclick = async () => {
-      if (!subDomInp.value) { alert('Укажите домен'); return; }
-      subDomBtn.disabled = true;
-      subDomBtn.textContent = 'Привязка...';
-      progressDiv.classList.remove('hidden');
-      progressDiv.innerHTML = '<div class="text-gray-400">Определение окружения...</div>';
-      try {
-        const res = await api('/system/sub-domain', {
-          method: 'POST',
-          body: JSON.stringify({ domain: subDomInp.value })
-        });
-        progressDiv.innerHTML = '';
-        if (res.steps) {
-          res.steps.forEach(function(step) {
-            const s = el('div', 'text-xs text-gray-400', step);
-            progressDiv.appendChild(s);
-          });
-        }
-        const doneDiv = el('div', 'text-green-400 mt-1', res.message || 'Домен привязан!');
-        progressDiv.appendChild(doneDiv);
-        setTimeout(function() { render(); }, 2000);
-      } catch (e) {
-        let errMsg = e.message;
-        let errSteps = [];
-        try {
-          const err = JSON.parse(e.message);
-          errMsg = err.message || e.message;
-          errSteps = err.steps || [];
-        } catch {}
-        progressDiv.innerHTML = '';
-        errSteps.forEach(function(step) {
-          const s = el('div', 'text-xs text-gray-400', step);
-          progressDiv.appendChild(s);
-        });
-        const errDiv = el('div', 'text-red-400 mt-1', errMsg);
-        progressDiv.appendChild(errDiv);
-        subDomBtn.disabled = false;
-        subDomBtn.textContent = 'Привязать домен подписок';
-      }
-    };
-    subDomBlock.appendChild(subDomBtn);
-  }
-  card.appendChild(subDomBlock);
 
   // Port
   const portBlock = el('div', '');
