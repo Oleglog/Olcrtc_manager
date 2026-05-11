@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-INSTALLER_VERSION="1.0.5"
+INSTALLER_VERSION="1.0.6"
 CARRIER_DEFAULT="wbstream"
 TRANSPORT_DEFAULT="datachannel"
 DNS_DEFAULT="1.1.1.1:53"
@@ -424,6 +424,10 @@ if [ -n "${OLCRTC_WARP_PROXY:-}" ]; then
     warp_host="${warp%:*}"; warp_port="${warp##*:}"
     ARGS+=(-warp-proxy "$warp_host" -warp-proxy-port "$warp_port")
 fi
+if [ -n "${OLCRTC_SUB_ENABLED:-}" ] && [ "$OLCRTC_SUB_ENABLED" != "0" ] && [ "$OLCRTC_SUB_ENABLED" != "false" ]; then
+    ARGS+=(-sub-enabled)
+fi
+ARGS+=(-sub-port "${OLCRTC_SUB_PORT:-2096}")
 exec /usr/local/bin/olcrtc "${ARGS[@]}"
 LAUNCHER_EOF
     chmod +x /usr/local/bin/olcrtc-launcher
@@ -461,6 +465,8 @@ elif [ "$DO_REGENERATE" -eq 0 ] && [ -f "$ENV_FILE" ]; then
 fi
 
 # Main env file.
+SUB_ENABLED_VAL=""
+if [ "$SUB_ENABLED" = "y" ] || [ "$SUB_ENABLED" = "Y" ]; then SUB_ENABLED_VAL="1"; fi
 cat > "$ENV_FILE" <<EOF
 OLCRTC_CARRIER=$CARRIER
 OLCRTC_TRANSPORT=$TRANSPORT
@@ -468,6 +474,7 @@ OLCRTC_ROOM_ID=$ROOM_ID
 OLCRTC_KEY=$KEY
 OLCRTC_DNS=$DNS_DEFAULT
 OLCRTC_NAME=$SET_NAME
+OLCRTC_SUB_ENABLED=$SUB_ENABLED_VAL
 EOF
 chown root:olcrtc "$ENV_FILE"
 chmod 0640 "$ENV_FILE"

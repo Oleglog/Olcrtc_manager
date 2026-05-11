@@ -516,7 +516,7 @@ function showConfigModal(inst) {
 
   // Proxy hint
   const proxyHint = el('div', 'mb-3 text-xs text-gray-500 bg-gray-800 p-2 rounded');
-  proxyHint.innerHTML = '<b>Прокси:</b><br>SOCKS — для signaling (RU IP).<br>WARP — для клиентского трафика (Cloudflare IP).<br>Установите wireproxy или 3x-ui WARP inbound на 127.0.0.1:40000, затем укажите здесь <code>127.0.0.1:40000</code>.';
+  proxyHint.innerHTML = '<b>Прокси:</b><br>SOCKS — для signaling. Формат: <code>socks5://user:pass@host:port</code> или <code>user:pass@host:port</code><br>WARP — для клиентского трафика. Формат: <code>host:port</code> (например <code>127.0.0.1:40000</code>)';
   div.appendChild(proxyHint);
   const debugRow = el('div', 'mb-3 flex items-center gap-2');
   const debugCb = el('input', '');
