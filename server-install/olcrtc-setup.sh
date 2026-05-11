@@ -335,9 +335,13 @@ if [ ! -f "$TMPDIR/olcrtc-admin-missing" ]; then
 fi
 
 # Install launcher from bundled file or create inline.
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LAUNCHER_SRC="$SCRIPT_DIR/systemd/olcrtc-launcher"
-if [ -f "$LAUNCHER_SRC" ]; then
+SCRIPT_DIR=""
+if [ -n "${BASH_SOURCE:-}" ]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
+LAUNCHER_SRC=""
+[ -n "$SCRIPT_DIR" ] && LAUNCHER_SRC="$SCRIPT_DIR/systemd/olcrtc-launcher"
+if [ -n "$LAUNCHER_SRC" ] && [ -f "$LAUNCHER_SRC" ]; then
     install -m 0755 -o root -g root "$LAUNCHER_SRC" /usr/local/bin/olcrtc-launcher
 else
     cat > /usr/local/bin/olcrtc-launcher <<'LAUNCHER_EOF'
