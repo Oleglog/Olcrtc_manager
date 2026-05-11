@@ -93,7 +93,10 @@ func (s *Server) handleSystemLogs(w http.ResponseWriter, r *http.Request) {
 	out, err := JournalctlLogs(service, lines)
 	if err != nil {
 		logger.Errorf("journalctl %s: %v", service, err)
-		http.Error(w, "Failed to read logs", http.StatusInternalServerError)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{
+			"error":   "failed_to_read_logs",
+			"message": err.Error(),
+		})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"service": service, "logs": out})

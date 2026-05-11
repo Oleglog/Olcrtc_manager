@@ -2,6 +2,7 @@ package admin
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -70,6 +71,16 @@ func (s *Server) doProxy(w http.ResponseWriter, req *http.Request) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
+		if strings.Contains(err.Error(), "connection refused") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]any{
+				"error":    "subscription_service_unavailable",
+				"message":  "Сервис подписок не запущен на порту " + itoa(s.cfg.SubPort) + ". Убедитесь, что olcrtc-server работает с включёнными подписками.",
+				"sub_port": s.cfg.SubPort,
+			})
+			return
+		}
 		http.Error(w, "Subscription API unreachable: "+err.Error(), http.StatusBadGateway)
 		return
 	}

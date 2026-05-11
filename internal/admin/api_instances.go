@@ -16,15 +16,19 @@ import (
 
 // Instance represents an olcrtc server instance.
 type Instance struct {
-	ID        int    `json:"id"`
-	Label     string `json:"label"`
-	Carrier   string `json:"carrier"`
-	Transport string `json:"transport"`
-	RoomID    string `json:"room_id"`
-	Name      string `json:"name"`
-	Status    string `json:"status"`
-	Uptime    string `json:"uptime"`
-	URI       string `json:"uri"`
+	ID         int    `json:"id"`
+	Label      string `json:"label"`
+	Carrier    string `json:"carrier"`
+	Transport  string `json:"transport"`
+	RoomID     string `json:"room_id"`
+	Name       string `json:"name"`
+	Status     string `json:"status"`
+	Uptime     string `json:"uptime"`
+	URI        string `json:"uri"`
+	SocksProxy string `json:"socks_proxy"`
+	WarpProxy  string `json:"warp_proxy"`
+	DNS        string `json:"dns"`
+	Debug      bool   `json:"debug"`
 }
 
 func (s *Server) handleInstancesList(w http.ResponseWriter, r *http.Request) {
@@ -368,15 +372,19 @@ func (s *Server) buildInstance(id int) Instance {
 	}
 
 	return Instance{
-		ID:        id,
-		Label:     label,
-		Carrier:   carrier,
-		Transport: transport,
-		RoomID:    vals["OLCRTC_ROOM_ID"],
-		Name:      name,
-		Status:    status,
-		Uptime:    uptime,
-		URI:       s.buildURI(id),
+		ID:         id,
+		Label:      label,
+		Carrier:    carrier,
+		Transport:  transport,
+		RoomID:     vals["OLCRTC_ROOM_ID"],
+		Name:       name,
+		Status:     status,
+		Uptime:     uptime,
+		URI:        s.buildURI(id),
+		SocksProxy: vals["OLCRTC_SOCKS_PROXY"],
+		WarpProxy:  vals["OLCRTC_WARP_PROXY"],
+		DNS:        vals["OLCRTC_DNS"],
+		Debug:      vals["OLCRTC_DEBUG"] == "1",
 	}
 }
 

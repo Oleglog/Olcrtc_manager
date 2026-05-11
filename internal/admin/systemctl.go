@@ -83,8 +83,9 @@ func JournalctlLogs(service string, lines int) (string, error) {
 	if lines <= 0 {
 		lines = 100
 	}
-	out, err := SystemctlRun("-u", service, "--no-pager", "-n", fmt.Sprintf("%d", lines))
-	return out, err
+	cmd := exec.Command("journalctl", "-u", service, "--no-pager", "-n", fmt.Sprintf("%d", lines))
+	out, err := cmd.CombinedOutput()
+	return string(out), err
 }
 
 // formatDuration converts a duration to a human-readable string.

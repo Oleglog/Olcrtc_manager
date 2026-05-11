@@ -157,10 +157,18 @@ async function renderDashboard(app) {
   let sys = {};
   let instances = [];
   let subs = [];
+  let subsError = null;
 
   try { sys = await api('/system/status'); } catch (e) { console.error(e); }
   try { instances = await api('/instances'); } catch (e) { console.error(e); }
-  try { subs = await api('/subs'); } catch (e) { console.error(e); }
+  try { subs = await api('/subs'); } catch (e) {
+    try {
+      const errData = JSON.parse(e.message);
+      if (errData.error === 'subscription_service_unavailable') {
+        subsError = errData.message;
+      }
+    } catch { console.error(e); }
+  }
 
   // System card
   const sysCard = el('div', 'card p-4 mb-6');
@@ -266,7 +274,9 @@ async function renderDashboard(app) {
   subSection.innerHTML = '<h2 class="text-lg font-semibold mb-4">Подписки</h2>';
   const subList = el('div', 'space-y-3');
 
-  if (subs.length === 0) {
+  if (subsError) {
+    subList.appendChild(el('div', 'text-yellow-400 text-sm mb-2', 'Сервис подписок недоступен. Проверьте, что olcrtc-server запущен с OLCRTC_SUB_ENABLED=1.'));
+  } else if (subs.length === 0) {
     subList.appendChild(el('div', 'text-gray-400 text-sm', 'Нет подписок'));
   } else {
     subs.forEach(sub => {
@@ -446,8 +456,10 @@ function closeModal(overlay) { overlay.remove(); }
 function showQRModal(uri) {
   const div = el('div', '');
   div.innerHTML = '<h3 class="text-lg font-semibold mb-3">QR-код</h3>';
-  const qrDiv = el('div', 'flex justify-center mb-3');
-  div.appendChild(qrDiv);
+  const qrWrap = el('div', 'qr-wrap flex justify-center mb-3');
+  const qrDiv = el('div', '');
+  qrWrap.appendChild(qrDiv);
+  div.appendChild(qrWrap);
   const uriText = el('div', 'text-xs text-gray-400 break-all mb-3', uri);
   div.appendChild(uriText);
   const btnRow = el('div', 'flex gap-2 justify-end');
@@ -464,7 +476,7 @@ function showQRModal(uri) {
 
   // Generate QR after append
   setTimeout(() => {
-    new QRCode(qrDiv, { text: uri, width: 200, height: 200, colorDark: '#000', colorLight: '#fff' });
+    new QRCode(qrDiv, { text: uri, width: 280, height: 280, colorDark: '#000000', colorLight: '#ffffff', correctLevel: QRCode.CorrectLevel.H });
   }, 0);
 }
 
@@ -476,9 +488,9 @@ function showConfigModal(inst) {
     { key: 'carrier', label: 'Carrier', val: inst.carrier || 'wbstream', opts: ['wbstream', 'jazz', 'telemost'] },
     { key: 'transport', label: 'Transport', val: inst.transport || 'datachannel', opts: ['datachannel', 'vp8channel', 'seichannel'] },
     { key: 'name', label: 'Имя', val: inst.name || '' },
-    { key: 'dns', label: 'DNS', val: '' },
-    { key: 'socks_proxy', label: 'SOCKS', val: '' },
-    { key: 'warp_proxy', label: 'WARP', val: '' },
+    { key: 'dns', label: 'DNS', val: inst.dns || '' },
+    { key: 'socks_proxy', label: 'SOCKS', val: inst.socks_proxy || '' },
+    { key: 'warp_proxy', label: 'WARP', val: inst.warp_proxy || '' },
   ];
 
   const inputs = {};
@@ -509,6 +521,7 @@ function showConfigModal(inst) {
   const debugRow = el('div', 'mb-3 flex items-center gap-2');
   const debugCb = el('input', '');
   debugCb.type = 'checkbox';
+  debugCb.checked = inst.debug || false;
   debugRow.appendChild(debugCb);
   debugRow.appendChild(el('label', 'text-sm', 'Включить debug-логирование'));
   div.appendChild(debugRow);
