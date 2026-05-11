@@ -53,8 +53,6 @@ func (s *Server) handleSystemStatus(w http.ResponseWriter, r *http.Request) {
 	mainEnv := InstanceEnvPath(s.cfg.ConfigDir, 0)
 	vals := ReadInstanceEnv(mainEnv)
 
-	subDomainStatus := GetSubDomainStatus(s.cfg.ConfigDir, s.cfg.PublicIP, s.cfg.SubPort)
-
 	result := map[string]any{
 		"version":           "0.4.0",
 		"admin_version":     "0.1.0",
@@ -73,9 +71,6 @@ func (s *Server) handleSystemStatus(w http.ResponseWriter, r *http.Request) {
 		"instances_total":   len(ids),
 		"instances_running": running,
 		"admin_url":         fmt.Sprintf("https://%s:%d", adminDomain, s.cfg.Port),
-		"sub_domain":        subDomainStatus.Domain,
-		"sub_url":           subDomainStatus.SubURL,
-		"sub_domain_active": subDomainStatus.Active,
 	}
 	writeJSON(w, http.StatusOK, result)
 }
@@ -192,108 +187,6 @@ func (s *Server) unbindDomain(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":      true,
 		"message": "Домен отвязан. Перезапустите olcrtc-admin для возврата к self-signed.",
-	})
-}
-
-func (s *Server) handleSubDomain(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		s.getSubDomain(w)
-	case http.MethodPost:
-		s.setupSubDomain(w, r)
-	case http.MethodDelete:
-		s.removeSubDomain(w)
-	default:
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-func (s *Server) getSubDomain(w http.ResponseWriter) {
-	st := GetSubDomainStatus(s.cfg.ConfigDir, s.cfg.PublicIP, s.cfg.SubPort)
-	writeJSON(w, http.StatusOK, st)
-}
-
-func (s *Server) setupSubDomain(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Domain string `json:"domain"`
-	}
-	if err := readJSON(r, &req); err != nil {
-		http.Error(w, "Bad Request", http.StatusBadRequest)
-		return
-	}
-	if req.Domain == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{
-			"error":   "domain_required",
-			"message": "Укажите домен",
-		})
-		return
-	}
-
-	ips, err := net.LookupHost(req.Domain)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{
-			"error":   "dns_lookup_failed",
-			"message": "Не удалось разрешить DNS для домена",
-			"hint":    fmt.Sprintf("Добавьте A-запись %s → %s", req.Domain, s.cfg.PublicIP),
-		})
-		return
-	}
-	found := false
-	for _, ip := range ips {
-		if ip == s.cfg.PublicIP {
-			found = true
-			break
-		}
-	}
-	if !found {
-		writeJSON(w, http.StatusBadRequest, map[string]any{
-			"error":   "dns_mismatch",
-			"message": "DNS A-запись не указывает на IP этого сервера",
-			"hint":    fmt.Sprintf("Ожидался IP %s, получены: %v", s.cfg.PublicIP, ips),
-		})
-		return
-	}
-
-	steps, err := SetupSubDomain(req.Domain)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{
-			"error":   "setup_failed",
-			"message": err.Error(),
-			"steps":   steps,
-		})
-		return
-	}
-
-	sni := DetectSNI()
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":             true,
-		"domain":         req.Domain,
-		"sub_url":        fmt.Sprintf("https://%s/sub/{slug}", req.Domain),
-		"sni_mode":       sni.Detected,
-		"proxy_protocol": sni.ProxyProtocol,
-		"steps":          steps,
-		"message":        "Домен привязан. Подписки доступны по HTTPS.",
-	})
-}
-
-func (s *Server) removeSubDomain(w http.ResponseWriter) {
-	currentDomain := ReadSubDomain(s.cfg.ConfigDir)
-
-	steps, err := RemoveSubDomain()
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{
-			"error":   "remove_failed",
-			"message": err.Error(),
-			"steps":   steps,
-		})
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":      true,
-		"message": "Домен отвязан.",
-		"domain":  currentDomain,
-		"steps":   steps,
 	})
 }
 

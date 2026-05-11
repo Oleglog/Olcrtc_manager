@@ -357,51 +357,6 @@ By default clients access subscriptions via `http://<IP>:2096/sub/{slug}`.
 Binding a domain adds HTTPS and hides the port:
 `https://sub.example.com/sub/{slug}`.
 
-#### Automatic setup (recommended)
-
-The setup script can configure everything automatically — nginx, TLS
-certificate (Let's Encrypt), and SNI routing (if 3x-ui / xray is present):
-
-```bash
-# 1. Add an A record for your domain: sub.example.com → <VPS IP>
-# 2. Run:
-sudo bash olcrtc-setup.sh --setup-domain sub.example.com
-```
-
-The script will:
-- **validate the domain** (reject wildcards, IP addresses, invalid chars),
-- **check DNS** — verify the A-record points to this server's IP before proceeding,
-- install `nginx` and `certbot` if missing (supports both apt and snap),
-- detect whether your nginx uses an SNI multiplexer (3x-ui / xray),
-- **backup the stream config** before any modifications,
-- obtain a Let's Encrypt TLS certificate (webroot → standalone → nginx plugin fallback),
-- create the appropriate nginx server block (with `proxy_protocol` support
-  when detected),
-- test and reload nginx — **rollback from backup if `nginx -t` fails**,
-- save the domain to `OLCRTC_SUB_DOMAIN` in env for the Admin UI.
-
-After completion, clients can use: `https://sub.example.com/sub/{slug}`.
-
-> **During fresh installation**, if you enable subscriptions the script will
-> ask "Привязать домен? [y/N]" — enter your domain there and it will be
-> configured automatically after the installation completes.
-
-To **remove** the domain binding:
-
-```bash
-sudo bash olcrtc-setup.sh --remove-domain
-```
-
-This removes the nginx server block, cleans up the stream config
-(upstream + SNI entry) with backup/rollback, and clears `OLCRTC_SUB_DOMAIN`.
-Let's Encrypt certificates are preserved (they can be reused).
-
-**Admin UI**: you can also bind/unbind the subscription domain from
-Settings → "Домен для подписок" in the web panel. The Dashboard shows
-the current subscription domain status.
-
-#### Manual setup
-
 #### 1. DNS
 
 Add an **A record** `sub.example.com → <VPS IP>` at your DNS provider.
