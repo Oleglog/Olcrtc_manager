@@ -162,6 +162,12 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
 	envPath := InstanceEnvPath(s.cfg.ConfigDir, newID)
 	keyPath := InstanceKeyPath(s.cfg.ConfigDir, newID)
 
+	// Ensure directory exists.
+	if err := os.MkdirAll(filepath.Dir(keyPath), 0755); err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
 	// Generate key.
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
@@ -169,12 +175,6 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := os.WriteFile(keyPath, []byte(hex.EncodeToString(key)), 0600); err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-
-	// Ensure directory exists before writing key.
-	if err := os.MkdirAll(filepath.Dir(keyPath), 0755); err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
