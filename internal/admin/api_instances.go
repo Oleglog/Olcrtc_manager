@@ -173,6 +173,12 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Ensure directory exists before writing key.
+	if err := os.MkdirAll(filepath.Dir(keyPath), 0755); err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
 	// Copy defaults from main instance.
 	mainEnv := InstanceEnvPath(s.cfg.ConfigDir, 0)
 	vals := ReadInstanceEnv(mainEnv)
