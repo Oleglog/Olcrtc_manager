@@ -9,8 +9,8 @@ EnvironmentFile=/etc/olcrtc/admin.env
 ExecStart=/usr/local/bin/olcrtc-admin \
     -port ${OLCRTC_ADMIN_PORT} \
     -token ${OLCRTC_ADMIN_TOKEN} \
-    -domain ${OLCRTC_ADMIN_DOMAIN:-} \
-    -sub-port ${OLCRTC_SUB_PORT:-2096} \
+    -domain "${OLCRTC_ADMIN_DOMAIN}" \
+    -sub-port ${OLCRTC_SUB_PORT} \
     -tls-dir /var/lib/olcrtc/admin-tls
 Restart=on-failure
 RestartSec=5
