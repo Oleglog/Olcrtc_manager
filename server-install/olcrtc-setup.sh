@@ -336,27 +336,64 @@ do_caddy_setup() {
         echo "$CADDY_MARK_END"
     } >> "$caddyfile"
 
-    # Validate. `caddy validate` returns non-zero on syntax errors.
-    if ! caddy validate --config "$caddyfile" --adapter caddyfile >/dev/null 2>&1; then
-        echo "  [!] caddy validate не прошёл после правки." >&2
+    # Validate. `caddy validate` captures stderr so any complaint is visible.
+    local v_out
+    if ! v_out="$(caddy validate --config "$caddyfile" --adapter caddyfile 2>&1)"; then
+        echo "  [!] caddy validate не прошёл после правки:" >&2
+        echo "$v_out" | sed 's/^/      /' >&2
         echo "      Откатываю Caddyfile из бэкапа: $backup_path" >&2
         cp "$backup_path" "$caddyfile"
         return 1
     fi
 
-    # Reload via systemd if caddy is managed by systemd, else use caddy CLI.
-    if systemctl is-active --quiet caddy 2>/dev/null; then
-        if ! systemctl reload caddy 2>&1; then
-            echo "  [!] systemctl reload caddy завершился с ошибкой." >&2
-            return 1
-        fi
-    else
-        if ! caddy reload --config "$caddyfile" --adapter caddyfile >/dev/null 2>&1; then
-            echo "  [!] caddy reload завершился с ошибкой." >&2
-            return 1
-        fi
+    if ! caddy_reload_robust "$caddyfile"; then
+        echo "  [!] caddy reload не удался ни одним из способов." >&2
+        echo "      Конфиг в $caddyfile уже отредактирован, сделайте reload вручную:" >&2
+        echo "        sudo systemctl restart caddy" >&2
+        echo "      Или верните бэкап, если нужно: cp $backup_path $caddyfile" >&2
+        return 1
     fi
     echo "         caddy перезагружен ✓"
+}
+
+# caddy_reload_robust <caddyfile> — tries every common way to reload caddy and
+# surfaces stderr from each attempt so the user sees the real error instead of
+# a vague "caddy reload failed". Order of attempts:
+#   1. systemctl reload caddy        (zero-downtime, requires admin API)
+#   2. caddy reload --config ...     (same path, useful when systemd doesn't
+#                                     manage caddy or unit name differs)
+#   3. systemctl restart caddy       (last resort; brief downtime)
+# Returns 0 on first success, non-zero only if all three fail.
+caddy_reload_robust() {
+    local caddyfile="$1"
+    local out=""
+
+    if systemctl list-unit-files caddy.service >/dev/null 2>&1; then
+        if out="$(systemctl reload caddy 2>&1)"; then
+            return 0
+        fi
+        echo "         systemctl reload caddy: $out" >&2
+    fi
+
+    if command -v caddy >/dev/null 2>&1; then
+        if out="$(caddy reload --config "$caddyfile" --adapter caddyfile 2>&1)"; then
+            return 0
+        fi
+        echo "         caddy reload (CLI): $out" >&2
+    fi
+
+    if systemctl list-unit-files caddy.service >/dev/null 2>&1; then
+        echo "         Пробую systemctl restart caddy (downtime ~1с)..." >&2
+        if out="$(systemctl restart caddy 2>&1)"; then
+            # Wait briefly for caddy to come up so the next operation doesn't
+            # race with the restart.
+            sleep 1
+            return 0
+        fi
+        echo "         systemctl restart caddy: $out" >&2
+    fi
+
+    return 1
 }
 
 # do_caddy_remove <domain?> — strip the olcrtc:sub block from the Caddyfile and
@@ -376,16 +413,16 @@ do_caddy_remove() {
     sed -i "/$CADDY_MARK_START/,/$CADDY_MARK_END/d" "$caddyfile"
     sed -i '/^$/N;/^\n$/d' "$caddyfile"
 
-    if ! caddy validate --config "$caddyfile" --adapter caddyfile >/dev/null 2>&1; then
-        echo "  [!] caddy validate не прошёл после удаления блока, откатываю." >&2
+    local v_out
+    if ! v_out="$(caddy validate --config "$caddyfile" --adapter caddyfile 2>&1)"; then
+        echo "  [!] caddy validate не прошёл после удаления блока:" >&2
+        echo "$v_out" | sed 's/^/      /' >&2
+        echo "      Откатываю Caddyfile из бэкапа: $backup_path" >&2
         cp "$backup_path" "$caddyfile"
         return 1
     fi
-    if systemctl is-active --quiet caddy 2>/dev/null; then
-        systemctl reload caddy 2>/dev/null || true
-    else
-        caddy reload --config "$caddyfile" --adapter caddyfile >/dev/null 2>&1 || true
-    fi
+    caddy_reload_robust "$caddyfile" || \
+        echo "  [!] caddy reload не удался — caddy продолжит работать со старым конфигом." >&2
     echo "  Удалён блок olcrtc:sub из $caddyfile ✓"
 }
 
