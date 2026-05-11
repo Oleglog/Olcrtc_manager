@@ -117,6 +117,45 @@ external_https_listener() {
     return 1
 }
 
+# caddy_present — returns 0 if caddy is installed.
+caddy_present() {
+    command -v caddy >/dev/null 2>&1 && return 0
+    for p in /usr/bin/caddy /usr/local/bin/caddy /usr/sbin/caddy; do
+        [ -x "$p" ] && return 0
+    done
+    return 1
+}
+
+# caddy_config_path — prints the active Caddyfile path on stdout. Tries the
+# Debian package default first, then parses --config from the systemd unit's
+# ExecStart. Returns non-zero if no Caddyfile is found.
+caddy_config_path() {
+    if [ -f /etc/caddy/Caddyfile ]; then
+        echo /etc/caddy/Caddyfile
+        return 0
+    fi
+    local exec_start config_path
+    exec_start="$(systemctl show caddy --property=ExecStart 2>/dev/null | head -1)"
+    if [ -n "$exec_start" ]; then
+        config_path="$(echo "$exec_start" | sed -n 's/.*--config \([^ ;]*\).*/\1/p' | head -1)"
+        if [ -n "$config_path" ] && [ -f "$config_path" ]; then
+            echo "$config_path"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+# port_listener — prints the program name listening on the given port (best
+# effort). E.g. `port_listener 443` -> "caddy" or "nginx" or empty.
+port_listener() {
+    local port="$1"
+    ss -tlnp 2>/dev/null \
+        | awk -v p=":${port} " '$4 ~ p { print }' \
+        | head -1 \
+        | grep -oP '"[^"]+"' | head -1 | tr -d '"'
+}
+
 # ── Download helpers ─────────────────────────────────────────────────────────
 detect_arch() {
     local arch
@@ -245,6 +284,97 @@ snap_install_certbot() {
     return 0
 }
 
+# ── Caddy domain helpers ─────────────────────────────────────────────────────
+# Marker strings used to delimit our managed block inside the Caddyfile so we
+# can idempotently replace it on re-runs and surgically remove it on
+# --remove-domain without touching the rest of the user's caddy config.
+CADDY_MARK_START="# olcrtc:sub:start"
+CADDY_MARK_END="# olcrtc:sub:end"
+
+# do_caddy_setup <domain> <sub_port> <caddyfile> — append or replace the
+# olcrtc:sub managed block in the user's Caddyfile, validate, reload.
+do_caddy_setup() {
+    local domain="$1" sub_port="$2" caddyfile="$3"
+
+    [ -z "$caddyfile" ] && { echo "  [!] do_caddy_setup: Caddyfile не задан" >&2; return 1; }
+    [ -f "$caddyfile" ] || { echo "  [!] do_caddy_setup: $caddyfile не существует" >&2; return 1; }
+
+    # Backup before modification.
+    local backup_path
+    backup_path="${caddyfile}.bak.$(date +%s)"
+    cp "$caddyfile" "$backup_path"
+    echo "         Бэкап Caddyfile: $backup_path"
+
+    # Strip any previous olcrtc:sub block so re-runs are idempotent.
+    if grep -q "$CADDY_MARK_START" "$caddyfile"; then
+        sed -i "/$CADDY_MARK_START/,/$CADDY_MARK_END/d" "$caddyfile"
+        # Collapse double-blank lines left over from the deletion.
+        sed -i '/^$/N;/^\n$/d' "$caddyfile"
+    fi
+
+    # Append the new block at EOF.
+    {
+        echo ""
+        echo "$CADDY_MARK_START $domain"
+        echo "$domain {"
+        echo "    reverse_proxy 127.0.0.1:${sub_port}"
+        echo "}"
+        echo "$CADDY_MARK_END"
+    } >> "$caddyfile"
+
+    # Validate. `caddy validate` returns non-zero on syntax errors.
+    if ! caddy validate --config "$caddyfile" --adapter caddyfile >/dev/null 2>&1; then
+        echo "  [!] caddy validate не прошёл после правки." >&2
+        echo "      Откатываю Caddyfile из бэкапа: $backup_path" >&2
+        cp "$backup_path" "$caddyfile"
+        return 1
+    fi
+
+    # Reload via systemd if caddy is managed by systemd, else use caddy CLI.
+    if systemctl is-active --quiet caddy 2>/dev/null; then
+        if ! systemctl reload caddy 2>&1; then
+            echo "  [!] systemctl reload caddy завершился с ошибкой." >&2
+            return 1
+        fi
+    else
+        if ! caddy reload --config "$caddyfile" --adapter caddyfile >/dev/null 2>&1; then
+            echo "  [!] caddy reload завершился с ошибкой." >&2
+            return 1
+        fi
+    fi
+    echo "         caddy перезагружен ✓"
+}
+
+# do_caddy_remove <domain?> — strip the olcrtc:sub block from the Caddyfile and
+# reload. Safe to call when no block exists.
+do_caddy_remove() {
+    local caddyfile
+    if ! caddyfile="$(caddy_config_path)"; then
+        return 0  # no caddy config — nothing to remove
+    fi
+    grep -q "$CADDY_MARK_START" "$caddyfile" 2>/dev/null || return 0
+
+    local backup_path
+    backup_path="${caddyfile}.bak.$(date +%s)"
+    cp "$caddyfile" "$backup_path"
+    echo "  Бэкап Caddyfile: $backup_path"
+
+    sed -i "/$CADDY_MARK_START/,/$CADDY_MARK_END/d" "$caddyfile"
+    sed -i '/^$/N;/^\n$/d' "$caddyfile"
+
+    if ! caddy validate --config "$caddyfile" --adapter caddyfile >/dev/null 2>&1; then
+        echo "  [!] caddy validate не прошёл после удаления блока, откатываю." >&2
+        cp "$backup_path" "$caddyfile"
+        return 1
+    fi
+    if systemctl is-active --quiet caddy 2>/dev/null; then
+        systemctl reload caddy 2>/dev/null || true
+    else
+        caddy reload --config "$caddyfile" --adapter caddyfile >/dev/null 2>&1 || true
+    fi
+    echo "  Удалён блок olcrtc:sub из $caddyfile ✓"
+}
+
 # ── Domain setup ─────────────────────────────────────────────────────────────
 do_setup_domain() {
     local domain="$1"
@@ -344,11 +474,17 @@ do_setup_domain() {
         fi
     fi
 
-    # ── 4. Detect SNI multiplexer (3x-ui / xray) ──
+    # ── 4. Detect front-door on :443 ──
+    # We support three layouts:
+    #   sni_mode=1   — nginx with a stream { ssl_preread } block (3x-ui+nginx).
+    #   caddy_mode=1 — caddy is the :443 listener (3x-ui+caddy or pure caddy).
+    #   neither     — standalone nginx on :443 (we'll add a normal server{}).
     local sni_mode=0
+    local caddy_mode=0
     local stream_conf=""
     local has_proxy_protocol=0
     local stream_conf_count=0
+    local caddyfile=""
 
     if grep -rq 'ssl_preread' /etc/nginx/ 2>/dev/null; then
         sni_mode=1
@@ -362,7 +498,7 @@ do_setup_domain() {
             done
             echo "         Используем первый: $stream_conf"
         else
-            echo "  [4/6] Обнаружен SNI-мультиплексор (3x-ui / xray)"
+            echo "  [4/6] Обнаружен SNI-мультиплексор nginx (3x-ui / xray)"
         fi
         echo "         Stream config: $stream_conf"
 
@@ -376,25 +512,48 @@ do_setup_domain() {
         fi
         [ "$has_proxy_protocol" -eq 1 ] && echo "         proxy_protocol: да" || echo "         proxy_protocol: нет"
     else
-        # Check if 3x-ui/xray runs WITHOUT nginx stream (standalone).
-        if pgrep -x xray >/dev/null 2>&1 || systemctl is-active --quiet x-ui 2>/dev/null; then
-            echo "  [4/6] Обнаружен xray/3x-ui, но БЕЗ nginx stream block"
-            # Check who listens on 443.
-            local port443_owner
-            port443_owner="$(ss -tlnp 2>/dev/null | grep ':443 ' | head -1)"
-            if [ -n "$port443_owner" ]; then
-                echo "         Порт 443 занят: $port443_owner"
-                echo "  [!] Порт 443 занят не через nginx. Автоматическая настройка" >&2
-                echo "      невозможна. Настройте reverse-proxy вручную." >&2
-                echo "      Инструкция: https://github.com/Oleglog/Olcrtc_manager/blob/master/server-install/README.md" >&2
+        # nginx doesn't have a stream block. Inspect who actually owns :443.
+        local p443
+        p443="$(port_listener 443)"
+
+        if [ "$p443" = "caddy" ] || { [ -z "$p443" ] && caddy_present && systemctl is-active --quiet caddy 2>/dev/null; }; then
+            # Caddy is the front-door. We add an HTTPS reverse_proxy block to
+            # the Caddyfile — caddy auto-acquires the LE cert.
+            if ! caddy_present; then
+                echo "  [!] caddy слушает :443, но бинарник не найден в PATH — странно." >&2
                 return 1
             fi
-        else
+            if ! caddyfile="$(caddy_config_path)"; then
+                echo "  [4/6] Обнаружен caddy на :443, но Caddyfile не найден."
+                echo "  [!] Не удалось определить активный Caddyfile." >&2
+                echo "      Проверьте /etc/caddy/Caddyfile или флаг --config в systemd-юните caddy." >&2
+                return 1
+            fi
+            caddy_mode=1
+            echo "  [4/6] Обнаружен caddy на :443"
+            echo "         Caddyfile: $caddyfile"
+            echo "         certbot не нужен — caddy сам выпустит LE-сертификат."
+        elif [ "$p443" = "nginx" ] || [ -z "$p443" ]; then
+            # Either nginx already on :443 (we'll add a server block) or
+            # nothing is listening yet (we'll bring up our own server block
+            # after writing the config).
             echo "  [4/6] SNI-мультиплексор не обнаружен (стандартный nginx)"
+        else
+            # Some other process (xray/sing-box/haproxy) holds :443 directly
+            # — we don't know how to safely inject our route.
+            echo "  [4/6] Порт 443 занят процессом: $p443"
+            echo "  [!] Автоматическая настройка не поддерживает эту схему." >&2
+            echo "      Настройте reverse-proxy для $domain → 127.0.0.1:${sub_port} вручную." >&2
+            echo "      Инструкция: https://github.com/Oleglog/Olcrtc_manager/blob/master/server-install/README.md" >&2
+            return 1
         fi
     fi
 
     # ── 5. Obtain TLS certificate ──
+    # Caddy handles ACME internally — don't run certbot at all.
+    if [ "$caddy_mode" -eq 1 ]; then
+        echo "  [5/6] Пропуск (caddy сам получит сертификат после reload) ✓"
+    else
     echo "  [5/6] Получение TLS-сертификата..."
     local cert_path="/etc/letsencrypt/live/$domain/fullchain.pem"
     if [ -f "$cert_path" ]; then
@@ -479,8 +638,26 @@ ACME
         fi
         echo "         Сертификат получен ✓"
     fi
+    fi  # end of caddy_mode skip / else branch
 
-    # ── 6. Configure nginx ──
+    # ── 6. Configure front-door (nginx or caddy) ──
+    if [ "$caddy_mode" -eq 1 ]; then
+        echo "  [6/6] Настройка caddy..."
+        do_caddy_setup "$domain" "$sub_port" "$caddyfile" || return 1
+        echo ""
+        echo "[✓] Домен $domain привязан к подпискам через caddy"
+        echo "    URL подписок: https://$domain/sub/<UUID>?type=plain"
+        echo "    Используется caddy на :443 (3x-ui / xray не затронуты)"
+        echo "    Caddy сам выпустит/обновит Let's Encrypt сертификат."
+        # Persist domain/port in admin env so admin UI knows about it.
+        if [ -f "$ADMIN_ENV" ]; then
+            set_env_value OLCRTC_SUB_DOMAIN "$domain" "$ADMIN_ENV"
+        fi
+        if [ -f "$ENV_FILE" ]; then
+            set_env_value OLCRTC_SUB_DOMAIN "$domain" "$ENV_FILE"
+        fi
+        return 0
+    fi
     echo "  [6/6] Настройка nginx..."
 
     if [ "$sni_mode" -eq 1 ]; then
@@ -701,6 +878,11 @@ do_remove_domain() {
             systemctl reload nginx 2>/dev/null || true
             echo "  nginx перезагружен ✓"
         fi
+    fi
+
+    # ── 3b. Remove caddy block (if any) ──
+    if caddy_present; then
+        do_caddy_remove || true
     fi
 
     # ── 4. Clear domain from env ──
