@@ -11,6 +11,11 @@
 
 set -euo pipefail
 
+# Some sudo configurations strip /usr/sbin and /usr/local/sbin from PATH,
+# which makes `command -v nginx` fail even when nginx is installed (e.g. by
+# 3x-ui). Always ensure system sbin dirs are searched.
+export PATH="${PATH}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:/usr/local/nginx/sbin:/opt/nginx/sbin"
+
 INSTALLER_VERSION="1.0.7"
 CARRIER_DEFAULT="wbstream"
 TRANSPORT_DEFAULT="datachannel"
@@ -83,6 +88,33 @@ get_public_ip() {
 
 is_installed() {
     [ -f /usr/local/bin/olcrtc ] && [ -f /etc/systemd/system/olcrtc-server.service ] && [ -f "$ENV_FILE" ]
+}
+
+# nginx_present — returns 0 if nginx is installed in any common way, even if
+# `command -v nginx` doesn't find it. Critical for hosts where nginx was
+# installed by 3x-ui / a control panel into a non-standard prefix, or where
+# sudo's secure_path hides /usr/sbin.
+nginx_present() {
+    command -v nginx >/dev/null 2>&1 && return 0
+    for p in /usr/sbin/nginx /usr/local/sbin/nginx /usr/local/nginx/sbin/nginx \
+             /opt/nginx/sbin/nginx /snap/bin/nginx; do
+        [ -x "$p" ] && return 0
+    done
+    # Config-dir presence is also a strong signal (3x-ui / custom builds).
+    [ -f /etc/nginx/nginx.conf ] && return 0
+    return 1
+}
+
+# external_https_listener — returns 0 if something other than our own nginx
+# server block is listening on :443 (e.g. xray/3x-ui standalone, caddy).
+# Used to refuse certbot --standalone fallbacks that would `systemctl stop
+# nginx` and break those services.
+external_https_listener() {
+    pgrep -x xray >/dev/null 2>&1 && return 0
+    systemctl is-active --quiet x-ui 2>/dev/null && return 0
+    systemctl is-active --quiet sing-box 2>/dev/null && return 0
+    systemctl is-active --quiet caddy 2>/dev/null && return 0
+    return 1
 }
 
 # ── Download helpers ─────────────────────────────────────────────────────────
@@ -225,15 +257,22 @@ do_setup_domain() {
     fi
 
     # ── 2. Install nginx if missing ──
-    if ! command -v nginx >/dev/null 2>&1; then
+    # Use nginx_present() (not just `command -v`) so we never run apt-get on
+    # systems where nginx was installed by 3x-ui, snap, or built from source.
+    if nginx_present; then
+        echo "  [2/6] nginx уже установлен ✓"
+    else
         echo "  [2/6] Установка nginx..."
+        if ! command -v apt-get >/dev/null 2>&1; then
+            echo "  [!] nginx не установлен и apt-get недоступен." >&2
+            echo "      Установите nginx вручную и запустите скрипт снова." >&2
+            return 1
+        fi
         apt-get update -qq && apt-get install -y -qq nginx >/dev/null 2>&1
-        if ! command -v nginx >/dev/null 2>&1; then
+        if ! nginx_present; then
             echo "  [!] Не удалось установить nginx." >&2
             return 1
         fi
-    else
-        echo "  [2/6] nginx уже установлен ✓"
     fi
     ensure_sites_dirs
 
@@ -333,6 +372,19 @@ ACME
                 fi
                 certbot certonly --webroot -w /var/www/html -d "$domain" \
                     --non-interactive --agree-tos --register-unsafely-without-email 2>&1 || {
+                    # In SNI mode we MUST NOT `systemctl stop nginx` — that
+                    # would tear down the stream block that 3x-ui/xray rely on
+                    # for TLS routing. Fall back to standalone only if no
+                    # external service is actively using nginx.
+                    if external_https_listener; then
+                        echo "  [!] webroot не сработал, а останавливать nginx нельзя" >&2
+                        echo "      (активен xray/3x-ui/caddy через stream block)." >&2
+                        echo "      Получите сертификат вручную:" >&2
+                        echo "        sudo certbot certonly --webroot -w /var/www/html \\" >&2
+                        echo "          -d $domain --agree-tos -m you@example.com" >&2
+                        echo "      Затем повторите --setup-domain $domain." >&2
+                        return 1
+                    fi
                     echo "  [!] webroot не сработал, пробуем standalone..." >&2
                     systemctl stop nginx
                     certbot certonly --standalone -d "$domain" \
@@ -588,7 +640,7 @@ do_remove_domain() {
     fi
 
     # ── 3. Reload nginx ──
-    if command -v nginx >/dev/null 2>&1; then
+    if nginx_present; then
         if nginx -t >/dev/null 2>&1; then
             systemctl reload nginx 2>/dev/null || true
             echo "  nginx перезагружен ✓"
