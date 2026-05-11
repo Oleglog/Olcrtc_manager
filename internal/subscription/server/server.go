@@ -226,8 +226,7 @@ func (s *Server) createSubscription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Slug == "" {
-		http.Error(w, "Bad Request: slug is required", http.StatusBadRequest)
-		return
+		req.Slug = generateSlug(req.Name)
 	}
 
 	sub, err := s.store.CreateSubscription(req.Slug, req.Name)
@@ -356,6 +355,35 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]int{"created": created, "skipped": skipped})
+}
+
+func generateSlug(name string) string {
+	translit := map[rune]string{
+		'а': "a", 'б': "b", 'в': "v", 'г': "g", 'д': "d", 'е': "e", 'ё': "yo",
+		'ж': "zh", 'з': "z", 'и': "i", 'й': "y", 'к': "k", 'л': "l", 'м': "m",
+		'н': "n", 'о': "o", 'п': "p", 'р': "r", 'с': "s", 'т': "t", 'у': "u",
+		'ф': "f", 'х': "kh", 'ц': "ts", 'ч': "ch", 'ш': "sh", 'щ': "shch",
+		'ъ': "", 'ы': "y", 'ь': "", 'э': "e", 'ю': "yu", 'я': "ya",
+	}
+	var b strings.Builder
+	for _, r := range strings.ToLower(name) {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		} else if c, ok := translit[r]; ok {
+			b.WriteString(c)
+		} else {
+			b.WriteByte('-')
+		}
+	}
+	slug := b.String()
+	for strings.Contains(slug, "--") {
+		slug = strings.ReplaceAll(slug, "--", "-")
+	}
+	slug = strings.Trim(slug, "-")
+	if slug == "" {
+		slug = "sub-" + strconv.FormatInt(time.Now().Unix(), 10)
+	}
+	return slug
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
