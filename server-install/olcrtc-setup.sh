@@ -99,8 +99,36 @@ download_release() {
     local tag="server-v${INSTALLER_VERSION}"
     local url="https://github.com/${repo}/releases/download/${tag}/${name}"
 
+    # Refuse Windows binaries on Linux installs
+    if [[ "$name" == *.exe ]] || [[ "$name" == *-windows-* ]]; then
+        echo "[!] Refusing to download Windows binary on Linux: $name" >&2
+        return 1
+    fi
+
     if [ -f "$dest" ]; then rm -f "$dest"; fi
     if curl -fsSL --max-time 30 "$url" -o "$dest.tmp"; then
+        # Verify downloaded file is a Linux ELF binary
+        if command -v file >/dev/null 2>&1; then
+            local ftype
+            ftype="$(file -b "$dest.tmp")"
+            case "$ftype" in
+                ELF*executable*|ELF*shared object*)
+                    ;;
+                *)
+                    echo "[!] Downloaded file is not a Linux binary (type: $ftype): $name" >&2
+                    rm -f "$dest.tmp"
+                    return 1
+                    ;;
+            esac
+        fi
+        # Sanity check: file must not be empty and should have reasonable size
+        local size
+        size="$(stat -c%s "$dest.tmp" 2>/dev/null || stat -f%z "$dest.tmp" 2>/dev/null || echo 0)"
+        if [ "$size" -lt 1024 ]; then
+            echo "[!] Downloaded file is too small ($size bytes), likely not a binary: $name" >&2
+            rm -f "$dest.tmp"
+            return 1
+        fi
         mv "$dest.tmp" "$dest"
         chmod +x "$dest"
         return 0
@@ -146,6 +174,7 @@ do_update() {
     if [[ "$arch" == unsupported* ]]; then
         echo "[!] Unsupported architecture: $arch" >&2; exit 1
     fi
+    echo "    Detected architecture: $arch"
 
     local tmpdir
     tmpdir="$(mktemp -d)"
@@ -272,6 +301,7 @@ if [[ "$ARCH" == unsupported* ]]; then
     echo "[!] Unsupported architecture: ${ARCH#unsupported:}" >&2
     exit 1
 fi
+echo "    Architecture: $ARCH"
 
 # ── 1. Check system ──────────────────────────────────────────────────────────
 echo "  [1/7] Проверка системы..."
