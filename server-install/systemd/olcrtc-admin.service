@@ -1,0 +1,21 @@
+[Unit]
+Description=olcRTC Admin Web UI
+After=network-online.target olcrtc-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/olcrtc/admin.env
+ExecStart=/usr/local/bin/olcrtc-admin \
+    -port ${OLCRTC_ADMIN_PORT} \
+    -token ${OLCRTC_ADMIN_TOKEN} \
+    -domain ${OLCRTC_ADMIN_DOMAIN:-} \
+    -sub-port ${OLCRTC_SUB_PORT:-2096} \
+    -tls-dir /var/lib/olcrtc/admin-tls
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
