@@ -112,7 +112,7 @@ download_release() {
             local ftype
             ftype="$(file -b "$dest.tmp")"
             case "$ftype" in
-                ELF*executable*|ELF*shared object*)
+                ELF*)
                     ;;
                 *)
                     echo "[!] Downloaded file is not a Linux binary (type: $ftype): $name" >&2
