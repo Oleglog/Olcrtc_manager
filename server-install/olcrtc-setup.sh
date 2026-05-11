@@ -424,7 +424,7 @@ if [ -n "${OLCRTC_WARP_PROXY:-}" ]; then
     ARGS+=(-warp-proxy "$warp_host" -warp-proxy-port "$warp_port")
 fi
 if [ -n "${OLCRTC_SUB_ENABLED:-}" ] && [ "$OLCRTC_SUB_ENABLED" != "0" ] && [ "$OLCRTC_SUB_ENABLED" != "false" ]; then
-    ARGS+=(-sub-enabled)
+    ARGS+=(-sub-enabled -sub-db /var/lib/olcrtc/subscriptions.db)
 fi
 ARGS+=(-sub-port "${OLCRTC_SUB_PORT:-2096}")
 exec /usr/local/bin/olcrtc "${ARGS[@]}"
