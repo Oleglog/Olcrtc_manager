@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-INSTALLER_VERSION="1.0.6"
+INSTALLER_VERSION="1.0.7"
 CARRIER_DEFAULT="wbstream"
 TRANSPORT_DEFAULT="datachannel"
 DNS_DEFAULT="1.1.1.1:53"
@@ -29,11 +29,14 @@ DO_SHOW_TOKEN=0
 DO_REGENERATE=0
 DO_REGENERATE_KEY=0
 DO_STATUS=0
+DO_SETUP_DOMAIN=0
+DO_REMOVE_DOMAIN=0
 
 CARRIER=""
 TRANSPORT=""
 SET_NAME=""
 SET_ID=""
+SETUP_DOMAIN=""
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 tty_read() {
@@ -137,6 +140,478 @@ download_release() {
     return 1
 }
 
+# ── Domain helpers ────────────────────────────────────────────────────────────
+validate_domain() {
+    local d="$1"
+    # Reject empty, IP addresses, wildcards, and invalid chars.
+    [ -z "$d" ] && return 1
+    echo "$d" | grep -qE '^\*' && return 1
+    echo "$d" | grep -qP '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' && return 1
+    echo "$d" | grep -qP '^[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?)+$'
+}
+
+dns_points_here() {
+    local d="$1"
+    local my_ip
+    my_ip="$(get_public_ip)"
+    [ "$my_ip" = "unknown" ] && return 0  # skip check if we can't determine IP
+    local resolved
+    resolved="$(dig +short "$d" A 2>/dev/null || host -t A "$d" 2>/dev/null | awk '/has address/{print $NF}')"
+    echo "$resolved" | grep -qF "$my_ip"
+}
+
+ensure_sites_dirs() {
+    mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
+    # Make sure nginx includes sites-enabled.
+    if ! grep -q 'sites-enabled' /etc/nginx/nginx.conf 2>/dev/null; then
+        if grep -q 'http {' /etc/nginx/nginx.conf 2>/dev/null; then
+            sed -i '/http {/a\    include /etc/nginx/sites-enabled/*;' /etc/nginx/nginx.conf
+        fi
+    fi
+}
+
+find_certbot() {
+    # Check standard path, then snap.
+    if command -v certbot >/dev/null 2>&1; then return 0; fi
+    if [ -x /snap/bin/certbot ]; then
+        ln -sf /snap/bin/certbot /usr/local/bin/certbot 2>/dev/null || true
+        return 0
+    fi
+    return 1
+}
+
+# ── Domain setup ─────────────────────────────────────────────────────────────
+do_setup_domain() {
+    local domain="$1"
+
+    # ── 0. Validate domain ──
+    if ! validate_domain "$domain"; then
+        echo "  [!] Некорректный домен: $domain" >&2
+        echo "      Домен должен быть вида sub.example.com" >&2
+        echo "      Wildcards (*.example.com) и IP-адреса не поддерживаются." >&2
+        return 1
+    fi
+
+    # Read subscription port from env.
+    local sub_port
+    sub_port="$(get_env_value OLCRTC_SUB_PORT "$ENV_FILE" 2>/dev/null)"
+    sub_port="${sub_port:-$(get_env_value OLCRTC_SUB_PORT "$ADMIN_ENV" 2>/dev/null)}"
+    sub_port="${sub_port:-2096}"
+
+    echo "[*] Настройка домена $domain для подписок (порт подписок: $sub_port)..."
+    echo ""
+
+    # ── 1. DNS pre-check ──
+    echo "  [1/6] Проверка DNS..."
+    if command -v dig >/dev/null 2>&1 || command -v host >/dev/null 2>&1; then
+        if ! dns_points_here "$domain"; then
+            local my_ip
+            my_ip="$(get_public_ip)"
+            echo "  [!] ВНИМАНИЕ: A-запись $domain не указывает на IP этого сервера ($my_ip)." >&2
+            echo "      Certbot не сможет получить сертификат, пока DNS не будет настроен." >&2
+            echo "      Добавьте A-запись: $domain → $my_ip" >&2
+            echo "" >&2
+            local dns_continue=""
+            tty_read -rp "      Продолжить всё равно? [y/N]: " dns_continue
+            if [ "$dns_continue" != "y" ] && [ "$dns_continue" != "Y" ]; then
+                echo "  Отменено." >&2
+                return 1
+            fi
+        else
+            echo "         DNS OK ✓"
+        fi
+    else
+        echo "         (dig/host не найден, пропускаем проверку DNS)"
+    fi
+
+    # ── 2. Install nginx if missing ──
+    if ! command -v nginx >/dev/null 2>&1; then
+        echo "  [2/6] Установка nginx..."
+        apt-get update -qq && apt-get install -y -qq nginx >/dev/null 2>&1
+        if ! command -v nginx >/dev/null 2>&1; then
+            echo "  [!] Не удалось установить nginx." >&2
+            return 1
+        fi
+    else
+        echo "  [2/6] nginx уже установлен ✓"
+    fi
+    ensure_sites_dirs
+
+    # ── 3. Install certbot if missing ──
+    if ! find_certbot; then
+        echo "  [3/6] Установка certbot..."
+        apt-get update -qq && apt-get install -y -qq certbot python3-certbot-nginx >/dev/null 2>&1
+        if ! find_certbot; then
+            echo "  [!] Не удалось установить certbot." >&2
+            return 1
+        fi
+    else
+        echo "  [3/6] certbot уже установлен ✓"
+    fi
+
+    # ── 4. Detect SNI multiplexer (3x-ui / xray) ──
+    local sni_mode=0
+    local stream_conf=""
+    local has_proxy_protocol=0
+    local stream_conf_count=0
+
+    if grep -rq 'ssl_preread' /etc/nginx/ 2>/dev/null; then
+        sni_mode=1
+        stream_conf_count="$(grep -rl 'ssl_preread' /etc/nginx/ 2>/dev/null | wc -l)"
+        stream_conf="$(grep -rl 'ssl_preread' /etc/nginx/ 2>/dev/null | head -1)"
+
+        if [ "$stream_conf_count" -gt 1 ]; then
+            echo "  [4/6] ВНИМАНИЕ: найдено $stream_conf_count файлов с ssl_preread:"
+            grep -rl 'ssl_preread' /etc/nginx/ 2>/dev/null | while read -r f; do
+                echo "           $f"
+            done
+            echo "         Используем первый: $stream_conf"
+        else
+            echo "  [4/6] Обнаружен SNI-мультиплексор (3x-ui / xray)"
+        fi
+        echo "         Stream config: $stream_conf"
+
+        # Detect proxy_protocol specifically in the server block that listens on 443.
+        # Look for proxy_protocol within the same server{} block that has ssl_preread.
+        if awk '/server\s*\{/{found=1; buf=""} found{buf=buf"\n"$0} /\}/{if(found && buf ~ /ssl_preread/ && buf ~ /proxy_protocol\s+on/) print "YES"; found=0}' "$stream_conf" 2>/dev/null | grep -q YES; then
+            has_proxy_protocol=1
+        elif grep -q 'proxy_protocol on' "$stream_conf" 2>/dev/null; then
+            # Fallback: simple grep (less precise but handles common configs).
+            has_proxy_protocol=1
+        fi
+        [ "$has_proxy_protocol" -eq 1 ] && echo "         proxy_protocol: да" || echo "         proxy_protocol: нет"
+    else
+        # Check if 3x-ui/xray runs WITHOUT nginx stream (standalone).
+        if pgrep -x xray >/dev/null 2>&1 || systemctl is-active --quiet x-ui 2>/dev/null; then
+            echo "  [4/6] Обнаружен xray/3x-ui, но БЕЗ nginx stream block"
+            # Check who listens on 443.
+            local port443_owner
+            port443_owner="$(ss -tlnp 2>/dev/null | grep ':443 ' | head -1)"
+            if [ -n "$port443_owner" ]; then
+                echo "         Порт 443 занят: $port443_owner"
+                echo "  [!] Порт 443 занят не через nginx. Автоматическая настройка" >&2
+                echo "      невозможна. Настройте reverse-proxy вручную." >&2
+                echo "      Инструкция: https://github.com/Oleglog/Olcrtc_manager/blob/master/server-install/README.md" >&2
+                return 1
+            fi
+        else
+            echo "  [4/6] SNI-мультиплексор не обнаружен (стандартный nginx)"
+        fi
+    fi
+
+    # ── 5. Obtain TLS certificate ──
+    echo "  [5/6] Получение TLS-сертификата..."
+    local cert_path="/etc/letsencrypt/live/$domain/fullchain.pem"
+    if [ -f "$cert_path" ]; then
+        echo "         Сертификат уже существует ✓"
+    else
+        # Ensure /var/www/html exists for webroot challenges.
+        mkdir -p /var/www/html
+
+        if [ "$sni_mode" -eq 1 ]; then
+            # In SNI mode the certbot --nginx plugin cannot work because
+            # port 443 is handled by the stream block.  Use webroot via the
+            # existing nginx http server (port 80) when available, or fall
+            # back to standalone (temporarily stopping nginx if needed).
+            if nginx -t >/dev/null 2>&1 && systemctl is-active --quiet nginx; then
+                # Ensure a minimal server_name block exists for the domain
+                # on port 80 so that webroot challenge can be served.
+                if ! grep -rq "server_name.*${domain}" /etc/nginx/sites-enabled/ 2>/dev/null && \
+                   ! grep -rq "server_name.*${domain}" /etc/nginx/conf.d/ 2>/dev/null; then
+                    cat > /etc/nginx/sites-available/olcrtc-acme <<ACME
+server {
+    listen 80;
+    server_name ${domain};
+    root /var/www/html;
+    location /.well-known/acme-challenge/ {
+        allow all;
+    }
+}
+ACME
+                    ln -sf /etc/nginx/sites-available/olcrtc-acme /etc/nginx/sites-enabled/
+                    nginx -t >/dev/null 2>&1 && systemctl reload nginx
+                fi
+                certbot certonly --webroot -w /var/www/html -d "$domain" \
+                    --non-interactive --agree-tos --register-unsafely-without-email 2>&1 || {
+                    echo "  [!] webroot не сработал, пробуем standalone..." >&2
+                    systemctl stop nginx
+                    certbot certonly --standalone -d "$domain" \
+                        --non-interactive --agree-tos --register-unsafely-without-email 2>&1
+                    systemctl start nginx
+                }
+            else
+                # nginx not running or broken — try standalone.
+                # Check if port 80 is free.
+                if ss -tlnp 2>/dev/null | grep -q ':80 '; then
+                    echo "  [!] Порт 80 занят, но nginx не запущен." >&2
+                    echo "      Остановите сервис на порту 80 и повторите." >&2
+                    return 1
+                fi
+                certbot certonly --standalone -d "$domain" \
+                    --non-interactive --agree-tos --register-unsafely-without-email 2>&1
+            fi
+        else
+            # Standard nginx — use the nginx plugin.
+            certbot --nginx -d "$domain" \
+                --non-interactive --agree-tos --register-unsafely-without-email 2>&1 || {
+                echo "  [!] certbot --nginx не сработал, пробуем standalone..." >&2
+                systemctl stop nginx
+                certbot certonly --standalone -d "$domain" \
+                    --non-interactive --agree-tos --register-unsafely-without-email 2>&1
+                systemctl start nginx
+            }
+        fi
+        if [ ! -f "$cert_path" ]; then
+            echo "  [!] Не удалось получить сертификат для $domain" >&2
+            echo "      Убедитесь, что:" >&2
+            echo "        1. A-запись $domain → $(get_public_ip) настроена" >&2
+            echo "        2. Порт 80 доступен извне (не заблокирован firewall)" >&2
+            echo "        3. DNS изменения успели распространиться (подождите 1-5 минут)" >&2
+            return 1
+        fi
+        echo "         Сертификат получен ✓"
+    fi
+
+    # ── 6. Configure nginx ──
+    echo "  [6/6] Настройка nginx..."
+
+    if [ "$sni_mode" -eq 1 ]; then
+        # ── SNI mode (3x-ui / xray) ──
+
+        # Backup stream config before ANY modifications.
+        local backup_path
+        backup_path="${stream_conf}.bak.$(date +%s)"
+        cp "$stream_conf" "$backup_path"
+        echo "         Бэкап stream config: $backup_path"
+
+        # Pick a free internal port for the HTTPS server block.
+        local internal_port=9443
+        # If olcrtc_sub upstream already exists, read the port from it.
+        if grep -q 'olcrtc_sub' "$stream_conf" 2>/dev/null; then
+            local existing_port
+            existing_port="$(grep -A1 'upstream olcrtc_sub' "$stream_conf" | grep -oP '127\.0\.0\.1:\K[0-9]+')"
+            [ -n "$existing_port" ] && internal_port="$existing_port"
+        else
+            for p in 9443 9444 9445 9446 9447; do
+                if ! timeout 1 bash -c "</dev/tcp/127.0.0.1/${p}" 2>/dev/null; then
+                    internal_port=$p; break
+                fi
+            done
+        fi
+
+        # Add upstream to stream config if not already present.
+        if ! grep -q 'olcrtc_sub' "$stream_conf" 2>/dev/null; then
+            # Insert upstream block before the first existing 'upstream' line.
+            local upstream_block="upstream olcrtc_sub { server 127.0.0.1:${internal_port}; }"
+            sed -i "0,/^upstream /s||${upstream_block}\n\n&|" "$stream_conf"
+
+            # Insert SNI map entry before the 'default' line.
+            # Escape dots in domain for safety.
+            local sni_entry="    ${domain}    olcrtc_sub;"
+            sed -i "/default/i\\${sni_entry}" "$stream_conf"
+
+            # Validate stream config — rollback on failure.
+            if ! nginx -t >/dev/null 2>&1; then
+                echo "  [!] nginx -t не прошёл после модификации stream config!" >&2
+                echo "      Откатываю изменения из бэкапа: $backup_path" >&2
+                cp "$backup_path" "$stream_conf"
+                echo "      Stream config восстановлен." >&2
+                echo "" >&2
+                echo "  Возможные причины:" >&2
+                echo "    - Нестандартный формат stream config" >&2
+                echo "    - map/upstream в отдельных файлах" >&2
+                echo "  Настройте stream config вручную (см. README)." >&2
+                return 1
+            fi
+            echo "         Добавлен upstream olcrtc_sub + SNI-запись в $stream_conf ✓"
+        else
+            echo "         upstream olcrtc_sub уже существует в $stream_conf"
+        fi
+
+        # Build server block depending on proxy_protocol.
+        {
+            cat <<NGINX_HTTP
+server {
+    listen 80;
+    server_name ${domain};
+    return 301 https://\$host\$request_uri;
+}
+
+NGINX_HTTP
+            if [ "$has_proxy_protocol" -eq 1 ]; then
+                cat <<NGINX_PP
+server {
+    listen 127.0.0.1:${internal_port} ssl http2 proxy_protocol;
+    server_name ${domain};
+    real_ip_header proxy_protocol;
+    set_real_ip_from 127.0.0.1;
+
+    ssl_certificate     /etc/letsencrypt/live/${domain}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${domain}/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:${sub_port};
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+    }
+}
+NGINX_PP
+            else
+                cat <<NGINX_NOPP
+server {
+    listen 127.0.0.1:${internal_port} ssl http2;
+    server_name ${domain};
+
+    ssl_certificate     /etc/letsencrypt/live/${domain}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${domain}/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:${sub_port};
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+    }
+}
+NGINX_NOPP
+            fi
+        } > /etc/nginx/sites-available/olcrtc-sub
+    else
+        # ── Standard nginx (no SNI multiplexer) ──
+        cat > /etc/nginx/sites-available/olcrtc-sub <<NGINX_EOF
+server {
+    listen 80;
+    server_name ${domain};
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name ${domain};
+
+    ssl_certificate     /etc/letsencrypt/live/${domain}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${domain}/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:${sub_port};
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+    }
+}
+NGINX_EOF
+    fi
+
+    ln -sf /etc/nginx/sites-available/olcrtc-sub /etc/nginx/sites-enabled/
+    # Remove temporary ACME config if it was created.
+    rm -f /etc/nginx/sites-available/olcrtc-acme /etc/nginx/sites-enabled/olcrtc-acme
+
+    if ! nginx -t 2>&1; then
+        echo "  [!] nginx -t не прошёл после создания server block." >&2
+        # Cleanup: remove our server block.
+        rm -f /etc/nginx/sites-available/olcrtc-sub /etc/nginx/sites-enabled/olcrtc-sub
+        # Rollback stream config if in SNI mode.
+        if [ "$sni_mode" -eq 1 ] && [ -n "${backup_path:-}" ] && [ -f "${backup_path:-}" ]; then
+            cp "$backup_path" "$stream_conf"
+            echo "      Stream config восстановлен из бэкапа." >&2
+        fi
+        echo "      Проверьте конфигурацию вручную." >&2
+        return 1
+    fi
+    systemctl reload nginx
+    echo "         nginx настроен ✓"
+
+    # ── Save domain to env ──
+    set_env_value "OLCRTC_SUB_DOMAIN" "$domain" "$ENV_FILE"
+
+    # ── Summary ──
+    echo ""
+    echo "  ═══════════════════════════════════════════"
+    echo "  Домен настроен!"
+    echo "  ═══════════════════════════════════════════"
+    echo ""
+    echo "  Подписки доступны по адресу:"
+    echo "    https://${domain}/sub/{slug}"
+    echo ""
+    if [ "$sni_mode" -eq 1 ]; then
+        echo "  Режим: SNI-мультиплексор (3x-ui / xray)"
+        echo "  Внутренний порт: $internal_port"
+        [ "$has_proxy_protocol" -eq 1 ] && echo "  proxy_protocol: да"
+        echo "  Бэкап stream config: $backup_path"
+        echo ""
+    fi
+    echo "  (опционально) Закрыть прямой доступ к порту $sub_port:"
+    echo "    sudo ufw deny ${sub_port}/tcp"
+    echo "  или:"
+    echo "    sudo iptables -A INPUT -p tcp --dport ${sub_port} -j DROP"
+    echo ""
+}
+
+# ── Domain removal ───────────────────────────────────────────────────────────
+do_remove_domain() {
+    echo "[*] Отвязка домена подписок..."
+
+    local current_domain
+    current_domain="$(get_env_value OLCRTC_SUB_DOMAIN "$ENV_FILE" 2>/dev/null)"
+
+    # ── 1. Remove nginx server block ──
+    if [ -f /etc/nginx/sites-available/olcrtc-sub ]; then
+        rm -f /etc/nginx/sites-available/olcrtc-sub /etc/nginx/sites-enabled/olcrtc-sub
+        echo "  Удалён server block: /etc/nginx/sites-available/olcrtc-sub ✓"
+    else
+        echo "  Server block не найден (уже удалён)"
+    fi
+
+    # ── 2. Remove upstream/SNI from stream config (if SNI mode) ──
+    if grep -rq 'ssl_preread' /etc/nginx/ 2>/dev/null; then
+        local stream_conf
+        stream_conf="$(grep -rl 'ssl_preread' /etc/nginx/ 2>/dev/null | head -1)"
+        if grep -q 'olcrtc_sub' "$stream_conf" 2>/dev/null; then
+            # Backup before modification.
+            local backup_path
+            backup_path="${stream_conf}.bak.$(date +%s)"
+            cp "$stream_conf" "$backup_path"
+            echo "  Бэкап stream config: $backup_path"
+
+            # Remove upstream block.
+            sed -i '/upstream olcrtc_sub {/,/}/d' "$stream_conf"
+            # Remove SNI map entry (match by olcrtc_sub).
+            sed -i '/olcrtc_sub;/d' "$stream_conf"
+            # Remove blank lines left by deletions (collapse double+ blanks).
+            sed -i '/^$/N;/^\n$/d' "$stream_conf"
+
+            if ! nginx -t >/dev/null 2>&1; then
+                echo "  [!] nginx -t не прошёл после удаления из stream config!" >&2
+                echo "      Откатываю из бэкапа: $backup_path" >&2
+                cp "$backup_path" "$stream_conf"
+                return 1
+            fi
+            echo "  Удалены upstream olcrtc_sub + SNI-запись из $stream_conf ✓"
+        fi
+    fi
+
+    # ── 3. Reload nginx ──
+    if command -v nginx >/dev/null 2>&1; then
+        if nginx -t >/dev/null 2>&1; then
+            systemctl reload nginx 2>/dev/null || true
+            echo "  nginx перезагружен ✓"
+        fi
+    fi
+
+    # ── 4. Clear domain from env ──
+    set_env_value "OLCRTC_SUB_DOMAIN" "" "$ENV_FILE"
+
+    echo ""
+    echo "  ═══════════════════════════════════════════"
+    echo "  Домен отвязан."
+    echo "  ═══════════════════════════════════════════"
+    if [ -n "$current_domain" ]; then
+        echo "  Был: $current_domain"
+    fi
+    echo "  Подписки доступны по: http://$(get_public_ip):$(get_env_value OLCRTC_SUB_PORT "$ADMIN_ENV" 2>/dev/null || echo 2096)/sub/{slug}"
+    echo ""
+    echo "  Сертификат Let's Encrypt НЕ удалён (можно переиспользовать)."
+    echo "  Для удаления: sudo certbot delete --cert-name $current_domain"
+    echo ""
+}
+
 # ── Uninstall ────────────────────────────────────────────────────────────────
 do_uninstall() {
     echo "[*] Stopping services..."
@@ -214,6 +689,8 @@ Options:
     --uninstall                          Full uninstall
     --show-token                         Show admin token
     --status                             Show status
+    --setup-domain <domain>              Setup custom domain for subscriptions
+    --remove-domain                      Remove custom domain for subscriptions
     -h, --help                           Show this help
 EOF
 }
@@ -234,6 +711,9 @@ while [ $# -gt 0 ]; do
         --uninstall) DO_UNINSTALL=1; shift ;;
         --show-token) DO_SHOW_TOKEN=1; shift ;;
         --status) DO_STATUS=1; shift ;;
+        --setup-domain) SETUP_DOMAIN="$2"; DO_SETUP_DOMAIN=1; shift 2 ;;
+        --setup-domain=*) SETUP_DOMAIN="${1#*=}"; DO_SETUP_DOMAIN=1; shift ;;
+        --remove-domain) DO_REMOVE_DOMAIN=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
     esac
@@ -265,6 +745,17 @@ if [ "$DO_STATUS" -eq 1 ]; then
     systemctl status olcrtc-admin.service --no-pager 2>/dev/null || true
     exit 0
 fi
+if [ "$DO_SETUP_DOMAIN" -eq 1 ]; then
+    if [ -z "$SETUP_DOMAIN" ]; then
+        echo "[!] Укажите домен: --setup-domain sub.example.com" >&2; exit 1
+    fi
+    do_setup_domain "$SETUP_DOMAIN"
+    exit 0
+fi
+if [ "$DO_REMOVE_DOMAIN" -eq 1 ]; then
+    do_remove_domain
+    exit 0
+fi
 
 # ── Re-run on already-installed system ───────────────────────────────────────
 if is_installed; then
@@ -277,11 +768,13 @@ if is_installed; then
     systemctl is-active olcrtc-admin.service >/dev/null 2>&1 && echo "  olcrtc-admin:  running" || echo "  olcrtc-admin:  not running"
     echo ""
     echo "  Дополнительные действия:"
-    echo "    --update          Обновить бинарники"
-    echo "    --regenerate      Пересоздать Room ID"
-    echo "    --regenerate-key  Пересоздать ключ + Room ID"
-    echo "    --uninstall       Полное удаление"
-    echo "    --show-token      Показать токен"
+    echo "    --update                   Обновить бинарники"
+    echo "    --regenerate               Пересоздать Room ID"
+    echo "    --regenerate-key           Пересоздать ключ + Room ID"
+    echo "    --setup-domain <domain>    Привязать домен для подписок"
+    echo "    --remove-domain            Отвязать домен подписок"
+    echo "    --uninstall                Полное удаление"
+    echo "    --show-token               Показать токен"
     echo ""
     exit 0
 fi
@@ -361,6 +854,26 @@ while [ "$SUB_ENABLED" != "y" ] && [ "$SUB_ENABLED" != "n" ] && [ "$SUB_ENABLED"
     tty_read -rp "        Подписки [Y/n]: " SUB_ENABLED
     SUB_ENABLED="${SUB_ENABLED:-y}"
 done
+
+SETUP_DOMAIN_INSTALL=""
+if [ "$SUB_ENABLED" = "y" ] || [ "$SUB_ENABLED" = "Y" ]; then
+    echo ""
+    echo "        Привязка домена для подписок (HTTPS)."
+    echo "        Если есть домен — подписки будут по HTTPS:"
+    echo "          https://sub.example.com/sub/XXXXXX"
+    echo "        Если нет — подписки доступны по IP:"
+    echo "          http://IP:2096/sub/XXXXXX"
+    echo ""
+    WANT_DOMAIN=""
+    tty_read -rp "        Привязать домен? [y/N]: " WANT_DOMAIN
+    if [ "$WANT_DOMAIN" = "y" ] || [ "$WANT_DOMAIN" = "Y" ]; then
+        tty_read -rp "        Домен (напр. sub.example.com): " SETUP_DOMAIN_INSTALL
+        if [ -n "$SETUP_DOMAIN_INSTALL" ] && ! validate_domain "$SETUP_DOMAIN_INSTALL"; then
+            echo "        [!] Некорректный домен. Пропускаем привязку." >&2
+            SETUP_DOMAIN_INSTALL=""
+        fi
+    fi
+fi
 
 echo ""
 if [ -z "$SET_NAME" ]; then
@@ -649,3 +1162,9 @@ echo ""
 echo "  Дальнейшее управление — через Web UI."
 echo "  ═══════════════════════════════════════════"
 echo ""
+
+# ── Domain setup (if requested during install) ───────────────────────────────
+if [ -n "$SETUP_DOMAIN_INSTALL" ]; then
+    echo ""
+    do_setup_domain "$SETUP_DOMAIN_INSTALL"
+fi

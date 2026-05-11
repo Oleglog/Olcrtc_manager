@@ -74,6 +74,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/system/status", s.withAuth(s.withCORS(s.handleSystemStatus)))
 	s.mux.HandleFunc("/api/system/logs/", s.withAuth(s.withCORS(s.handleSystemLogs)))
 	s.mux.HandleFunc("/api/system/domain", s.withAuth(s.withCORS(s.handleSystemDomain)))
+	s.mux.HandleFunc("/api/system/sub-domain", s.withAuth(s.withCORS(s.handleSubDomain)))
 	s.mux.HandleFunc("/api/system/ports", s.withAuth(s.withCORS(s.handleSystemPorts)))
 
 	// Public subscription endpoint via admin UI.
