@@ -30,6 +30,9 @@ func main() {
 	)
 	flag.Parse()
 
+	// Strip quotes from domain (systemd may pass quoted empty string).
+	*domain = strings.Trim(*domain, `"' `)
+
 	if *showToken {
 		tok, err := admin.ReadAdminToken(*configDir)
 		if err != nil {
