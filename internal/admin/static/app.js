@@ -37,10 +37,24 @@ function el(type, cls, text) {
   return e;
 }
 
-function icon(name) {
-  const i = el('i', 'w-4 h-4');
-  i.setAttribute('data-lucide', name);
-  return i;
+function icon(name, sz) {
+  const size = sz || 16;
+  const svgs = {
+    'settings': '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>',
+    'log-out': '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>',
+    'copy': '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
+    'qr-code': '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="8" height="8"/><rect x="14" y="2" width="8" height="8"/><rect x="2" y="14" width="8" height="8"/><path d="M14 14h.01"/><path d="M18 14h.01"/><path d="M14 18h.01"/><path d="M18 18h.01"/><path d="M22 14v4a2 2 0 0 1-2 2h-2"/><path d="M10 22H6a2 2 0 0 1-2-2v-2"/></svg>',
+    'refresh-cw': '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>',
+    'square': '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>',
+    'play': '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>',
+    'sliders': '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>',
+    'trash-2': '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>',
+    'plus': '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
+    'eye': '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
+    'arrow-left': '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>',
+    'alert-circle': '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>'
+  };
+  return svgs[name] || '';
 }
 
 function fmtStatus(st) {
@@ -70,7 +84,7 @@ function render() {
   } else {
     renderDashboard(app);
   }
-  if (window.lucide) lucide.createIcons();
+  
 }
 
 window.addEventListener('popstate', render);
@@ -130,10 +144,10 @@ async function renderDashboard(app) {
   header.innerHTML = '<h1 class="text-xl font-bold">olcRTC Admin</h1>';
   const nav = el('div', 'flex gap-2');
   const settingsBtn = el('button', 'btn btn-secondary btn-sm');
-  settingsBtn.innerHTML = '<i data-lucide="settings" class="w-4 h-4"></i> Настройки';
+  settingsBtn.innerHTML = ''+icon('settings')+' Настройки';
   settingsBtn.onclick = () => route('/settings');
   const logoutBtn = el('button', 'btn btn-secondary btn-sm');
-  logoutBtn.innerHTML = '<i data-lucide="log-out" class="w-4 h-4"></i> Выход';
+  logoutBtn.innerHTML = ''+icon('log-out')+' Выход';
   logoutBtn.onclick = () => { token = ''; localStorage.removeItem('olcrtc_token'); route('/login'); };
   nav.appendChild(settingsBtn);
   nav.appendChild(logoutBtn);
@@ -183,30 +197,30 @@ async function renderDashboard(app) {
     const right = el('div', 'flex gap-2 flex-wrap');
 
     const uriBtn = el('button', 'btn btn-secondary btn-sm');
-    uriBtn.innerHTML = '<i data-lucide="copy" class="w-3 h-3"></i> URI';
+    uriBtn.innerHTML = ''+icon('copy')+' URI';
     uriBtn.onclick = () => { navigator.clipboard.writeText(inst.uri); showToast('URI скопирован'); };
 
     const qrBtn = el('button', 'btn btn-secondary btn-sm');
-    qrBtn.innerHTML = '<i data-lucide="qr-code" class="w-3 h-3"></i> QR';
+    qrBtn.innerHTML = ''+icon('qr-code')+' QR';
     qrBtn.onclick = () => showQRModal(inst.uri);
 
     const restartBtn = el('button', 'btn btn-secondary btn-sm');
-    restartBtn.innerHTML = '<i data-lucide="refresh-cw" class="w-3 h-3"></i>';
+    restartBtn.innerHTML = ''+icon('refresh-cw')+'';
     restartBtn.title = 'Перезапустить';
     restartBtn.onclick = async () => { await api('/instances/' + inst.id + '/restart', { method: 'POST' }); showToast('Перезапущено'); render(); };
 
     const stopBtn = el('button', 'btn btn-secondary btn-sm');
-    stopBtn.innerHTML = '<i data-lucide="square" class="w-3 h-3"></i>';
+    stopBtn.innerHTML = ''+icon('square')+'';
     stopBtn.title = 'Остановить';
     stopBtn.onclick = async () => { await api('/instances/' + inst.id + '/stop', { method: 'POST' }); showToast('Остановлено'); render(); };
 
     const startBtn = el('button', 'btn btn-success btn-sm');
-    startBtn.innerHTML = '<i data-lucide="play" class="w-3 h-3"></i>';
+    startBtn.innerHTML = ''+icon('play')+'';
     startBtn.title = 'Запустить';
     startBtn.onclick = async () => { await api('/instances/' + inst.id + '/start', { method: 'POST' }); showToast('Запущено'); render(); };
 
     const cfgBtn = el('button', 'btn btn-secondary btn-sm');
-    cfgBtn.innerHTML = '<i data-lucide="sliders" class="w-3 h-3"></i> Config';
+    cfgBtn.innerHTML = ''+icon('sliders')+' Config';
     cfgBtn.onclick = () => showConfigModal(inst);
 
     right.appendChild(uriBtn);
@@ -221,7 +235,7 @@ async function renderDashboard(app) {
 
     if (inst.id !== 0) {
       const delBtn = el('button', 'btn btn-danger btn-sm');
-      delBtn.innerHTML = '<i data-lucide="trash-2" class="w-3 h-3"></i>';
+      delBtn.innerHTML = ''+icon('trash-2')+'';
       delBtn.title = 'Удалить';
       delBtn.onclick = async () => {
         if (!confirm('Удалить инстанс #' + inst.id + '?')) return;
@@ -237,7 +251,7 @@ async function renderDashboard(app) {
   });
 
   const addInstBtn = el('button', 'btn btn-primary btn-sm mt-3');
-  addInstBtn.innerHTML = '<i data-lucide="plus" class="w-4 h-4"></i> Создать инстанс';
+  addInstBtn.innerHTML = ''+icon('plus')+' Создать инстанс';
   addInstBtn.onclick = async () => {
     await api('/instances', { method: 'POST' });
     showToast('Инстанс создан'); render();
@@ -266,15 +280,15 @@ async function renderDashboard(app) {
       const right = el('div', 'flex gap-2 flex-wrap');
 
       const viewBtn = el('button', 'btn btn-secondary btn-sm');
-      viewBtn.innerHTML = '<i data-lucide="eye" class="w-3 h-3"></i> Просмотр';
+      viewBtn.innerHTML = ''+icon('eye')+' Просмотр';
       viewBtn.onclick = () => window.open(subURL, '_blank');
 
       const addBtn = el('button', 'btn btn-secondary btn-sm');
-      addBtn.innerHTML = '<i data-lucide="plus" class="w-3 h-3"></i> Инстанс';
+      addBtn.innerHTML = ''+icon('plus')+' Инстанс';
       addBtn.onclick = () => showAddToSubModal(sub, instances);
 
       const delBtn = el('button', 'btn btn-danger btn-sm');
-      delBtn.innerHTML = '<i data-lucide="trash-2" class="w-3 h-3"></i>';
+      delBtn.innerHTML = ''+icon('trash-2')+'';
       delBtn.title = 'Удалить';
       delBtn.onclick = async () => {
         if (!confirm('Удалить подписку ' + sub.slug + '?')) return;
@@ -292,7 +306,7 @@ async function renderDashboard(app) {
   }
 
   const addSubBtn = el('button', 'btn btn-primary btn-sm mt-3');
-  addSubBtn.innerHTML = '<i data-lucide="plus" class="w-4 h-4"></i> Создать подписку';
+  addSubBtn.innerHTML = ''+icon('plus')+' Создать подписку';
   addSubBtn.onclick = () => showCreateSubModal();
 
   subSection.appendChild(subList);
@@ -385,7 +399,7 @@ async function renderSettings(app) {
 
   // Back
   const backBtn = el('button', 'btn btn-secondary mt-4');
-  backBtn.innerHTML = '<i data-lucide="arrow-left" class="w-4 h-4"></i> Назад';
+  backBtn.innerHTML = ''+icon('arrow-left')+' Назад';
   backBtn.onclick = () => route('/');
   card.appendChild(backBtn);
 
@@ -401,7 +415,7 @@ function showModal(content) {
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
   overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
-  if (window.lucide) lucide.createIcons();
+  
   return overlay;
 }
 
@@ -466,7 +480,10 @@ function showConfigModal(inst) {
     div.appendChild(row);
   });
 
-  // Debug checkbox
+  // Proxy hint
+  const proxyHint = el('div', 'mb-3 text-xs text-gray-500 bg-gray-800 p-2 rounded');
+  proxyHint.innerHTML = '<b>Прокси:</b><br>SOCKS — для signaling (RU IP).<br>WARP — для клиентского трафика (Cloudflare IP).<br>Установите wireproxy или 3x-ui WARP inbound на 127.0.0.1:40000, затем укажите здесь <code>127.0.0.1:40000</code>.';
+  div.appendChild(proxyHint);
   const debugRow = el('div', 'mb-3 flex items-center gap-2');
   const debugCb = el('input', '');
   debugCb.type = 'checkbox';

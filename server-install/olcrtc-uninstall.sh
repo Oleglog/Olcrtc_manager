@@ -34,13 +34,16 @@ echo "============================================================"
 echo ""
 echo "  This will remove:"
 echo "    - systemd service olcrtc-server"
+echo "    - systemd service olcrtc-admin"
 if [ "$extra_count" -gt 0 ]; then
     echo "    - $extra_count additional instance(s) (olcrtc-server@*.service)"
 fi
 echo "    - /usr/local/bin/olcrtc"
+echo "    - /usr/local/bin/olcrtc-admin"
 echo "    - /usr/local/bin/olcrtc-launcher"
-echo "    - /etc/olcrtc/  (all configs + encryption keys)"
+echo "    - /etc/olcrtc/  (all configs + encryption keys + admin.env)"
 echo "    - /var/lib/olcrtc/ and /var/lib/olcrtc-*/"
+echo "    - /var/lib/olcrtc/admin-tls/ (certificates)"
 echo "    - system user 'olcrtc'"
 echo ""
 
@@ -64,6 +67,15 @@ echo "[*] Останавливаю и удаляю основной сервис
 systemctl disable --now olcrtc-server 2>/dev/null || true
 systemctl reset-failed olcrtc-server 2>/dev/null || true
 rm -f /etc/systemd/system/olcrtc-server.service
+
+echo "[*] Останавливаю и удаляю Admin UI..."
+systemctl disable --now olcrtc-admin 2>/dev/null || true
+systemctl reset-failed olcrtc-admin 2>/dev/null || true
+rm -f /etc/systemd/system/olcrtc-admin.service
+
+echo "[*] Останавливаю и удаляю wireproxy-warp (если установлен)..."
+systemctl disable --now wireproxy-warp 2>/dev/null || true
+rm -f /etc/systemd/system/wireproxy-warp.service
 
 echo "[*] Останавливаю и удаляю все дополнительные инстансы..."
 for d in /etc/olcrtc/*/env; do
@@ -96,7 +108,7 @@ if [ "$sub_db_found" -eq 1 ]; then
 fi
 
 echo "[*] Удаляю файлы..."
-rm -rf /etc/olcrtc /var/lib/olcrtc /var/lib/olcrtc-* /usr/local/bin/olcrtc /usr/local/bin/olcrtc-launcher
+rm -rf /etc/olcrtc /var/lib/olcrtc /var/lib/olcrtc-* /usr/local/bin/olcrtc /usr/local/bin/olcrtc-admin /usr/local/bin/olcrtc-launcher /usr/local/bin/wireproxy /etc/olcrtc
 
 echo "[*] Удаляю пользователя olcrtc..."
 userdel olcrtc 2>/dev/null || true
