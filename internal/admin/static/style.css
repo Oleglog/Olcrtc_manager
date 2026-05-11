@@ -21,3 +21,8 @@ pre.logs { background: #111827; padding: 1rem; border-radius: 0.5rem; overflow-x
 .qr-wrap { background: #ffffff; padding: 16px; border-radius: 0.5rem; display: inline-block; box-shadow: 0 0 0 4px #ffffff; }
 input, select { background: #111827; border: 1px solid #374151; color: #f3f4f6; padding: 0.5rem 0.75rem; border-radius: 0.375rem; width: 100%; }
 input:focus, select:focus { outline: none; border-color: #2563eb; }
+.radio-row { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.5rem; border-radius: 0.375rem; transition: background .15s; }
+.radio-row:hover { background: #374151; }
+.radio-row input[type="radio"] { width: 1.1rem; height: 1.1rem; accent-color: #2563eb; cursor: pointer; flex-shrink: 0; }
+.slug-row { display: flex; gap: 0.5rem; align-items: stretch; }
+.slug-row input { flex: 1; margin-bottom: 0; }

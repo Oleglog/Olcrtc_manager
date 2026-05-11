@@ -293,8 +293,12 @@ async function renderDashboard(app) {
       viewBtn.innerHTML = ''+icon('eye')+' Просмотр';
       viewBtn.onclick = () => window.open(subURL, '_blank');
 
+      const instBtn = el('button', 'btn btn-secondary btn-sm');
+      instBtn.innerHTML = ''+icon('settings')+' Инстансы';
+      instBtn.onclick = () => showSubInstancesModal(sub);
+
       const addBtn = el('button', 'btn btn-secondary btn-sm');
-      addBtn.innerHTML = ''+icon('plus')+' Инстанс';
+      addBtn.innerHTML = ''+icon('plus')+' Добавить';
       addBtn.onclick = () => showAddToSubModal(sub, instances);
 
       const delBtn = el('button', 'btn btn-danger btn-sm');
@@ -307,6 +311,7 @@ async function renderDashboard(app) {
       };
 
       right.appendChild(viewBtn);
+      right.appendChild(instBtn);
       right.appendChild(addBtn);
       right.appendChild(delBtn);
       row.appendChild(left);
@@ -617,14 +622,14 @@ function showAddToSubModal(sub, instances) {
   const list = el('div', 'space-y-2 mb-3');
   const radios = [];
   instances.forEach(inst => {
-    const row = el('label', 'flex items-center gap-2 cursor-pointer p-2 rounded hover:bg-gray-700');
+    const row = el('label', 'radio-row');
     const rb = el('input', ''); rb.type = 'radio'; rb.name = 'inst'; rb.value = inst.id;
     row.appendChild(rb);
     row.appendChild(el('span', 'text-sm', `${inst.label} — ${inst.carrier} ${inst.transport}`));
     list.appendChild(row);
     radios.push(rb);
   });
-  const manualRow = el('label', 'flex items-center gap-2 cursor-pointer p-2 rounded hover:bg-gray-700');
+  const manualRow = el('label', 'radio-row');
   const manualRb = el('input', ''); manualRb.type = 'radio'; manualRb.name = 'inst'; manualRb.value = 'manual';
   manualRow.appendChild(manualRb);
   manualRow.appendChild(el('span', 'text-sm', 'Ввести URI вручную'));
@@ -677,10 +682,22 @@ function showCreateSubModal() {
   div.innerHTML = '<h3 class="text-lg font-semibold mb-3">Создать подписку</h3>';
   const nameInp = el('input', 'mb-3');
   nameInp.placeholder = 'Имя подписки';
-  const slugInp = el('input', 'mb-3');
+  const slugRow = el('div', 'slug-row mb-3');
+  const slugInp = el('input', '');
   slugInp.placeholder = 'Slug (оставьте пустым для автогенерации)';
+  const randBtn = el('button', 'btn btn-secondary btn-sm');
+  randBtn.textContent = 'Случайный';
+  randBtn.onclick = () => {
+    const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let s = '';
+    const len = 5 + Math.floor(Math.random() * 6);
+    for (let i = 0; i < len; i++) s += chars[Math.floor(Math.random() * chars.length)];
+    slugInp.value = s;
+  };
+  slugRow.appendChild(slugInp);
+  slugRow.appendChild(randBtn);
   div.appendChild(nameInp);
-  div.appendChild(slugInp);
+  div.appendChild(slugRow);
 
   const btnRow = el('div', 'flex gap-2 justify-end');
   const createBtn = el('button', 'btn btn-primary');
@@ -699,6 +716,49 @@ function showCreateSubModal() {
   btnRow.appendChild(createBtn);
   btnRow.appendChild(cancelBtn);
   div.appendChild(btnRow);
+}
+
+async function showSubInstancesModal(sub) {
+  const div = el('div', '');
+  div.innerHTML = `<h3 class="text-lg font-semibold mb-3">Инстансы в подписке «${sub.name}»</h3>`;
+  const list = el('div', 'space-y-2 mb-3');
+  list.appendChild(el('div', 'text-sm text-gray-400', 'Загрузка...'));
+  div.appendChild(list);
+  const btnRow = el('div', 'flex gap-2 justify-end');
+  const closeBtn = el('button', 'btn btn-primary btn-sm');
+  closeBtn.textContent = 'Закрыть';
+  const overlay = showModal(div);
+  closeBtn.onclick = () => closeModal(overlay);
+  btnRow.appendChild(closeBtn);
+  div.appendChild(btnRow);
+
+  try {
+    const insts = await api('/subs/' + sub.slug + '/instances');
+    list.innerHTML = '';
+    if (!insts || insts.length === 0) {
+      list.appendChild(el('div', 'text-gray-400 text-sm', 'Нет инстансов'));
+    } else {
+      insts.forEach(inst => {
+        const row = el('div', 'flex items-center justify-between gap-2 p-2 rounded border border-gray-700 bg-gray-800');
+        const left = el('div', 'flex-1 text-sm');
+        left.innerHTML = `<div class="text-xs text-gray-400">ID: ${inst.id}</div><div class="break-all">${inst.raw_uri || inst.label || '-'}</div>`;
+        const delBtn = el('button', 'btn btn-danger btn-sm');
+        delBtn.innerHTML = ''+icon('trash-2')+'';
+        delBtn.title = 'Убрать из подписки';
+        delBtn.onclick = async () => {
+          if (!confirm('Убрать инстанс из подписки?')) return;
+          await api('/subs/' + sub.slug + '/instances/' + inst.id, { method: 'DELETE' });
+          showToast('Убрано'); closeModal(overlay); render();
+        };
+        row.appendChild(left);
+        row.appendChild(delBtn);
+        list.appendChild(row);
+      });
+    }
+  } catch (e) {
+    list.innerHTML = '';
+    list.appendChild(el('div', 'text-red-400 text-sm', 'Ошибка: ' + e.message));
+  }
 }
 
 async function showLogsModal(service) {

@@ -18,10 +18,12 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"net/http"
 	"strconv"
@@ -57,6 +59,8 @@ func (s *Server) Start(ctx context.Context) error {
 	// Management API (localhost-gated).
 	mux.HandleFunc("/api/subscriptions", s.localhostOnly(s.handleSubscriptions))
 	mux.HandleFunc("/api/subscriptions/", s.localhostOnly(s.handleSubscriptionsSlug))
+	mux.HandleFunc("/api/subscriptions/export", s.localhostOnly(s.handleExport))
+	mux.HandleFunc("/api/subscriptions/import", s.localhostOnly(s.handleImport))
 	mux.HandleFunc("/api/export", s.localhostOnly(s.handleExport))
 	mux.HandleFunc("/api/import", s.localhostOnly(s.handleImport))
 
@@ -358,32 +362,26 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 }
 
 func generateSlug(name string) string {
-	translit := map[rune]string{
-		'а': "a", 'б': "b", 'в': "v", 'г': "g", 'д': "d", 'е': "e", 'ё': "yo",
-		'ж': "zh", 'з': "z", 'и': "i", 'й': "y", 'к': "k", 'л': "l", 'м': "m",
-		'н': "n", 'о': "o", 'п': "p", 'р': "r", 'с': "s", 'т': "t", 'у': "u",
-		'ф': "f", 'х': "kh", 'ц': "ts", 'ч': "ch", 'ш': "sh", 'щ': "shch",
-		'ъ': "", 'ы': "y", 'ь': "", 'э': "e", 'ю': "yu", 'я': "ya",
+	return randomSlug()
+}
+
+func randomSlug() string {
+	return randomString(5 + int(randInt(6)))
+}
+
+func randomString(n int) string {
+	const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	b := make([]byte, n)
+	for i := range b {
+		idx, _ := rand.Int(rand.Reader, big.NewInt(int64(len(letters))))
+		b[i] = letters[idx.Int64()]
 	}
-	var b strings.Builder
-	for _, r := range strings.ToLower(name) {
-		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
-			b.WriteRune(r)
-		} else if c, ok := translit[r]; ok {
-			b.WriteString(c)
-		} else {
-			b.WriteByte('-')
-		}
-	}
-	slug := b.String()
-	for strings.Contains(slug, "--") {
-		slug = strings.ReplaceAll(slug, "--", "-")
-	}
-	slug = strings.Trim(slug, "-")
-	if slug == "" {
-		slug = "sub-" + strconv.FormatInt(time.Now().Unix(), 10)
-	}
-	return slug
+	return string(b)
+}
+
+func randInt(max int64) int64 {
+	n, _ := rand.Int(rand.Reader, big.NewInt(max))
+	return n.Int64()
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
