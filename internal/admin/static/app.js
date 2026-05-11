@@ -276,7 +276,7 @@ async function renderDashboard(app) {
 
   if (subsError) {
     subList.appendChild(el('div', 'text-yellow-400 text-sm mb-2', 'Сервис подписок недоступен. Проверьте, что olcrtc-server запущен с OLCRTC_SUB_ENABLED=1.'));
-  } else if (subs.length === 0) {
+  } else if (!subs || subs.length === 0) {
     subList.appendChild(el('div', 'text-gray-400 text-sm', 'Нет подписок'));
   } else {
     subs.forEach(sub => {

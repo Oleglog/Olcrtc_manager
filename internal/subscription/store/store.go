@@ -109,7 +109,7 @@ func (s *Store) ListSubscriptions() ([]model.Subscription, error) {
 	}
 	defer rows.Close()
 
-	var subs []model.Subscription
+	subs := make([]model.Subscription, 0)
 	for rows.Next() {
 		var sub model.Subscription
 		if err := rows.Scan(&sub.ID, &sub.Slug, &sub.Name, &sub.CreatedAt); err != nil {
