@@ -152,20 +152,22 @@ func (s *Server) withCORS(next http.HandlerFunc) http.HandlerFunc {
 
 func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Rate-limit check for bad attempts.
 		host, _, _ := net.SplitHostPort(r.RemoteAddr)
-		if s.isRateLimited(host) {
-			http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
-			return
-		}
 
 		auth := r.Header.Get("Authorization")
 		expected := "Bearer " + s.cfg.Token
 		if auth != expected {
+			if s.isRateLimited(host) {
+				http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
+				return
+			}
 			s.recordBadAttempt(host)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
+
+		// Successful auth: clear any previous bad attempts for this IP.
+		s.clearBadAttempt(host)
 		next(w, r)
 	}
 }
@@ -183,6 +185,12 @@ func (s *Server) isRateLimited(ip string) bool {
 func (s *Server) recordBadAttempt(ip string) {
 	s.mu.Lock()
 	s.lastBadIPs[ip] = time.Now()
+	s.mu.Unlock()
+}
+
+func (s *Server) clearBadAttempt(ip string) {
+	s.mu.Lock()
+	delete(s.lastBadIPs, ip)
 	s.mu.Unlock()
 }
 
