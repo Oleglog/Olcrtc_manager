@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/openlibrecommunity/olcrtc/internal/admin/domain"
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 )
 
@@ -188,6 +189,15 @@ func (s *Server) unbindDomain(w http.ResponseWriter, r *http.Request) {
 		"ok":      true,
 		"message": "Домен отвязан. Перезапустите olcrtc-admin для возврата к self-signed.",
 	})
+}
+
+func (s *Server) handleSystemDomainDetect(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	profile := domain.Detect(s.cfg.PublicIP)
+	writeJSON(w, http.StatusOK, profile)
 }
 
 func (s *Server) handleSystemPorts(w http.ResponseWriter, r *http.Request) {
