@@ -281,10 +281,7 @@ async function renderDashboard(app) {
   } else {
     subs.forEach(sub => {
       const row = el('div', 'flex flex-col md:flex-row md:items-center justify-between gap-2 p-3 rounded border border-gray-700 bg-gray-800');
-      // Prefer the bound-domain URL (public_url) over the admin URL so that
-      // links use the LE-signed domain port (e.g. :8444) instead of the
-      // admin self-signed port (e.g. :8443).
-      const subURL = `${sys.public_url || sys.admin_url || location.origin}/sub/${sub.slug}`;
+      const subURL = `${sys.admin_url || location.origin}/sub/${sub.slug}`;
       const left = el('div', 'flex-1');
       left.innerHTML = `
         <div class="font-medium">${sub.name} <span class="text-gray-400">[${sub.slug}]</span></div>
@@ -369,75 +366,37 @@ async function renderSettings(app) {
   // Domain
   const domBlock = el('div', '');
   domBlock.innerHTML = '<h3 class="font-semibold mb-2">Домен</h3>';
-  if (sys.domain) {
-    const info = el('div', 'text-sm space-y-1 mb-2');
-    info.innerHTML = '<div class="text-gray-400">Текущий: <span class="text-white font-mono">' + sys.domain + '</span></div>';
-    if (sys.domain_strategy) info.innerHTML += '<div class="text-gray-400">Стратегия: <span class="text-white">' + sys.domain_strategy + '</span></div>';
-    if (sys.public_url) info.innerHTML += '<div class="text-gray-400">URL подписок: <span class="text-green-400 font-mono">' + sys.public_url + '/sub/{slug}</span></div>';
-    domBlock.appendChild(info);
-    const unbindBtn = el('button', 'btn btn-danger mt-2');
-    unbindBtn.textContent = 'Отвязать домен';
-    unbindBtn.onclick = async () => {
-      if (!confirm('Отвязать домен? Caddy-юнит будет остановлен, сертификат останется.')) return;
-      try {
-        await api('/system/domain', { method: 'DELETE' });
-        render();
-      } catch (e) { alert(e.message); }
-    };
-    domBlock.appendChild(unbindBtn);
-  } else {
-    const domCurrent = el('div', 'text-sm text-gray-400 mb-2', 'Текущий: (не привязан)');
-    domBlock.appendChild(domCurrent);
-    const domInp = el('input', '');
-    domInp.placeholder = 'sub.example.com';
-    const emailInp = el('input', 'mt-1');
-    emailInp.placeholder = 'ACME email (рекомендуется)';
-    // Strategy selector
-    const stratSel = el('select', 'mt-1');
-    stratSel.innerHTML = '<option value="auto">Автоматически</option>';
-    // Load detect profile to populate strategies
-    let profile = null;
-    try { profile = await api('/system/domain/detect'); } catch (e) {}
-    if (profile && profile.strategies) {
-      profile.strategies.forEach(function(s) {
-        const opt = document.createElement('option');
-        opt.value = s.name;
-        opt.textContent = s.title + (s.recommended ? ' (рекомендуется)' : '') + (!s.available ? ' (недоступна)' : '');
-        opt.disabled = !s.available;
-        stratSel.appendChild(opt);
+  const domCurrent = el('div', 'text-sm text-gray-400 mb-2', sys.domain ? 'Текущий: ' + sys.domain : 'Текущий: (не привязан)');
+  const domInp = el('input', '');
+  domInp.placeholder = 'sub.example.com';
+  const domBtn = el('button', 'btn btn-primary mt-2');
+  domBtn.textContent = 'Привязать домен';
+  domBtn.onclick = async () => {
+    try {
+      const res = await api('/system/domain', {
+        method: 'POST',
+        body: JSON.stringify({ domain: domInp.value })
       });
-    }
-    const domBtn = el('button', 'btn btn-primary mt-2');
-    domBtn.textContent = 'Привязать домен';
-    domBtn.onclick = async () => {
-      if (!domInp.value) { alert('Введите домен'); return; }
-      domBtn.disabled = true;
-      domBtn.textContent = 'Привязка...';
+      alert(res.message || 'Домен привязан');
+      render();
+    } catch (e) {
       try {
-        const res = await api('/system/domain', {
-          method: 'POST',
-          body: JSON.stringify({
-            domain: domInp.value,
-            email: emailInp.value,
-            strategy: stratSel.value
-          })
-        });
-        alert(res.message || 'Домен привязан');
-        render();
-      } catch (e) {
-        try {
-          const err = JSON.parse(e.message);
-          alert(err.message || e.message);
-        } catch (_) { alert(e.message); }
-        domBtn.disabled = false;
-        domBtn.textContent = 'Привязать домен';
-      }
-    };
-    domBlock.appendChild(domInp);
-    domBlock.appendChild(emailInp);
-    domBlock.appendChild(stratSel);
-    domBlock.appendChild(domBtn);
-  }
+        const err = JSON.parse(e.message);
+        alert(err.message || e.message);
+      } catch { alert(e.message); }
+    }
+  };
+  const unbindBtn = el('button', 'btn btn-danger mt-2 ml-2');
+  unbindBtn.textContent = 'Отвязать домен';
+  unbindBtn.onclick = async () => {
+    if (!confirm('Отвязать домен?')) return;
+    await api('/system/domain', { method: 'DELETE' });
+    render();
+  };
+  domBlock.appendChild(domCurrent);
+  domBlock.appendChild(domInp);
+  domBlock.appendChild(domBtn);
+  if (sys.domain) domBlock.appendChild(unbindBtn);
   card.appendChild(domBlock);
 
   // Port
