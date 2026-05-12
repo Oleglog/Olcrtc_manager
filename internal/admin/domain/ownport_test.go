@@ -1,8 +1,11 @@
 package domain
 
 import (
+	"fmt"
+	"net"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRenderCaddyfile_ContainsExpectedKeys(t *testing.T) {
@@ -120,5 +123,55 @@ func TestPickOwnPort_SkipsRealityDestPort(t *testing.T) {
 	got := pickOwnPort(profile)
 	if got == OwnPortDefault {
 		t.Errorf("pickOwnPort should skip %d when Reality uses it", OwnPortDefault)
+	}
+}
+
+func TestWaitPortFree_ReturnsImmediatelyWhenFree(t *testing.T) {
+	// Pick a free port.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close()
+
+	start := time.Now()
+	if err := waitPortFree(port, 2*time.Second); err != nil {
+		t.Errorf("waitPortFree on free port returned error: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Errorf("waitPortFree on free port took %s, expected immediate return", elapsed)
+	}
+}
+
+func TestWaitPortFree_TimesOutWhenBusy(t *testing.T) {
+	// Hold a port open and verify waitPortFree times out.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer func() { _ = ln.Close() }()
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	err = waitPortFree(port, 300*time.Millisecond)
+	if err == nil {
+		t.Errorf("waitPortFree on busy port should have timed out")
+	}
+	want := fmt.Sprintf("port :%d", port)
+	if err != nil && !strings.Contains(err.Error(), want) {
+		t.Errorf("waitPortFree error should mention port number, got: %v", err)
+	}
+}
+
+func TestResolveCaddyServiceName_NoCaddyReturnsEmpty(t *testing.T) {
+	// On a runner without caddy installed, this should be "".
+	// If caddy happens to be installed and active, the test is informational
+	// only — we still assert the return is one of the known names.
+	got := resolveCaddyServiceName()
+	switch got {
+	case "", "caddy", "caddy.service":
+		// ok
+	default:
+		t.Errorf("resolveCaddyServiceName() = %q, want one of \"\", \"caddy\", \"caddy.service\"", got)
 	}
 }

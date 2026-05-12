@@ -185,8 +185,33 @@ func acquireCert(profile *HostProfile, domain, email string, r Reporter) (cert, 
 		args = append(args, "--webroot", "-w", acmeWebroot)
 		cleanup = func() { /* keep snippet — harmless and useful for renewals */ }
 	case ownerCaddy:
-		return "", "", errors.New(":80 занят caddy — автоматическая выдача сертификата не реализована (PR-2). " +
-			"Временно остановите внешний caddy и повторите, либо используйте --strategy clean")
+		if !profile.CaddyManagedBySystemd {
+			return "", "", errors.New(":80 занят caddy, и сервис не управляется systemd — " +
+				"остановите caddy вручную и повторите.")
+		}
+		serviceName := resolveCaddyServiceName()
+		if serviceName == "" {
+			return "", "", errors.New(":80 занят caddy, но активный systemd unit не найден — " +
+				"остановите caddy вручную и повторите.")
+		}
+		r.Emit(Event{Kind: EventStep, StepID: "stop_caddy",
+			Title: fmt.Sprintf("Временно останавливаю %s для выдачи сертификата", serviceName)})
+		if err := systemctl("stop", serviceName); err != nil {
+			return "", "", fmt.Errorf("stop %s: %w", serviceName, err)
+		}
+		// Always try to restart caddy when this function returns, regardless of certbot result.
+		defer func() {
+			r.Emit(Event{Kind: EventStep, StepID: "start_caddy",
+				Title: fmt.Sprintf("Запускаю %s обратно", serviceName)})
+			if startErr := systemctl("start", serviceName); startErr != nil {
+				r.Emit(Event{Kind: EventLog, Message: fmt.Sprintf(
+					"warn: не удалось запустить %s: %v — запустите вручную", serviceName, startErr)})
+			}
+		}()
+		if err := waitPortFree(80, 5*time.Second); err != nil {
+			return "", "", fmt.Errorf("после остановки %s порт :80 не освободился: %w", serviceName, err)
+		}
+		args = append(args, "--standalone", "--preferred-challenges", "http")
 	default:
 		return "", "", fmt.Errorf(":80 занят процессом %q — автоматическая выдача сертификата не поддержана", profile.Port80Owner)
 	}
@@ -248,6 +273,32 @@ func portIsFree(port int) bool {
 	}
 	_ = ln.Close()
 	return true
+}
+
+// waitPortFree polls until the given local TCP port becomes free, or until
+// the timeout elapses. Used after stopping an external service that owns
+// the port so that certbot --standalone can bind to it.
+func waitPortFree(port int, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if portIsFree(port) {
+			return nil
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return fmt.Errorf("port :%d still busy after %s", port, timeout)
+}
+
+// resolveCaddyServiceName returns the active caddy systemd unit name, or
+// "" if no caddy service is currently active. Tries common unit names that
+// distros use for the upstream caddy package.
+func resolveCaddyServiceName() string {
+	for _, name := range []string{"caddy.service", "caddy"} {
+		if isSystemdServiceActive(name) {
+			return name
+		}
+	}
+	return ""
 }
 
 func portUsedByProfile(profile *HostProfile, port int) bool {
