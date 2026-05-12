@@ -5,7 +5,7 @@ import requests
 from livekit import rtc
 
 API_BASE = "https://stream.wb.ru"
-WS_URL = "wss://rtc-el-01.wb.ru"
+WS_URL = "wss://wbstream01-el.wb.ru:7880"
 
 def _get_room_token(room_id: str, display_name: str) -> tuple[str, str]:
     headers = {"User-Agent": "Mozilla/5.0 (Linux x86_64)", "Content-Type": "application/json"}
@@ -30,7 +30,7 @@ def _get_room_token(room_id: str, display_name: str) -> tuple[str, str]:
         
     print(f"\n[3/3] Fetching LiveKit token...")
     requests.post(f"{API_BASE}/api-room/api/v1/room/{room_id}/join", json={}, headers=headers).raise_for_status()
-    tok_req = requests.get(f"{API_BASE}/api-room-manager/v2/room/{room_id}/connection-details", params={"deviceType": "PARTICIPANT_DEVICE_TYPE_WEB_DESKTOP", "displayName": display_name}, headers=headers)
+    tok_req = requests.get(f"{API_BASE}/api-room-manager/api/v1/room/{room_id}/token", params={"deviceType": "PARTICIPANT_DEVICE_TYPE_WEB_DESKTOP", "displayName": display_name}, headers=headers)
     tok_req.raise_for_status()
     token_data = tok_req.json()
     print(" :P Token received")
