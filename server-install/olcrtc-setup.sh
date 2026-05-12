@@ -463,6 +463,25 @@ elif [ "$DO_REGENERATE" -eq 0 ] && [ -f "$ENV_FILE" ]; then
     [ -n "$EXISTING_ROOM" ] && ROOM_ID="$EXISTING_ROOM"
 fi
 
+# Subscription server port. Default 2096; auto-pick if occupied (e.g. by 3x-ui).
+SUB_PORT=2096
+if timeout 1 bash -c "</dev/tcp/127.0.0.1/${SUB_PORT}" 2>/dev/null; then
+    # 2096 busy — pick first free fallback.
+    SUB_PORT=""
+    for p in 2097 2099 3096 3097 3099 4096 4097; do
+        if ! timeout 1 bash -c "</dev/tcp/127.0.0.1/${p}" 2>/dev/null; then
+            SUB_PORT=$p; break
+        fi
+    done
+    if [ -z "$SUB_PORT" ]; then
+        echo "⚠ Не удалось найти свободный порт для sub-сервера (проверены 2096–4097)." >&2
+        echo "  Отредактируй OLCRTC_SUB_PORT вручную в $ADMIN_ENV и $ENV_FILE." >&2
+        SUB_PORT=2096
+    else
+        echo "  ℹ Порт 2096 занят, sub-сервер будет слушать на :$SUB_PORT"
+    fi
+fi
+
 # Main env file.
 SUB_ENABLED_VAL=""
 if [ "$SUB_ENABLED" = "y" ] || [ "$SUB_ENABLED" = "Y" ]; then SUB_ENABLED_VAL="1"; fi
@@ -474,6 +493,7 @@ OLCRTC_KEY=$KEY
 OLCRTC_DNS=$DNS_DEFAULT
 OLCRTC_NAME=$SET_NAME
 OLCRTC_SUB_ENABLED=$SUB_ENABLED_VAL
+OLCRTC_SUB_PORT=$SUB_PORT
 EOF
 chown root:olcrtc "$ENV_FILE"
 chmod 0640 "$ENV_FILE"
@@ -492,12 +512,11 @@ else
 fi
 ADMIN_TOKEN="$(openssl rand -hex 32)"
 OLCRTC_ADMIN_DOMAIN=""
-OLCRTC_SUB_PORT=2096
 cat > "$ADMIN_ENV" <<EOF
 OLCRTC_ADMIN_PORT=${ADMIN_PORT}
 OLCRTC_ADMIN_TOKEN=${ADMIN_TOKEN}
 OLCRTC_ADMIN_DOMAIN=
-OLCRTC_SUB_PORT=2096
+OLCRTC_SUB_PORT=$SUB_PORT
 EOF
 chmod 0600 "$ADMIN_ENV"
 
