@@ -1,8 +1,8 @@
 package admin
 
 import (
+	"context"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -54,6 +54,21 @@ func (s *Server) handleSystemStatus(w http.ResponseWriter, r *http.Request) {
 	mainEnv := InstanceEnvPath(s.cfg.ConfigDir, 0)
 	vals := ReadInstanceEnv(mainEnv)
 
+	// Public subscription URL: host (domain if bound, else IP) +
+	// :domain_port if set, else :admin_port. /sub/{slug} is appended by callers.
+	publicHost := s.cfg.Domain
+	if publicHost == "" {
+		publicHost = s.cfg.PublicIP
+	}
+	publicPort := s.cfg.Port
+	if s.cfg.DomainPort > 0 {
+		publicPort = s.cfg.DomainPort
+	}
+	publicURL := fmt.Sprintf("https://%s:%d", publicHost, publicPort)
+	if publicPort == 443 {
+		publicURL = fmt.Sprintf("https://%s", publicHost)
+	}
+
 	result := map[string]any{
 		"version":           "0.4.0",
 		"admin_version":     "0.1.0",
@@ -67,11 +82,14 @@ func (s *Server) handleSystemStatus(w http.ResponseWriter, r *http.Request) {
 		"socks_proxy":       vals["OLCRTC_SOCKS_PROXY"],
 		"warp_proxy":        vals["OLCRTC_WARP_PROXY"],
 		"domain":            s.cfg.Domain,
+		"domain_port":       s.cfg.DomainPort,
+		"domain_strategy":   s.cfg.DomainStrategy,
 		"tls_mode":          tlsMode,
 		"tls_expires":       tlsExpires,
 		"instances_total":   len(ids),
 		"instances_running": running,
 		"admin_url":         fmt.Sprintf("https://%s:%d", adminDomain, s.cfg.Port),
+		"public_url":        publicURL,
 	}
 	writeJSON(w, http.StatusOK, result)
 }
@@ -116,7 +134,10 @@ func (s *Server) handleSystemDomain(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) bindDomain(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Domain string `json:"domain"`
+		Domain   string `json:"domain"`
+		Email    string `json:"email"`
+		Strategy string `json:"strategy"` // "auto" | "clean" | "own-port" | "sni-mux"
+		Port     int    `json:"port"`     // 0 = auto-pick (own-port)
 	}
 	if err := readJSON(r, &req); err != nil {
 		http.Error(w, "Bad Request", http.StatusBadRequest)
@@ -127,67 +148,84 @@ func (s *Server) bindDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// DNS check.
-	ips, err := net.LookupHost(req.Domain)
+	// Collect progress events for the JSON response (no SSE yet; we send the
+	// full event log when done so the UI can render a summary).
+	var events []domain.Event
+	reporter := domain.FuncReporter(func(ev domain.Event) {
+		events = append(events, ev)
+	})
+
+	res, err := domain.Apply(r.Context(), domain.BindParams{
+		Domain:   req.Domain,
+		Email:    req.Email,
+		Strategy: req.Strategy,
+		SubPort:  s.cfg.SubPort,
+		PublicIP: s.cfg.PublicIP,
+		Port:     req.Port,
+	}, reporter)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
-			"error":   "dns_lookup_failed",
-			"message": "Не удалось разрешить DNS для домена",
-		})
-		return
-	}
-	found := false
-	for _, ip := range ips {
-		if ip == s.cfg.PublicIP {
-			found = true
-			break
-		}
-	}
-	if !found {
-		writeJSON(w, http.StatusBadRequest, map[string]any{
-			"error":   "dns_mismatch",
-			"message": "DNS A-запись не указывает на IP этого сервера",
-			"hint":    fmt.Sprintf("Ожидался IP %s, получены: %v", s.cfg.PublicIP, ips),
+			"error":   "bind_failed",
+			"message": err.Error(),
+			"events":  events,
 		})
 		return
 	}
 
-	// Check port availability.
-	free80 := IsPortFree("", 80)
-	free443 := IsPortFree("", 443)
-	if !free443 && !free80 {
-		writeJSON(w, http.StatusConflict, map[string]any{
-			"error":    "ports_busy",
-			"message":  "Порты 80 и 443 заняты. Настройте reverse-proxy вручную.",
-			"hint":     "Обнаружен nginx с SNI multiplexer (stream). Инструкция: ...",
-			"docs_url": "https://github.com/openlibrecommunity/olcrtc/blob/master/server-install/README.md",
-		})
-		return
-	}
-
+	// Persist state.
 	s.cfg.Domain = req.Domain
+	s.cfg.DomainPort = res.Port
+	s.cfg.DomainStrategy = res.Strategy
 	if err := WriteAdminEnv(s.cfg.ConfigDir, s.cfg.Port, s.cfg.Token, req.Domain, s.cfg.SubPort); err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		http.Error(w, "Internal Server Error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	_ = SetAdminEnvKey(s.cfg.ConfigDir, "OLCRTC_DOMAIN_PORT", fmt.Sprintf("%d", res.Port))
+	_ = SetAdminEnvKey(s.cfg.ConfigDir, "OLCRTC_DOMAIN_STRATEGY", res.Strategy)
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":      true,
-		"domain":  req.Domain,
-		"url":     fmt.Sprintf("https://%s:%d", req.Domain, s.cfg.Port),
-		"message": "Домен привязан. Перезапустите olcrtc-admin для применения сертификата Let's Encrypt.",
+		"ok":         true,
+		"domain":     res.Domain,
+		"strategy":   res.Strategy,
+		"port":       res.Port,
+		"public_url": res.SubURL,
+		"events":     events,
+		"message":    fmt.Sprintf("Домен привязан. Подписки доступны по %s/sub/{slug}", res.SubURL),
 	})
 }
 
-func (s *Server) unbindDomain(w http.ResponseWriter, r *http.Request) {
+func (s *Server) unbindDomain(w http.ResponseWriter, _ *http.Request) {
+	var events []domain.Event
+	reporter := domain.FuncReporter(func(ev domain.Event) {
+		events = append(events, ev)
+	})
+
+	// Only own-port strategy creates an actual systemd unit to tear down.
+	if s.cfg.DomainStrategy == domain.StrategyOwnPort {
+		if err := domain.UnbindOwnPort(context.Background(), reporter); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{
+				"error":   "unbind_failed",
+				"message": err.Error(),
+				"events":  events,
+			})
+			return
+		}
+	}
+
 	s.cfg.Domain = ""
+	s.cfg.DomainPort = 0
+	s.cfg.DomainStrategy = ""
 	if err := WriteAdminEnv(s.cfg.ConfigDir, s.cfg.Port, s.cfg.Token, "", s.cfg.SubPort); err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
+	_ = DeleteAdminEnvKey(s.cfg.ConfigDir, "OLCRTC_DOMAIN_PORT")
+	_ = DeleteAdminEnvKey(s.cfg.ConfigDir, "OLCRTC_DOMAIN_STRATEGY")
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":      true,
-		"message": "Домен отвязан. Перезапустите olcrtc-admin для возврата к self-signed.",
+		"events":  events,
+		"message": "Домен отвязан.",
 	})
 }
 

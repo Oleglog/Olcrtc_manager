@@ -27,6 +27,13 @@ type Config struct {
 	ACMEEmail string
 	ConfigDir string
 	PublicIP  string
+
+	// DomainPort is the public TCP port used by the bound domain (set by
+	// `olcrtc-admin bind`). 0 means "domain not bound" or "served on :443".
+	// Used to build subscription URLs.
+	DomainPort int
+	// DomainStrategy is one of "", "clean", "own-port", "sni-mux".
+	DomainStrategy string
 }
 
 // Server is the admin HTTP server.
