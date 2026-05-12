@@ -281,7 +281,10 @@ async function renderDashboard(app) {
   } else {
     subs.forEach(sub => {
       const row = el('div', 'flex flex-col md:flex-row md:items-center justify-between gap-2 p-3 rounded border border-gray-700 bg-gray-800');
-      const subURL = `${sys.admin_url || location.origin}/sub/${sub.slug}`;
+      // Prefer the bound-domain URL (public_url) over the admin URL so that
+      // links use the LE-signed domain port (e.g. :8444) instead of the
+      // admin self-signed port (e.g. :8443).
+      const subURL = `${sys.public_url || sys.admin_url || location.origin}/sub/${sub.slug}`;
       const left = el('div', 'flex-1');
       left.innerHTML = `
         <div class="font-medium">${sub.name} <span class="text-gray-400">[${sub.slug}]</span></div>
