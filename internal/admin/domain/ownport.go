@@ -252,10 +252,14 @@ func dnsCheck(domain, publicIP string, r Reporter) error {
 		domain, ips, publicIP)
 }
 
-// pickOwnPort selects a free TCP port for our caddy, preferring 8444.
-// Falls back to 8445, 8446, ..., 8460 then 9444, 9445, ..., 9460.
+// pickOwnPort selects a free TCP port for our caddy. Order:
+//   - :443 first (when free) — standard HTTPS port, never blocked by mobile
+//     carriers or corporate firewalls; mobile clients on 4G/5G frequently can
+//     not reach non-standard ports, so :443 is strongly preferred.
+//   - then 8444–8460 (own-port range)
+//   - then 9444–9460 (fallback range)
 func pickOwnPort(profile *HostProfile) int {
-	candidates := []int{OwnPortDefault}
+	candidates := []int{443, OwnPortDefault}
 	for p := OwnPortDefault + 1; p <= 8460; p++ {
 		candidates = append(candidates, p)
 	}
