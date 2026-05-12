@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-INSTALLER_VERSION="1.0.7"
+INSTALLER_VERSION="1.0.6"
 CARRIER_DEFAULT="wbstream"
 TRANSPORT_DEFAULT="datachannel"
 DNS_DEFAULT="1.1.1.1:53"
@@ -214,9 +214,6 @@ Options:
     --uninstall                          Full uninstall
     --show-token                         Show admin token
     --status                             Show status
-    --setup-domain <domain>              Bind domain for subscriptions after install
-    --acme-email <email>                 Email for Let's Encrypt (recommended with --setup-domain)
-    --strategy <auto|own-port|clean>     Domain strategy (default: auto)
     -h, --help                           Show this help
 EOF
 }
@@ -237,12 +234,6 @@ while [ $# -gt 0 ]; do
         --uninstall) DO_UNINSTALL=1; shift ;;
         --show-token) DO_SHOW_TOKEN=1; shift ;;
         --status) DO_STATUS=1; shift ;;
-        --setup-domain) SETUP_DOMAIN="$2"; shift 2 ;;
-        --setup-domain=*) SETUP_DOMAIN="${1#*=}"; shift ;;
-        --acme-email) ACME_EMAIL="$2"; shift 2 ;;
-        --acme-email=*) ACME_EMAIL="${1#*=}"; shift ;;
-        --strategy) DOMAIN_STRATEGY="$2"; shift 2 ;;
-        --strategy=*) DOMAIN_STRATEGY="${1#*=}"; shift ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
     esac
@@ -472,25 +463,6 @@ elif [ "$DO_REGENERATE" -eq 0 ] && [ -f "$ENV_FILE" ]; then
     [ -n "$EXISTING_ROOM" ] && ROOM_ID="$EXISTING_ROOM"
 fi
 
-# Subscription server port. Default 2096; auto-pick if occupied (e.g. by 3x-ui).
-SUB_PORT=2096
-if timeout 1 bash -c "</dev/tcp/127.0.0.1/${SUB_PORT}" 2>/dev/null; then
-    # 2096 busy — pick first free fallback.
-    SUB_PORT=""
-    for p in 2097 2099 3096 3097 3099 4096 4097; do
-        if ! timeout 1 bash -c "</dev/tcp/127.0.0.1/${p}" 2>/dev/null; then
-            SUB_PORT=$p; break
-        fi
-    done
-    if [ -z "$SUB_PORT" ]; then
-        echo "⚠ Не удалось найти свободный порт для sub-сервера (проверены 2096–4097)." >&2
-        echo "  Отредактируй OLCRTC_SUB_PORT вручную в $ADMIN_ENV и $ENV_FILE." >&2
-        SUB_PORT=2096
-    else
-        echo "  ℹ Порт 2096 занят, sub-сервер будет слушать на :$SUB_PORT"
-    fi
-fi
-
 # Main env file.
 SUB_ENABLED_VAL=""
 if [ "$SUB_ENABLED" = "y" ] || [ "$SUB_ENABLED" = "Y" ]; then SUB_ENABLED_VAL="1"; fi
@@ -502,7 +474,6 @@ OLCRTC_KEY=$KEY
 OLCRTC_DNS=$DNS_DEFAULT
 OLCRTC_NAME=$SET_NAME
 OLCRTC_SUB_ENABLED=$SUB_ENABLED_VAL
-OLCRTC_SUB_PORT=$SUB_PORT
 EOF
 chown root:olcrtc "$ENV_FILE"
 chmod 0640 "$ENV_FILE"
@@ -521,11 +492,12 @@ else
 fi
 ADMIN_TOKEN="$(openssl rand -hex 32)"
 OLCRTC_ADMIN_DOMAIN=""
+OLCRTC_SUB_PORT=2096
 cat > "$ADMIN_ENV" <<EOF
 OLCRTC_ADMIN_PORT=${ADMIN_PORT}
 OLCRTC_ADMIN_TOKEN=${ADMIN_TOKEN}
 OLCRTC_ADMIN_DOMAIN=
-OLCRTC_SUB_PORT=$SUB_PORT
+OLCRTC_SUB_PORT=2096
 EOF
 chmod 0600 "$ADMIN_ENV"
 
@@ -662,34 +634,6 @@ systemctl start olcrtc-admin.service 2>/dev/null || true
 
 PUBLIC_IP="$(get_public_ip)"
 
-# ── Optional domain binding ──────────────────────────────────────────────────
-DOMAIN_URL=""
-if [ -n "${SETUP_DOMAIN:-}" ]; then
-    echo ""
-    echo "  [*] Привязка домена ${SETUP_DOMAIN}..."
-    BIND_ARGS="--domain ${SETUP_DOMAIN}"
-    [ -n "${ACME_EMAIL:-}" ] && BIND_ARGS="${BIND_ARGS} --email ${ACME_EMAIL}"
-    [ -n "${DOMAIN_STRATEGY:-}" ] && BIND_ARGS="${BIND_ARGS} --strategy ${DOMAIN_STRATEGY}"
-    BIND_ARGS="${BIND_ARGS} --sub-port ${OLCRTC_SUB_PORT}"
-    if /usr/local/bin/olcrtc-admin bind ${BIND_ARGS}; then
-        # Re-read the env to pick up OLCRTC_DOMAIN_PORT.
-        . /etc/olcrtc/admin.env 2>/dev/null || true
-        DOMAIN_PORT="${OLCRTC_DOMAIN_PORT:-443}"
-        if [ "$DOMAIN_PORT" = "443" ]; then
-            DOMAIN_URL="https://${SETUP_DOMAIN}"
-        else
-            DOMAIN_URL="https://${SETUP_DOMAIN}:${DOMAIN_PORT}"
-        fi
-        echo "  [*] Домен привязан: ${DOMAIN_URL}"
-        # Restart admin to pick up new domain in subscription URLs.
-        systemctl restart olcrtc-admin.service 2>/dev/null || true
-    else
-        echo "  [!] Привязка домена не удалась (ошибки выше)." >&2
-        echo "  [!] Вы можете привязать домен позже через админку или:" >&2
-        echo "      sudo olcrtc-admin bind --domain ${SETUP_DOMAIN} --email <email>" >&2
-    fi
-fi
-
 # ── Done ─────────────────────────────────────────────────────────────────────
 echo ""
 echo "  ═══════════════════════════════════════════"
@@ -698,16 +642,9 @@ echo "  ════════════════════════
 echo ""
 echo "  Admin UI:  https://${PUBLIC_IP}:${ADMIN_PORT}"
 echo "  Токен:     ${ADMIN_TOKEN}"
-if [ -n "$DOMAIN_URL" ]; then
-    echo "  Подписки: ${DOMAIN_URL}/sub/{slug}"
-fi
 echo ""
-if [ -z "$DOMAIN_URL" ]; then
-    echo "  ⚠  Сертификат самоподписанный."
-    echo "     В браузере нажмите 'Дополнительно' → 'Перейти'."
-else
-    echo "  ✓  Домен ${SETUP_DOMAIN} привязан с Let's Encrypt сертификатом."
-fi
+echo "  ⚠  Сертификат самоподписанный."
+echo "     В браузере нажмите 'Дополнительно' → 'Перейти'."
 echo ""
 echo "  Дальнейшее управление — через Web UI."
 echo "  ═══════════════════════════════════════════"
