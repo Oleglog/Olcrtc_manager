@@ -46,7 +46,6 @@ type createRoomResponse struct {
 
 type tokenResponse struct {
 	RoomToken string `json:"roomToken"`
-	ServerURL string `json:"serverUrl"`
 }
 
 func registerGuest(ctx context.Context, displayName string) (string, error) {
@@ -152,7 +151,7 @@ func joinRoom(ctx context.Context, accessToken, roomID string) error {
 }
 
 func getToken(ctx context.Context, accessToken, roomID, displayName string) (string, error) {
-	u := fmt.Sprintf("%s/api-room-manager/v2/room/%s/connection-details", apiBase, roomID)
+	u := fmt.Sprintf("%s/api-room-manager/api/v1/room/%s/token", apiBase, roomID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return "", fmt.Errorf("create request: %w", err)

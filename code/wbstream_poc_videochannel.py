@@ -41,7 +41,6 @@ def _decode(arr: np.ndarray) -> str | None:
             except Exception:
                 pass
     return None
-WS_URL = "wss://rtc-el-01.wb.ru"
 
 
 def _get_room_token(room_id: str, display_name: str) -> tuple[str, str]:
@@ -57,7 +56,7 @@ def _get_room_token(room_id: str, display_name: str) -> tuple[str, str]:
         r.raise_for_status()
         room_id = r.json()["roomId"]
     requests.post(f"{API_BASE}/api-room/api/v1/room/{room_id}/join", json={}, headers=headers).raise_for_status()
-    tok = requests.get(f"{API_BASE}/api-room-manager/v2/room/{room_id}/connection-details",
+    tok = requests.get(f"{API_BASE}/api-room-manager/api/v1/room/{room_id}/token",
                        params={"deviceType": "PARTICIPANT_DEVICE_TYPE_WEB_DESKTOP", "displayName": display_name}, headers=headers)
     tok.raise_for_status()
     return room_id, tok.json()["roomToken"]
