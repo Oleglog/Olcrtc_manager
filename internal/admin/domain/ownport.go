@@ -2,10 +2,12 @@ package domain
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -80,10 +82,12 @@ func ApplyOwnPort(ctx context.Context, profile *HostProfile, params BindParams, 
 		return nil, fmt.Errorf("start olcrtc-caddy: %w", err)
 	}
 
-	r.Emit(Event{Kind: EventStep, StepID: "verify", Title: "Проверка соединения"})
-	if err := verifyOwnPort(params.Domain, port, 10*time.Second); err != nil {
-		r.Emit(Event{Kind: EventLog, Message: fmt.Sprintf("warn: verify failed: %v", err)})
-		// Don't fail hard — the user can debug from `systemctl status`.
+	r.Emit(Event{Kind: EventStep, StepID: "verify", Title: "Проверка TLS-соединения"})
+	if err := verifyOwnPort(params.Domain, port, 15*time.Second); err != nil {
+		r.Emit(Event{Kind: EventLog, Message: fmt.Sprintf("warn: проверка TLS не прошла: %v", err)})
+		// Don't fail hard — the systemd unit is up; user can debug from `systemctl status`.
+	} else {
+		r.Emit(Event{Kind: EventLog, Message: "TLS handshake успешен, сертификат валиден"})
 	}
 
 	subURL := fmt.Sprintf("https://%s:%d", params.Domain, port)
@@ -311,16 +315,51 @@ func portUsedByProfile(profile *HostProfile, port int) bool {
 	return false
 }
 
+// verifyOwnPort waits for the listener on domain:port to be reachable and
+// then performs a real TLS handshake validated against the system trust
+// store. A self-signed or caddy-internal certificate fails the check loudly
+// so the bind result doesn't lie about the cert state.
 func verifyOwnPort(domain string, port int, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
-	addr := fmt.Sprintf("%s:%d", domain, port)
+	addr := net.JoinHostPort(domain, strconv.Itoa(port))
+	dialer := &net.Dialer{Timeout: 2 * time.Second}
+
+	// Phase 1: wait for TCP listener to come up.
+	var lastDialErr error
 	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+		conn, err := dialer.Dial("tcp", addr)
 		if err == nil {
 			_ = conn.Close()
-			return nil
+			lastDialErr = nil
+			break
 		}
+		lastDialErr = err
 		time.Sleep(500 * time.Millisecond)
 	}
-	return fmt.Errorf("не удалось подключиться к %s в течение %s", addr, timeout)
+	if lastDialErr != nil {
+		return fmt.Errorf("не удалось подключиться к %s за %s: %w", addr, timeout, lastDialErr)
+	}
+
+	// Phase 2: full TLS handshake with verification against the system trust store.
+	tlsCfg := &tls.Config{
+		ServerName: domain,
+		MinVersion: tls.VersionTLS12,
+	}
+	conn, err := tls.DialWithDialer(dialer, "tcp", addr, tlsCfg)
+	if err != nil {
+		return fmt.Errorf("TLS-хэндшейк с %s не прошёл: %w (сертификат невалиден/self-signed — проверьте /etc/letsencrypt/live/%s/ и лог certbot)", addr, err, domain)
+	}
+	state := conn.ConnectionState()
+	_ = conn.Close()
+
+	// Sanity check: reject obviously-wrong issuers (caddy internal CA).
+	if len(state.PeerCertificates) == 0 {
+		return fmt.Errorf("%s не прислал сертификат", addr)
+	}
+	issuer := strings.ToLower(state.PeerCertificates[0].Issuer.CommonName)
+	if strings.Contains(issuer, "caddy") || strings.Contains(issuer, "local authority") {
+		return fmt.Errorf("%s отдаёт internal-CA сертификат (issuer=%q) — Caddyfile не использует Let's Encrypt файлы",
+			addr, state.PeerCertificates[0].Issuer.CommonName)
+	}
+	return nil
 }

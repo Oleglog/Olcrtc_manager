@@ -183,6 +183,20 @@ func (s *Server) bindDomain(w http.ResponseWriter, r *http.Request) {
 	_ = SetAdminEnvKey(s.cfg.ConfigDir, "OLCRTC_DOMAIN_PORT", fmt.Sprintf("%d", res.Port))
 	_ = SetAdminEnvKey(s.cfg.ConfigDir, "OLCRTC_DOMAIN_STRATEGY", res.Strategy)
 
+	// Collect any warn-tagged log events so the UI can surface them
+	// prominently (e.g. failed TLS verification).
+	var warnings []string
+	for _, ev := range events {
+		if ev.Kind == domain.EventLog && strings.HasPrefix(ev.Message, "warn:") {
+			warnings = append(warnings, strings.TrimSpace(strings.TrimPrefix(ev.Message, "warn:")))
+		}
+	}
+
+	message := fmt.Sprintf("Домен привязан. Подписки доступны по %s/sub/{slug}", res.SubURL)
+	if len(warnings) > 0 {
+		message = "ВНИМАНИЕ: " + strings.Join(warnings, "; ") + ". " + message
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":         true,
 		"domain":     res.Domain,
@@ -190,7 +204,8 @@ func (s *Server) bindDomain(w http.ResponseWriter, r *http.Request) {
 		"port":       res.Port,
 		"public_url": res.SubURL,
 		"events":     events,
-		"message":    fmt.Sprintf("Домен привязан. Подписки доступны по %s/sub/{slug}", res.SubURL),
+		"warnings":   warnings,
+		"message":    message,
 	})
 }
 
