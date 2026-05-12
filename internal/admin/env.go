@@ -25,20 +25,79 @@ func ReadAdminPort(configDir string) (int, error) {
 	return strconv.Atoi(s)
 }
 
-// WriteAdminEnv writes the admin environment file.
+// WriteAdminEnv writes the admin environment file, preserving any
+// already-present extra keys (OLCRTC_DOMAIN_PORT, OLCRTC_DOMAIN_STRATEGY, …).
 func WriteAdminEnv(configDir string, port int, token, domain string, subPort int) error {
 	f := filepath.Join(configDir, "admin.env")
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		return err
 	}
 
-	lines := []string{
-		fmt.Sprintf("OLCRTC_ADMIN_PORT=%d", port),
-		fmt.Sprintf("OLCRTC_ADMIN_TOKEN=%s", token),
-		fmt.Sprintf("OLCRTC_ADMIN_DOMAIN=%s", domain),
-		fmt.Sprintf("OLCRTC_SUB_PORT=%d", subPort),
+	existing := ReadInstanceEnv(f)
+	existing["OLCRTC_ADMIN_PORT"] = fmt.Sprintf("%d", port)
+	existing["OLCRTC_ADMIN_TOKEN"] = token
+	existing["OLCRTC_ADMIN_DOMAIN"] = domain
+	existing["OLCRTC_SUB_PORT"] = fmt.Sprintf("%d", subPort)
+
+	var sb strings.Builder
+	// Keep canonical ordering for the four well-known keys, then sort extras.
+	for _, k := range []string{"OLCRTC_ADMIN_PORT", "OLCRTC_ADMIN_TOKEN", "OLCRTC_ADMIN_DOMAIN", "OLCRTC_SUB_PORT"} {
+		fmt.Fprintf(&sb, "%s=%s\n", k, existing[k])
+		delete(existing, k)
 	}
-	return os.WriteFile(f, []byte(strings.Join(lines, "\n")+"\n"), 0644)
+	// Stable order for the rest.
+	keys := make([]string, 0, len(existing))
+	for k := range existing {
+		keys = append(keys, k)
+	}
+	sortStrings(keys)
+	for _, k := range keys {
+		fmt.Fprintf(&sb, "%s=%s\n", k, existing[k])
+	}
+	return os.WriteFile(f, []byte(sb.String()), 0644)
+}
+
+// SetAdminEnvKey upserts a single key in admin.env, preserving all other keys.
+// Used to write domain-related keys (OLCRTC_DOMAIN_PORT, OLCRTC_DOMAIN_STRATEGY)
+// without touching token/port settings.
+func SetAdminEnvKey(configDir, key, value string) error {
+	f := filepath.Join(configDir, "admin.env")
+	existing := ReadInstanceEnv(f)
+	existing[key] = value
+	return WriteInstanceEnv(f, existing)
+}
+
+// DeleteAdminEnvKey removes a key from admin.env (no-op if absent).
+func DeleteAdminEnvKey(configDir, key string) error {
+	f := filepath.Join(configDir, "admin.env")
+	existing := ReadInstanceEnv(f)
+	if _, ok := existing[key]; !ok {
+		return nil
+	}
+	delete(existing, key)
+	// Rewrite from scratch since WriteInstanceEnv only upserts.
+	var sb strings.Builder
+	keys := make([]string, 0, len(existing))
+	for k := range existing {
+		keys = append(keys, k)
+	}
+	sortStrings(keys)
+	for _, k := range keys {
+		fmt.Fprintf(&sb, "%s=%s\n", k, existing[k])
+	}
+	if err := os.MkdirAll(filepath.Dir(f), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(f, []byte(sb.String()), 0644)
+}
+
+func sortStrings(s []string) {
+	// Simple insertion sort; the slice is tiny.
+	for i := 1; i < len(s); i++ {
+		for j := i; j > 0 && s[j-1] > s[j]; j-- {
+			s[j-1], s[j] = s[j], s[j-1]
+		}
+	}
 }
 
 // ReadInstanceEnv reads all values from an instance env file.
