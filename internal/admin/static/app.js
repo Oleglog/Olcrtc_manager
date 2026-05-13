@@ -493,6 +493,7 @@ function showConfigModal(inst) {
     { key: 'carrier', label: 'Carrier', val: inst.carrier || 'wbstream', opts: ['wbstream', 'jazz', 'telemost'] },
     { key: 'transport', label: 'Transport', val: inst.transport || 'datachannel', opts: ['datachannel', 'vp8channel', 'seichannel'] },
     { key: 'name', label: 'Имя', val: inst.name || '' },
+    { key: 'room_id', label: 'Room ID', val: inst.room_id || '', placeholder: 'для wbstream — создать на https://stream.wb.ru' },
     { key: 'dns', label: 'DNS', val: inst.dns || '' },
     { key: 'socks_proxy', label: 'SOCKS', val: inst.socks_proxy || '' },
     { key: 'warp_proxy', label: 'WARP', val: inst.warp_proxy || '' },
@@ -513,11 +514,22 @@ function showConfigModal(inst) {
     } else {
       inp = el('input', '');
       inp.value = f.val;
+      if (f.placeholder) inp.placeholder = f.placeholder;
     }
     inputs[f.key] = inp;
     row.appendChild(inp);
     div.appendChild(row);
   });
+
+  // WB Stream Room ID hint (carrier-dependent).
+  const wbHint = el('div', 'mb-3 text-xs text-amber-300 bg-amber-900/30 border border-amber-700/40 p-2 rounded');
+  wbHint.innerHTML = '<b>WB Stream больше не создаёт румы автоматически.</b><br>Создайте руму на <a href="https://stream.wb.ru" target="_blank" rel="noopener" class="underline">stream.wb.ru</a> и вставьте её ID в поле <b>Room ID</b>. Кнопка «Пересоздать Room ID» для wbstream отключена.';
+  div.appendChild(wbHint);
+  function updateWbHint() {
+    wbHint.classList.toggle('hidden', inputs.carrier.value !== 'wbstream');
+  }
+  inputs.carrier.addEventListener('change', updateWbHint);
+  updateWbHint();
 
   // Proxy hint
   const proxyHint = el('div', 'mb-3 text-xs text-gray-500 bg-gray-800 p-2 rounded');
@@ -562,9 +574,9 @@ function showConfigModal(inst) {
   // Key rotation buttons
   const keyRow = el('div', 'flex gap-2 mb-3');
   const rotKeyBtn = el('button', 'btn btn-danger btn-sm');
-  rotKeyBtn.textContent = 'Пересоздать ключ + Room ID';
+  rotKeyBtn.textContent = 'Пересоздать ключ';
   rotKeyBtn.onclick = async () => {
-    if (!confirm('Пересоздать ключ и Room ID? Клиентам придётся перенастроиться.')) return;
+    if (!confirm('Пересоздать ключ? Клиентам придётся перенастроиться.')) return;
     await api('/instances/' + inst.id + '/rotate-key', { method: 'POST' });
     showToast('Ключ пересоздан'); closeModal(overlay); render();
   };
@@ -572,9 +584,21 @@ function showConfigModal(inst) {
   rotRoomBtn.textContent = 'Пересоздать Room ID';
   rotRoomBtn.onclick = async () => {
     if (!confirm('Пересоздать Room ID?')) return;
-    await api('/instances/' + inst.id + '/rotate-room', { method: 'POST' });
-    showToast('Room ID пересоздан'); closeModal(overlay); render();
+    try {
+      await api('/instances/' + inst.id + '/rotate-room', { method: 'POST' });
+      showToast('Room ID пересоздан'); closeModal(overlay); render();
+    } catch (e) {
+      alert(e.message || 'Не удалось пересоздать Room ID');
+    }
   };
+  function updateRotRoomBtn() {
+    const wb = inputs.carrier.value === 'wbstream';
+    rotRoomBtn.disabled = wb;
+    rotRoomBtn.title = wb ? 'WB Stream отключил автосоздание румы — заполните Room ID вручную выше' : '';
+    rotRoomBtn.classList.toggle('opacity-50', wb);
+  }
+  inputs.carrier.addEventListener('change', updateRotRoomBtn);
+  updateRotRoomBtn();
   keyRow.appendChild(rotKeyBtn);
   keyRow.appendChild(rotRoomBtn);
   div.appendChild(keyRow);
@@ -588,10 +612,15 @@ function showConfigModal(inst) {
   const overlay = showModal(div);
 
   saveBtn.onclick = async () => {
+    if (inputs.carrier.value === 'wbstream' && !inputs.room_id.value.trim()) {
+      alert('Для wbstream нужно указать Room ID. Создайте руму на https://stream.wb.ru и вставьте её ID в поле Room ID.');
+      return;
+    }
     const body = {
       carrier: inputs.carrier.value,
       transport: inputs.transport.value,
       name: inputs.name.value,
+      room_id: inputs.room_id.value.trim(),
       dns: inputs.dns.value,
       socks_proxy: inputs.socks_proxy.value,
       warp_proxy: inputs.warp_proxy.value,
@@ -607,8 +636,12 @@ function showConfigModal(inst) {
       if (seiFrag.value) body.sei_frag = parseInt(seiFrag.value);
       if (seiAck.value) body.sei_ack_ms = parseInt(seiAck.value);
     }
-    await api('/instances/' + inst.id + '/config', { method: 'PUT', body: JSON.stringify(body) });
-    showToast('Сохранено'); closeModal(overlay); render();
+    try {
+      await api('/instances/' + inst.id + '/config', { method: 'PUT', body: JSON.stringify(body) });
+      showToast('Сохранено'); closeModal(overlay); render();
+    } catch (e) {
+      alert(e.message || 'Не удалось сохранить');
+    }
   };
   cancelBtn.onclick = () => closeModal(overlay);
   btnRow.appendChild(saveBtn);

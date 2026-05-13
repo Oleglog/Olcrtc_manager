@@ -25,6 +25,11 @@ var (
 	ErrSendQueueFull = errors.New("send queue full")
 	// ErrLiveKitNotConnected is returned when the LiveKit room is not connected.
 	ErrLiveKitNotConnected = errors.New("livekit room not connected")
+	// ErrRoomIDRequired is returned when no Room ID was provided. WB Stream has
+	// removed the room creation API for non-internal clients; rooms must be
+	// created manually at https://stream.wb.ru and the resulting ID passed via
+	// -id (CLI) or OLCRTC_ROOM_ID (env).
+	ErrRoomIDRequired = errors.New("wbstream room id required: WB Stream no longer auto-creates rooms; create one manually at https://stream.wb.ru and pass it via -id / OLCRTC_ROOM_ID")
 )
 
 // Peer represents a WB Stream WebRTC connection using LiveKit.
@@ -137,12 +142,7 @@ func (p *Peer) getRoomToken(ctx context.Context) (string, error) {
 
 	roomID := p.roomURL
 	if roomID == "" || roomID == "any" {
-		roomID, err = createRoom(ctx, accessToken)
-		if err != nil {
-			return "", fmt.Errorf("create room: %w", err)
-		}
-		log.Printf("WB Stream room created: %s", roomID)
-		log.Printf("To connect client use: -id %s", roomID)
+		return "", ErrRoomIDRequired
 	}
 
 	if err := joinRoom(ctx, accessToken, roomID); err != nil {

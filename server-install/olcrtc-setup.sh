@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-INSTALLER_VERSION="1.1.0"
+INSTALLER_VERSION="1.2.0"
 CARRIER_DEFAULT="wbstream"
 TRANSPORT_DEFAULT="datachannel"
 DNS_DEFAULT="1.1.1.1:53"
@@ -207,9 +207,10 @@ Options:
     --carrier <wbstream|telemost|jazz>   Carrier (default: $CARRIER_DEFAULT)
     --transport <datachannel|vp8channel|seichannel>  Transport (default: $TRANSPORT_DEFAULT)
     --name <string>                      Connection name
-    --id <room_id>                       Room ID for telemost
-    --regenerate                         Regenerate Room ID
-    --regenerate-key                     Regenerate key + Room ID
+    --id <room_id>                       Room ID. Для wbstream — обязательно (создать
+                                         руму на stream.wb.ru); для telemost — опционально.
+    --regenerate                         Regenerate Room ID (только jazz/telemost)
+    --regenerate-key                     Regenerate ключ (Room ID не трогается)
     --update                             Update binaries
     --uninstall                          Full uninstall
     --show-token                         Show admin token
@@ -334,8 +335,8 @@ echo "              ✓"
 echo "  [4/7] Настройка:"
 echo ""
 echo "        Доступные carrier:"
-echo "          wbstream  — Wildberries Stream (рекомендуется)"
-echo "          jazz      — SaluteJazz"
+echo "          wbstream  — Wildberries Stream (руму нужно создать вручную на stream.wb.ru)"
+echo "          jazz      — SaluteJazz (автосоздание румы)"
 echo "          telemost  — Yandex Telemost"
 if [ -z "$CARRIER" ]; then
     tty_read -rp "        Carrier [wbstream]: " CARRIER
@@ -455,13 +456,43 @@ fi
 KEY="$(cat "$KEY_FILE")"
 
 # Room ID.
-ROOM_ID="any"
-if [ "$CARRIER" = "telemost" ]; then
-    ROOM_ID="${SET_ID:-olcrtc-$(openssl rand -hex 4)}"
-elif [ "$DO_REGENERATE" -eq 0 ] && [ -f "$ENV_FILE" ]; then
+# wbstream: room must be created manually at https://stream.wb.ru — the public
+# room-creation API was removed by WB. We prompt the user for it (or accept --id).
+# jazz: still supports auto-generation server-side (ROOM_ID=any).
+# telemost: generate a random olcrtc-XXXX id, or accept --id.
+ROOM_ID=""
+if [ "$DO_REGENERATE" -eq 0 ] && [ -f "$ENV_FILE" ]; then
     EXISTING_ROOM="$(get_env_value OLCRTC_ROOM_ID)"
-    [ -n "$EXISTING_ROOM" ] && ROOM_ID="$EXISTING_ROOM"
+    [ -n "$EXISTING_ROOM" ] && [ "$EXISTING_ROOM" != "any" ] && ROOM_ID="$EXISTING_ROOM"
 fi
+
+if [ -n "$SET_ID" ]; then
+    ROOM_ID="$SET_ID"
+fi
+
+case "$CARRIER" in
+    wbstream)
+        while [ -z "$ROOM_ID" ] || [ "$ROOM_ID" = "any" ]; do
+            echo ""
+            echo "        WB Stream больше не создаёт румы автоматически."
+            echo "        Откройте https://stream.wb.ru, создайте руму и скопируйте"
+            echo "        Room ID из URL (формат: 8-символьный идентификатор)."
+            tty_read -rp "        WB Stream Room ID: " ROOM_ID
+            ROOM_ID="$(echo "$ROOM_ID" | tr -d '[:space:]')"
+        done
+        ;;
+    telemost)
+        if [ -z "$ROOM_ID" ]; then
+            ROOM_ID="olcrtc-$(openssl rand -hex 4)"
+        fi
+        ;;
+    *)
+        # jazz и прочие carrier-ы, поддерживающие server-side auto-gen.
+        if [ -z "$ROOM_ID" ]; then
+            ROOM_ID="any"
+        fi
+        ;;
+esac
 
 # Subscription server port. Default 2096; auto-pick if occupied (e.g. by 3x-ui).
 SUB_PORT=2096
@@ -632,13 +663,14 @@ systemctl enable --quiet olcrtc-server.service
 systemctl enable --quiet olcrtc-admin.service 2>/dev/null || true
 systemctl restart olcrtc-server.service
 
-# Wait for room ID if auto.
+# Wait for room ID if auto. WB Stream auto-gen was removed by WB; only carriers
+# that still support server-side auto-gen (jazz) reach this branch.
 if [ "$ROOM_ID" = "any" ]; then
     echo "  [*] Waiting for carrier to create room..."
     DETECTED=""
     for i in $(seq 1 30); do
         sleep 1
-        DETECTED="$(journalctl -u olcrtc-server.service --since '1 minute ago' --no-pager 2>/dev/null | grep -oE '(WB Stream room created|Jazz room created): \S+' | tail -1 | awk '{print $NF}')" || true
+        DETECTED="$(journalctl -u olcrtc-server.service --since '1 minute ago' --no-pager 2>/dev/null | grep -oE 'Jazz room created: \S+' | tail -1 | awk '{print $NF}')" || true
         [ -n "$DETECTED" ] && break
     done
     if [ -n "$DETECTED" ]; then

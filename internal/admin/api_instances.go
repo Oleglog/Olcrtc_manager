@@ -233,6 +233,9 @@ func (s *Server) updateInstanceConfig(w http.ResponseWriter, r *http.Request, id
 	if v, ok := req["name"].(string); ok {
 		updates["OLCRTC_NAME"] = v
 	}
+	if v, ok := req["room_id"].(string); ok {
+		updates["OLCRTC_ROOM_ID"] = strings.TrimSpace(v)
+	}
 	if v, ok := req["dns"].(string); ok {
 		updates["OLCRTC_DNS"] = v
 	}
@@ -266,6 +269,23 @@ func (s *Server) updateInstanceConfig(w http.ResponseWriter, r *http.Request, id
 	}
 	if v, ok := req["sei_ack_ms"].(float64); ok {
 		updates["OLCRTC_SEI_ACK"] = fmt.Sprintf("%.0f", v)
+	}
+
+	// Validate that wbstream has a non-empty Room ID. WB Stream no longer
+	// auto-creates rooms; the server would otherwise refuse to start with
+	// ErrRoomIDRequired.
+	effective := ReadInstanceEnv(envPath)
+	for k, v := range updates {
+		effective[k] = v
+	}
+	carrier := effective["OLCRTC_CARRIER"]
+	if carrier == "" {
+		carrier = effective["OLCRTC_PROVIDER"]
+	}
+	room := effective["OLCRTC_ROOM_ID"]
+	if carrier == "wbstream" && (room == "" || room == "any") {
+		http.Error(w, "wbstream requires a Room ID — WB Stream no longer auto-creates rooms; create one at https://stream.wb.ru and paste it into Room ID", http.StatusBadRequest)
+		return
 	}
 
 	if err := WriteInstanceEnv(envPath, updates); err != nil {
@@ -337,6 +357,20 @@ func (s *Server) rotateKey(w http.ResponseWriter, id int) {
 
 func (s *Server) rotateRoom(w http.ResponseWriter, id int) {
 	envPath := InstanceEnvPath(s.cfg.ConfigDir, id)
+
+	// For wbstream auto-rotation is no longer possible because WB Stream
+	// disabled the room creation API. Refuse and tell the user to create
+	// a room manually and update Room ID via the config form.
+	vals := ReadInstanceEnv(envPath)
+	carrier := vals["OLCRTC_CARRIER"]
+	if carrier == "" {
+		carrier = vals["OLCRTC_PROVIDER"]
+	}
+	if carrier == "wbstream" {
+		http.Error(w, "wbstream Room ID can no longer be rotated automatically — WB Stream disabled the room creation API. Create a new room at https://stream.wb.ru and paste its ID into the Room ID field manually.", http.StatusBadRequest)
+		return
+	}
+
 	if err := SetEnvValue(envPath, "OLCRTC_ROOM_ID", ""); err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return

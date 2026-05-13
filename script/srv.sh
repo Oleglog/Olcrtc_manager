@@ -123,24 +123,14 @@ if [ "$CARRIER" = "jazz" ]; then
             ;;
     esac
 elif [ "$CARRIER" = "wbstream" ]; then
-    echo "WB Stream room options:"
-    echo "  1) Auto-generate new room (recommended)"
-    echo "  2) Use specific room ID"
-    read -p "Enter choice [1-2, default: 1]: " WB_CHOICE
-
-    case "$WB_CHOICE" in
-        2)
-            read -p "Enter Room ID: " ROOM_ID
-            if [ -z "$ROOM_ID" ]; then
-                echo "[X] Room ID cannot be empty"
-                exit 1
-            fi
-            ;;
-        *)
-            ROOM_ID="any"
-            echo "[*] Will auto-generate WB Stream room"
-            ;;
-    esac
+    echo "WB Stream больше не создаёт румы автоматически."
+    echo "Создайте руму на https://stream.wb.ru и введите её ID ниже."
+    read -p "Enter WB Stream Room ID: " ROOM_ID
+    ROOM_ID="$(echo "$ROOM_ID" | tr -d '[:space:]')"
+    if [ -z "$ROOM_ID" ] || [ "$ROOM_ID" = "any" ]; then
+        echo "[X] WB Stream Room ID is required (auto-generation disabled by WB)"
+        exit 1
+    fi
 else
     read -p "Enter Room ID: " ROOM_ID
     if [ -z "$ROOM_ID" ]; then
@@ -261,6 +251,7 @@ podman pull $IMAGE_NAME
 
 echo "[*] Building OlcRTC..."
 podman run --rm \
+    --network host \
     -v $WORK_DIR:/app:Z \
     -w /app \
     $IMAGE_NAME \
@@ -291,6 +282,7 @@ fi
 
 echo "[*] Starting OlcRTC server..."
 podman run -d \
+    --network host \
     --name $CONTAINER_NAME \
     --restart unless-stopped \
     -v $WORK_DIR:/app:Z \

@@ -7,6 +7,19 @@
 
 </div>
 
+> ### ⚠ Known issues / Известные проблемы (май 2026)
+>
+> - **WB Stream**: разработчики stream.wb.ru отключили публичный API создания
+>   комнат и приём гостей в звонки. Автогенерация румы для `wbstream` больше
+>   не работает — руму нужно создать вручную на <https://stream.wb.ru> и
+>   указать её ID в админке (поле `Room ID` в форме настройки инстанса) или
+>   при установке. Подробности см. в `server-install/README.md`.
+> - **Upstream breaking refactor**: в ветке
+>   [`openlibrecommunity/olcrtc#refactor/universal-carrier`](https://github.com/openlibrecommunity/olcrtc/tree/refactor/universal-carrier)
+>   готовится переписывание carrier-слоя. После того как ветка попадёт в
+>   `master`, протокол и API провайдеров изменятся и потребуется
+>   обновление панели + Android-клиента `Exclave_FORK` под новую версию.
+
 ## About
 
 olcRTC — across the sea.
