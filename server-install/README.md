@@ -2,6 +2,21 @@
 
 > [**Русский**](#russian) ниже • Full English documentation continues below
 
+> ### ⚠ Known issues / Известные проблемы (май 2026)
+>
+> - **WB Stream**: разработчики stream.wb.ru отключили публичный API создания
+>   комнат и приём гостей в звонки. Автогенерация румы для `wbstream` больше
+>   не работает. При выборе `wbstream` инсталлятор и админка теперь требуют
+>   указать **Room ID вручную** — создайте руму на <https://stream.wb.ru> и
+>   скопируйте её ID из URL.
+> - Чтобы быстро запустить сервер без ручных шагов — используйте `jazz`
+>   (server-side auto-gen всё ещё работает) или `telemost` (для telemost
+>   инсталлятор сам генерирует ID вида `olcrtc-XXXXXXXX`).
+> - **Upstream breaking refactor**: в ветке
+>   [`openlibrecommunity/olcrtc#refactor/universal-carrier`](https://github.com/openlibrecommunity/olcrtc/tree/refactor/universal-carrier)
+>   готовится переписывание carrier-слоя. После слияния в `master` API
+>   провайдеров изменится и потребуется обновление панели + Android-клиента.
+
 One-shot installer that puts an [olcrtc](https://github.com/openlibrecommunity/olcrtc)
 server CLI on a Linux VPS with a hardened `systemd` service. The binaries
 themselves are not committed to this branch — they live in
@@ -20,10 +35,14 @@ What the installer does:
 - creates a dedicated `olcrtc` system user,
 - generates a 256-bit hex encryption key (`/etc/olcrtc/key.hex`),
 - registers a hardened `systemd` service (`olcrtc-server.service`),
-- asks the selected carrier (Wildberries Stream / SaluteJazz / Yandex Telemost)
-  to provision a room on first start,
-- captures the auto-generated room ID from `journalctl` and pins it into the
-  service environment so the same room is reused across restarts,
+- provisions the Room ID:
+    - **wbstream** — prompts you for a Room ID created manually at
+      <https://stream.wb.ru> (WB Stream removed the public room-creation API),
+    - **jazz** — asks the carrier to auto-create a room on first start and
+      captures the room ID from `journalctl`,
+    - **telemost** — generates a random `olcrtc-XXXXXXXX` Room ID locally;
+- pins the resulting Room ID into the service environment so the same room
+  is reused across restarts,
 - supports an optional outbound SOCKS5 proxy (NO_AUTH or RFC 1929
   USER/PASSWORD), useful when the VPS IP is blocked by
   wbstream / jazz / telemost, and an optional `-debug` flag,

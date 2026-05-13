@@ -16,7 +16,6 @@ const apiBase = "https://stream.wb.ru"
 
 var (
 	errGuestRegister = errors.New("guest register failed")
-	errCreateRoom    = errors.New("create room failed")
 	errJoinRoom      = errors.New("join room failed")
 	errGetToken      = errors.New("get token failed")
 )
@@ -33,15 +32,6 @@ type device struct {
 
 type guestRegisterResponse struct {
 	AccessToken string `json:"accessToken"`
-}
-
-type createRoomRequest struct {
-	RoomType    string `json:"roomType"`
-	RoomPrivacy string `json:"roomPrivacy"`
-}
-
-type createRoomResponse struct {
-	RoomID string `json:"roomId"`
 }
 
 type tokenResponse struct {
@@ -87,44 +77,6 @@ func registerGuest(ctx context.Context, displayName string) (string, error) {
 		return "", fmt.Errorf("decode response: %w", err)
 	}
 	return res.AccessToken, nil
-}
-
-func createRoom(ctx context.Context, accessToken string) (string, error) {
-	u := apiBase + "/api-room/api/v2/room"
-	reqBody := createRoomRequest{
-		RoomType:    "ROOM_TYPE_ALL_ON_SCREEN",
-		RoomPrivacy: "ROOM_PRIVACY_FREE",
-	}
-
-	body, err := json.Marshal(reqBody)
-	if err != nil {
-		return "", fmt.Errorf("marshal request body: %w", err)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewBuffer(body))
-	if err != nil {
-		return "", fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Linux x86_64)")
-
-	client := protect.NewHTTPClient()
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("do request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		b, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("%w: %d %s", errCreateRoom, resp.StatusCode, b)
-	}
-
-	var res createRoomResponse
-	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
-		return "", fmt.Errorf("decode response: %w", err)
-	}
-	return res.RoomID, nil
 }
 
 func joinRoom(ctx context.Context, accessToken, roomID string) error {
