@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	wsURL = "wss://wbstream01-el.wb.ru:7880"
+	wsURL = "wss://rtc-el-01.wb.ru"
 )
 
 var (
