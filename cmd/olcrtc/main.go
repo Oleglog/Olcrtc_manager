@@ -17,6 +17,7 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/app/session"
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 	"github.com/openlibrecommunity/olcrtc/internal/names"
+	"github.com/openlibrecommunity/olcrtc/internal/transport/videochannel"
 )
 
 // ErrDataDirRequired is returned when no data directory is specified.
@@ -61,6 +62,7 @@ type config struct {
 	seiBatchSize    int
 	seiFragmentSize int
 	seiAckTimeoutMS int
+	ffmpegPath      string
 }
 
 func main() {
@@ -75,6 +77,10 @@ func run() error {
 
 	cfg := parseFlags()
 	configureLogging(cfg.debug)
+
+	if cfg.ffmpegPath != "ffmpeg" && cfg.ffmpegPath != "" {
+		videochannel.FFmpegPath = cfg.ffmpegPath
+	}
 
 	if err := session.Validate(toSessionConfig(cfg)); err != nil {
 		return fmt.Errorf("validate config: %w", err)
@@ -158,6 +164,7 @@ func parseFlags() config {
 	flag.IntVar(&cfg.subPort, "sub-port", 2096, "Subscription server listen port")
 	flag.StringVar(&cfg.subDBPath, "sub-db", "", "Subscription database path")
 	flag.StringVar(&cfg.subAPIToken, "sub-token", "", "Subscription API bearer token")
+	flag.StringVar(&cfg.ffmpegPath, "ffmpeg", "ffmpeg", "Path to ffmpeg executable")
 	flag.Parse()
 
 	return cfg

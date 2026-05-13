@@ -25,6 +25,7 @@ import (
 
 	"github.com/openlibrecommunity/olcrtc/internal/crypto"
 	"github.com/openlibrecommunity/olcrtc/internal/link"
+	"github.com/openlibrecommunity/olcrtc/internal/logger"
 )
 
 // ErrClosed is returned from Read/Write after the conn has been closed.
@@ -53,6 +54,7 @@ func New(ln link.Link, cipher *crypto.Cipher) *Conn {
 func (c *Conn) Push(ciphertext []byte) {
 	pt, err := c.cipher.Decrypt(ciphertext)
 	if err != nil {
+		logger.Debugf("muxconn: decrypt failed, dropping frame: %v", err)
 		return
 	}
 	c.mu.Lock()

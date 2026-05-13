@@ -90,6 +90,7 @@ videochannel используйте `script/srv.sh` или Docker-контейн
 | `-video-qr-size` | Размер фрагмента QR в байтах, `0` = авто | `0` |
 | `-video-tile-module` | Размер тайла в пикселях 1..270 (только `tile`) | `4` |
 | `-video-tile-rs` | Reed-Solomon паритет % 0..200 (только `tile`) | `20` |
+| `-ffmpeg` | Путь к исполняемому файлу ffmpeg | `ffmpeg` |
 
 Для codec `tile` нужно точно `1080x1080`.
 

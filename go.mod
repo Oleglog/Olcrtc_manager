@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
+	github.com/livekit/protocol v1.45.3
 	github.com/livekit/server-sdk-go/v2 v2.16.2
 	github.com/magefile/mage v1.17.1
 	github.com/pion/rtp v1.10.1
@@ -45,7 +46,6 @@ require (
 	github.com/lithammer/shortuuid/v4 v4.2.0 // indirect
 	github.com/livekit/mageutil v0.0.0-20250511045019-0f1ff63f7731 // indirect
 	github.com/livekit/mediatransportutil v0.0.0-20251128105421-19c7a7b81c22 // indirect
-	github.com/livekit/protocol v1.45.3 // indirect
 	github.com/livekit/psrpc v0.7.1 // indirect
 	github.com/makiuchi-d/gozxing v0.1.1 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
