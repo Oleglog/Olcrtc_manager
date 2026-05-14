@@ -116,12 +116,12 @@ Enter choice [1-4, default: 1]:
 ```
 
 Рекомендации:
-- **datachannel** - самый быстрый, минимальный пинг. Работает с `jazz` и `wbstream`. **Jazz банит IP за datachannel** - лучше используй только с `wbstream`.
+- **datachannel** - самый быстрый, минимальный пинг. Работает с `jazz` и условно с `wbstream`. **Jazz банит IP за datachannel**; **WBStream DC требует `canPublishData`/модераторские права у участников**, поэтому для обычного guest flow не рекомендуется.
 - **vp8channel** - работает везде, быстрый, но большой пинг.
 - **seichannel** - работает везде кроме telemost, медленный, но мелкий пинг.
 - **videochannel** - работает везде, самый медленный и большой пинг.
 
-**Лучшая комбинация: `wbstream + datachannel`** - максимальная скорость, минимальный пинг, без риска бана.
+**Рекомендуемая комбинация для wbstream: `wbstream + vp8channel`**. `wbstream + datachannel` используй только если участникам выданы права на отправку data packets.
 
 ### Room ID
 

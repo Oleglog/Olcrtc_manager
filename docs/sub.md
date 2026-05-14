@@ -154,7 +154,7 @@ olcrtc://wbstream?datachannel@abc123xyz#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 ##name: DE-Backup
 ##icon: 🇩🇪
 ##color: #2EBD85
-##comment: reserve route, wbstream+datachannel - max speed
+##comment: reserve route, wbstream+datachannel requires canPublishData/moderator permissions
 ```
 
 ## Имплементация клиента для подписок

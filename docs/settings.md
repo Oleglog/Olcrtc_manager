@@ -14,7 +14,7 @@
 
 | Transport | telemost | jazz | wbstream |
 |-----------|:--------:|:----:|:--------:|
-| datachannel | - | * | + |
+| datachannel | - | * | ! |
 | vp8channel | + | + | + |
 | seichannel | - | + | + |
 | videochannel | + | + | + |
@@ -23,8 +23,9 @@
 - `+` - работает
 - `-` - не поддерживается
 - `*` - работает, но не желательно
+- `!` - работает только если участникам выданы права на отправку data packets (`canPublishData`), обычно через модераторские права
 
-**Рекомендуемая комбинация: `wbstream + datachannel`** - максимальная скорость, минимальный пинг.
+**Рекомендуемая комбинация для wbstream: `wbstream + vp8channel`**. `wbstream + datachannel` быстрый, но в обычном guest/anonymous flow WB Stream выдаёт токены с `canPublishData=false`; без выдачи участникам модераторских/permission прав DC не маршрутизирует данные и поэтому не рекомендуется.
 
 Скорость по убыванию: `datachannel` > `vp8channel` > `seichannel` > `videochannel`
 
@@ -162,7 +163,9 @@ gen:
 
 ## Готовые конфиги
 
-### wbstream + datachannel (рекомендуется - максимальная скорость, без бана)
+### wbstream + datachannel (не рекомендуется без модераторских прав)
+
+WB Stream DataChannel работает только когда участникам выданы права на отправку data packets (`canPublishData=true`), обычно через модераторские/permission права комнаты. В обычном guest flow WB Stream может выдавать токены с `canPublishData=false`, тогда соединение поднимется, но данные через DC не пойдут. Для обычного использования выбирай `vp8channel`, `seichannel` или `videochannel`.
 
 ```yaml
 # room ID нужно создать вручную через https://stream.wb.ru
@@ -201,7 +204,7 @@ socks:
 data: data
 ```
 
-### wbstream + datachannel + SOCKS5 аутентификация
+### wbstream + datachannel + SOCKS5 аутентификация (только с модераторскими правами)
 
 ```yaml
 # client.yaml с логином и паролем на прокси

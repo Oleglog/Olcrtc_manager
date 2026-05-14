@@ -147,9 +147,11 @@ openssl rand -hex 32
 
 На серверной машине (VPS и т.д.). Подбери нужную комбинацию carrier + transport из матрицы в [settings.md](settings.md).
 
-### wbstream + datachannel (рекомендуется - максимальная скорость и пинг)
+### wbstream + vp8channel (рекомендуется)
 
 Сначала создай руму вручную через сайт [wbstream](https://stream.wb.ru) (автогенерация через `mode: gen` для wbstream больше не поддерживается) и сохрани её ID.
+
+`wbstream + datachannel` поддерживается только если участникам выданы права на отправку data packets (`canPublishData=true`), обычно через модераторские/permission права комнаты. В обычном guest flow DC не рекомендуется.
 
 Создай YAML конфиг:
 
@@ -164,7 +166,7 @@ room:
 crypto:
   key: "d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799"
 net:
-  transport: datachannel
+  transport: vp8channel
   dns: "1.1.1.1:53"
 data: data
 ```
@@ -182,7 +184,7 @@ Room ID нужно передать клиенту.
 Добавь `debug: true` в YAML конфиг - увидишь каждое соединение:
 
 ```
-2026/05/03 08:05:23 Connecting link via direct/datachannel/wbstream...
+2026/05/03 08:05:23 Connecting link via direct/vp8channel/wbstream...
 2026/05/03 08:05:25 wbstream publisher state: connected
 2026/05/03 08:05:27 Link connected
 2026/05/03 08:05:43 sid=3 connect icanhazip.com:443
@@ -195,7 +197,7 @@ Room ID нужно передать клиенту.
 
 На своей машине. Auth provider, transport, room ID и key должны совпадать с сервером.
 
-### wbstream + datachannel
+### wbstream + vp8channel
 
 ```yaml
 # client.yaml
@@ -208,7 +210,7 @@ room:
 crypto:
   key: "<hex-key>"
 net:
-  transport: datachannel
+  transport: vp8channel
   dns: "1.1.1.1:53"
 socks:
   host: "127.0.0.1"
@@ -239,7 +241,7 @@ room:
 crypto:
   key: "<hex-key>"
 net:
-  transport: datachannel
+  transport: vp8channel
   dns: "1.1.1.1:53"
 socks:
   host: "127.0.0.1"

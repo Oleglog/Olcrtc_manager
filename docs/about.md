@@ -393,8 +393,9 @@ Carrier - это WebRTC сервис видеозвонков, через кот
 - Сервис трансляций от Wildberries: `stream.wb.ru`
 - **Рекомендуется** - самый стабильный
 - Минимальная прослойка, почти прямой relay
-- Работает со всеми транспортами: datachannel, vp8channel, seichannel, videochannel
-- Поддерживает автогенерацию Room ID (`mode: gen`)
+- Работает с vp8channel, seichannel, videochannel
+- DataChannel поддерживается условно: WB Stream должен выдать участникам право `canPublishData`, обычно через модераторские/permission права комнаты. В обычном guest flow DC не рекомендуется.
+- Room ID нужно создавать вручную через stream.wb.ru
 - Инициализация звонка автоматически
 
 ---
@@ -409,8 +410,8 @@ Transport определяет как именно данные упаковыв
 
 - Лимит payload: 12KB на сообщение (ограничение SFU)
 - Надёжный, упорядоченный (SCTP гарантирует)
-- Работает с jazz (нежелательно - банят) и wbstream
-- **Лучшая комбинация: `wbstream + datachannel`**
+- Работает с jazz (нежелательно - банят) и условно с wbstream
+- WB Stream DataChannel требует `canPublishData=true` у участников. Без модераторских/permission прав WB Stream может поднять соединение, но не маршрутизировать data packets.
 
 ### vp8channel
 
@@ -582,7 +583,7 @@ cd olcrtc
 # генерация ключа
 openssl rand -hex 32
 
-# создать конфиг (пример: wbstream + datachannel)
+# создать конфиг (пример: wbstream + vp8channel)
 cat > server.yaml <<EOF
 mode: srv
 link: direct
@@ -593,7 +594,7 @@ room:
 crypto:
   key: "REPLACE_WITH_64_HEX"
 net:
-  transport: datachannel
+  transport: vp8channel
   dns: "1.1.1.1:53"
 data: data
 EOF
@@ -612,7 +613,7 @@ room:
 crypto:
   key: "REPLACE_WITH_64_HEX"
 net:
-  transport: datachannel
+  transport: vp8channel
   dns: "1.1.1.1:53"
 socks:
   host: "127.0.0.1"
@@ -702,8 +703,8 @@ olcrtc://<Carrier>?<Transport><payload>@<RoomID>#<Key>$<MIMO>
 
 **Примеры:**
 ```
-olcrtc://wbstream?datachannel@room-01#d823fa...$RU / olc free sub
 olcrtc://wbstream?vp8channel<vp8-fps=60&vp8-batch=64>@room-01#d823fa...$RU
+olcrtc://wbstream?datachannel@room-01#d823fa...$RU / requires canPublishData
 olcrtc://telemost?seichannel<fps=60&batch=64&frag=900&ack-ms=2000>@room-01#d823fa...$RU
 ```
 
@@ -717,7 +718,7 @@ olcrtc://telemost?seichannel<fps=60&batch=64&frag=900&ack-ms=2000>@room-01#d823f
 #refresh: 10m
 #icon: 🇷🇺
 
-olcrtc://wbstream?datachannel@room-01#key$RU / free
+olcrtc://wbstream?vp8channel<vp8-fps=60&vp8-batch=64>@room-01#key$RU / free
 ##name: RU-1
 ##ip: 1.2.3.4
 ##comment: basic free node
@@ -731,7 +732,7 @@ olcrtc://wbstream?datachannel@room-01#key$RU / free
 
 | Transport | telemost | jazz | wbstream |
 |---|:---:|:---:|:---:|
-| datachannel | - | `*` | `+` |
+| datachannel | - | `*` | `!` |
 | vp8channel | `+` | `+` | `+` |
 | seichannel | - | `+` | `+` |
 | videochannel | `+` | `+` | `+` |
@@ -739,14 +740,15 @@ olcrtc://wbstream?datachannel@room-01#key$RU / free
 - `+` работает
 - `-` не поддерживается
 - `*` работает, но jazz банит IP за паттерны datachannel трафика
+- `!` работает только если WB Stream выдал участникам право `canPublishData` (обычно через модераторские/permission права)
 
-**Рекомендуется:** `wbstream + datachannel` - максимальная скорость, минимальный пинг, без бана.
+**Рекомендуется для wbstream:** `vp8channel` как обычный режим. `wbstream + datachannel` быстрый, но не рекомендуется без модераторских прав: в guest flow WB Stream может выдавать токены с `canPublishData=false`, и DC не будет маршрутизировать данные.
 
 **Скорость по убыванию:** `datachannel` > `vp8channel` > `seichannel` > `videochannel`
 
 
 
-**Рекордный замер:** на связке `wbstream + datachannel` (test by `x2827262628281872727`) зафиксированы пинг **7 мс** и скорость **792.62 Mbps на вход / 749.69 Mbps на выход** - максимум, измеренный через olcRTC.
+**Рекордный замер:** на связке `wbstream + datachannel` (test by `x2827262628281872727`) зафиксированы пинг **7 мс** и скорость **792.62 Mbps на вход / 749.69 Mbps на выход** - максимум, измеренный через olcRTC. Сейчас этот режим зависит от WB Stream permission `canPublishData` и не считается рекомендуемым для обычного guest flow.
 
 <img src="asset/speedtest.png" alt="speedtest" width="400">
 
