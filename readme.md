@@ -7,43 +7,107 @@
 
 </div>
 
+> ### ⚠ Known issues / Известные проблемы (май 2026)
+>
+> - **WB Stream**: разработчики stream.wb.ru отключили публичный API создания
+>   комнат и приём гостей в звонки. Автогенерация румы для `wbstream` больше
+>   не работает — руму нужно создать вручную на <https://stream.wb.ru> и
+>   указать её ID в админке (поле `Room ID` в форме настройки инстанса) или
+>   при установке. Подробности см. в `server-install/README.md`.
+> - Чтобы быстро запустить сервер без ручных шагов — используйте `jazz`
+>   (server-side auto-gen всё ещё работает) или `telemost` (для telemost
+>   инсталлятор сам генерирует ID вида `olcrtc-XXXXXXXX`).
 
 ## About
-olcRTC - across the sea
 
-Project that allows users to bypass blocking by parasitizing and tunneling on unblocked and whitelisted services in Russia, use legal webRTC services
+olcRTC — across the sea.
 
-## Status
+Tunnels TCP traffic over WebRTC through whitelisted Russian conferencing
+services (Yandex Telemost, SaluteJazz, Wildberries Stream) so it cannot be
+blocked without breaking the upstream service.
 
-Beta
-<br>
-See all info in [issues](https://github.com/openlibrecommunity/olcrtc/issues)
-<br>
-Issues? contact us at [@openlibrecommunity](https://t.me/openlibrecommunity)
-<br>
-Or wait for the release or at least a release
-<br>
-Community ui client: [alananisimov/olcbox](https://github.com/alananisimov/olcbox)
+This fork ([Oleglog/Olcrtc_manager](https://github.com/Oleglog/Olcrtc_manager))
+adds a one-command systemd installer, interactive management menu, SOCKS5
+proxy support for signalling, multi-instance support, and pre-built binaries
+for `linux/amd64` and `linux/arm64`.
 
-## Read docs for start 
+## Quick links
 
-[Configuration](docs/configuration.md)
+| | |
+|---|---|
+| **Server install (one command)** | [`server-install/`](server-install/) — [README](server-install/README.md) |
+| **WARP proxy (hide VPS IP)** | [server-install/WARP-PROXY.md](server-install/WARP-PROXY.md) |
+| **Android client** | [Oleglog/Exclave_FORK](https://github.com/Oleglog/Exclave_FORK) |
+| **Upstream project** | [openlibrecommunity/olcrtc](https://github.com/openlibrecommunity/olcrtc) |
 
-[For noobs](docs/fast.md)
+## Server — quick start
 
-[Manual](docs/manual.md)
+One command, no git required:
 
-[Setting matrix](docs/settings.md)
+```bash
+curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/master/server-install/olcrtc-setup.sh | sudo bash
+```
 
-[Client URI format](docs/uri.md)
+Or from a checkout:
+```bash
+git clone https://github.com/Oleglog/Olcrtc_manager
+cd Olcrtc_manager
+sudo bash server-install/olcrtc-setup.sh
+```
 
-[Client subscription format](docs/sub.md)
+The script is **self-contained** — it downloads the binary, installs the
+systemd service, and prints **Carrier**, **Transport**, **Room ID** and
+**Encryption key** to enter into the Android app.
 
-[Read before ask](docs/about.md)
+After installation, re-run the same script for an interactive management menu.
 
+See the full server documentation: **[server-install/README.md](server-install/README.md)**
 
+## Carrier & transport matrix
 
-## Build
+| Transport | telemost | jazz | wbstream |
+|-----------|:--------:|:----:|:--------:|
+| datachannel | ✗ | ✓ | ✓ |
+| vp8channel | ✓ | ✓ | ✓ |
+| seichannel | ✗ | ✓ | ✓ |
+| videochannel | ✓ | ✓ | ✓ |
+
+Speed (descending): **datachannel** (~6 MB/s) > **vp8channel** > **seichannel** > **videochannel** (~200 KB/s)
+
+Default carrier: **wbstream**. Default transport: **datachannel**.
+
+## Server management
+
+Re-run the same script — it detects the existing installation and shows a menu:
+
+```bash
+sudo bash olcrtc-setup.sh
+```
+
+Menu items include:
+- Change carrier / transport
+- Regenerate room ID / encryption key
+- Configure SOCKS5 proxy
+- Toggle debug logging
+- Multiple instances (up to 20)
+- Update binary
+- Full uninstall
+
+### Uninstall
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/master/server-install/olcrtc-uninstall.sh | sudo bash
+```
+
+See [`server-install/README.md`](server-install/README.md) for details.
+
+## Docs (upstream)
+
+- [Quick start with containers](docs/fast.md)
+- [Manual setup](docs/manual.md)
+- [Settings matrix](docs/settings.md)
+
+## Build from source
 
 ```bash
 # install mage first
@@ -72,8 +136,39 @@ mage docker
 mage lint
 mage test
 mage clean
-
 ```
+
+## SOCKS5 proxy for signalling
+
+If your VPS IP is blocked by wbstream / jazz / telemost, route signalling
+through a residential SOCKS5 proxy:
+
+```bash
+sudo bash olcrtc-setup.sh --socks-proxy user:pass@host:port
+```
+
+Only provider API / signalling goes through the proxy. Client TCP tunnel
+traffic exits directly from the VPS. See
+[server-install/README.md § Outbound SOCKS5 proxy](server-install/README.md#outbound-socks5-proxy-when-your-vps-ip-is-blocked).
+
+## WARP proxy (hide VPS IP)
+
+Route client tunnel traffic through Cloudflare WARP so visited sites see a
+WARP IP instead of your VPS IP. Two setup options:
+
+- **wireproxy** — standalone daemon, no dependencies
+- **3X-UI** — use an existing Xray WARP outbound as SOCKS5
+
+Enable via menu (item 14) or env:
+```bash
+# /etc/olcrtc/env
+OLCRTC_WARP_PROXY=127.0.0.1:40000
+```
+
+Full guide: **[server-install/WARP-PROXY.md](server-install/WARP-PROXY.md)**
+
+## License
+Apache License 2.0. See `LICENSE` for details.
 
 <div align="center">
 

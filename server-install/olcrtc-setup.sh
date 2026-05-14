@@ -190,6 +190,21 @@ do_update() {
     else
         echo "[!] Failed to download olcrtc-admin binary (may not exist yet)" >&2
     fi
+
+    # Update launcher script as well (it may have changed between versions).
+    SCRIPT_DIR=""
+    if [ -n "${BASH_SOURCE:-}" ]; then
+        SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    fi
+    LAUNCHER_SRC=""
+    [ -n "$SCRIPT_DIR" ] && LAUNCHER_SRC="$SCRIPT_DIR/systemd/olcrtc-launcher"
+    if [ -n "$LAUNCHER_SRC" ] && [ -f "$LAUNCHER_SRC" ]; then
+        install -m 0755 "$LAUNCHER_SRC" /usr/local/bin/olcrtc-launcher
+        echo "  olcrtc-launcher updated"
+    else
+        echo "[!] Launcher source not found, skipping launcher update" >&2
+    fi
+
     rm -rf "$tmpdir"
 
     systemctl daemon-reload
