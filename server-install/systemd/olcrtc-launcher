@@ -1,0 +1,193 @@
+#!/usr/bin/env bash
+# olcRTC server launcher (refactor-universal-carrier branch).
+#
+# Reads /etc/olcrtc/env (already loaded by systemd into the process
+# environment via EnvironmentFile=) and translates it into a YAML config
+# file consumed by the olcrtc binary.
+#
+# Recognised environment variables:
+#   OLCRTC_CARRIER           required: telemost | jazz | wbstream
+#   OLCRTC_PROVIDER          deprecated alias for OLCRTC_CARRIER
+#   OLCRTC_ROOM_ID           required: room ID (for jazz/wbstream "any" auto-creates)
+#   OLCRTC_KEY               required: 64-char hex encryption key
+#   OLCRTC_TRANSPORT         optional: datachannel | vp8channel | seichannel | videochannel (default: datachannel)
+#   OLCRTC_LINK              optional: direct (default: direct)
+#   OLCRTC_DNS               optional: DNS resolver (default 1.1.1.1:53)
+#   OLCRTC_DEBUG             optional: set to 1 to enable debug verbose logging
+#   OLCRTC_VP8_FPS           optional: VP8 FPS (default 60, only for vp8channel)
+#   OLCRTC_VP8_BATCH         optional: VP8 batch size (default 8, only for vp8channel)
+#   OLCRTC_SEI_FPS           optional: SEI FPS (default 30)
+#   OLCRTC_SEI_BATCH         optional: SEI batch size (default 10)
+#   OLCRTC_SEI_FRAG          optional: SEI fragment size (default 1200)
+#   OLCRTC_SEI_ACK           optional: SEI ack timeout ms (default 500)
+#   OLCRTC_SOCKS_PROXY       optional: SOCKS5 proxy used for signalling traffic.
+#                                       Accepted forms:
+#                                         host:port
+#                                         user:pass@host:port    (RFC 1929)
+#                                         socks5://[user:pass@]host:port
+#   OLCRTC_WARP_PROXY        optional: WARP SOCKS5 proxy for client tunnel traffic.
+#                                       Form: host:port (e.g. 127.0.0.1:40000)
+#   OLCRTC_SUB_ENABLED       optional: set to 1 to enable subscription server
+#   OLCRTC_SUB_PORT          optional: subscription server port (default 2096)
+#   OLCRTC_SUB_DB            optional: subscription DB path (default /var/lib/olcrtc/subscriptions.db)
+#   OLCRTC_SUB_API_TOKEN     optional: subscription API token
+
+set -euo pipefail
+
+CONFIG_DIR="/etc/olcrtc"
+CONFIG_FILE="${CONFIG_DIR}/config.yaml"
+
+# Carrier: prefer OLCRTC_CARRIER, fall back to legacy OLCRTC_PROVIDER
+carrier="${OLCRTC_CARRIER:-${OLCRTC_PROVIDER:-}}"
+# Backward compat: wb_stream -> wbstream
+[ "$carrier" = "wb_stream" ] && carrier="wbstream"
+
+if [ -z "$carrier" ] || [ -z "${OLCRTC_ROOM_ID:-}" ] || [ -z "${OLCRTC_KEY:-}" ]; then
+    echo "olcrtc-launcher: missing required env (OLCRTC_CARRIER / OLCRTC_ROOM_ID / OLCRTC_KEY)" >&2
+    exit 64
+fi
+
+transport="${OLCRTC_TRANSPORT:-datachannel}"
+link="${OLCRTC_LINK:-direct}"
+dns="${OLCRTC_DNS:-1.1.1.1:53}"
+debug="false"
+if [ -n "${OLCRTC_DEBUG:-}" ] && [ "$OLCRTC_DEBUG" != "0" ] && [ "$OLCRTC_DEBUG" != "false" ]; then
+    debug="true"
+fi
+
+# Build YAML
+cat > "$CONFIG_FILE" <<EOF
+mode: srv
+link: ${link}
+auth:
+  provider: ${carrier}
+room:
+  id: "${OLCRTC_ROOM_ID}"
+crypto:
+  key: "${OLCRTC_KEY}"
+net:
+  transport: ${transport}
+  dns: "${dns}"
+data: data
+debug: ${debug}
+ffmpeg: ffmpeg
+EOF
+
+# SOCKS proxy
+if [ -n "${OLCRTC_SOCKS_PROXY:-}" ]; then
+    proxy="$OLCRTC_SOCKS_PROXY"
+    proxy="${proxy#socks5://}"
+    proxy="${proxy#socks5h://}"
+
+    proxy_user=""
+    proxy_pass=""
+    if [[ "$proxy" == *"@"* ]]; then
+        creds="${proxy%@*}"
+        proxy="${proxy##*@}"
+        if [[ "$creds" == *":"* ]]; then
+            proxy_user="${creds%%:*}"
+            proxy_pass="${creds#*:}"
+        else
+            proxy_user="$creds"
+        fi
+    fi
+
+    proxy_host="${proxy%:*}"
+    proxy_port="${proxy##*:}"
+
+    cat >> "$CONFIG_FILE" <<EOF
+socks:
+  host: ""
+  port: 0
+  proxy_addr: "${proxy_host}"
+  proxy_port: ${proxy_port}
+EOF
+    if [ -n "$proxy_user" ]; then
+        echo "  proxy_user: \"${proxy_user}\"" >> "$CONFIG_FILE"
+    fi
+    if [ -n "$proxy_pass" ]; then
+        echo "  proxy_pass: \"${proxy_pass}\"" >> "$CONFIG_FILE"
+    fi
+else
+    cat >> "$CONFIG_FILE" <<EOF
+socks:
+  host: ""
+  port: 0
+EOF
+fi
+
+# WARP proxy
+if [ -n "${OLCRTC_WARP_PROXY:-}" ]; then
+    warp="$OLCRTC_WARP_PROXY"
+    warp_host="${warp%:*}"
+    warp_port="${warp##*:}"
+    cat >> "$CONFIG_FILE" <<EOF
+warp:
+  proxy_addr: "${warp_host}"
+  proxy_port: ${warp_port}
+EOF
+else
+    cat >> "$CONFIG_FILE" <<EOF
+warp:
+  proxy_addr: ""
+  proxy_port: 0
+EOF
+fi
+
+# Subscription server
+sub_enabled="false"
+if [ -n "${OLCRTC_SUB_ENABLED:-}" ] && [ "$OLCRTC_SUB_ENABLED" != "0" ] && [ "$OLCRTC_SUB_ENABLED" != "false" ]; then
+    sub_enabled="true"
+fi
+sub_port="${OLCRTC_SUB_PORT:-2096}"
+sub_db="${OLCRTC_SUB_DB:-/var/lib/olcrtc/subscriptions.db}"
+sub_token="${OLCRTC_SUB_API_TOKEN:-}"
+
+cat >> "$CONFIG_FILE" <<EOF
+subscription:
+  enabled: ${sub_enabled}
+  port: ${sub_port}
+  db_path: "${sub_db}"
+  api_token: "${sub_token}"
+EOF
+
+# VP8 options
+if [ "$transport" = "vp8channel" ]; then
+    vp8_fps="${OLCRTC_VP8_FPS:-60}"
+    vp8_batch="${OLCRTC_VP8_BATCH:-8}"
+    cat >> "$CONFIG_FILE" <<EOF
+vp8:
+  fps: ${vp8_fps}
+  batch_size: ${vp8_batch}
+EOF
+fi
+
+# SEI options
+if [ "$transport" = "seichannel" ]; then
+    sei_fps="${OLCRTC_SEI_FPS:-30}"
+    sei_batch="${OLCRTC_SEI_BATCH:-10}"
+    sei_frag="${OLCRTC_SEI_FRAG:-1200}"
+    sei_ack="${OLCRTC_SEI_ACK:-500}"
+    cat >> "$CONFIG_FILE" <<EOF
+sei:
+  fps: ${sei_fps}
+  batch_size: ${sei_batch}
+  fragment_size: ${sei_frag}
+  ack_timeout_ms: ${sei_ack}
+EOF
+fi
+
+# Video channel defaults (only if explicitly videochannel, otherwise minimal)
+if [ "$transport" = "videochannel" ]; then
+    cat >> "$CONFIG_FILE" <<EOF
+video:
+  width: 1920
+  height: 1080
+  fps: 30
+  bitrate: "2M"
+  hw: none
+  codec: qrcode
+EOF
+fi
+
+exec /usr/local/bin/olcrtc "$CONFIG_FILE"

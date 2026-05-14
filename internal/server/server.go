@@ -20,7 +20,9 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 	"github.com/openlibrecommunity/olcrtc/internal/muxconn"
 	"github.com/openlibrecommunity/olcrtc/internal/names"
+	"github.com/openlibrecommunity/olcrtc/internal/protect"
 	"github.com/xtaci/smux"
+	"golang.org/x/net/proxy"
 )
 
 const connectCommand = "connect"
@@ -68,6 +70,10 @@ type Server struct {
 	resolver       *net.Resolver
 	socksProxyAddr string
 	socksProxyPort int
+	socksProxyUser string
+	socksProxyPass string
+	warpProxyAddr  string
+	warpProxyPort  int
 }
 
 // ConnectRequest is a message from the client to establish a new connection.
@@ -87,6 +93,10 @@ type Config struct {
 	DNSServer       string
 	SOCKSProxyAddr  string
 	SOCKSProxyPort  int
+	SOCKSProxyUser  string
+	SOCKSProxyPass  string
+	WarpProxyAddr   string
+	WarpProxyPort   int
 	VideoWidth      int
 	VideoHeight     int
 	VideoFPS        int
@@ -129,6 +139,19 @@ func Run(ctx context.Context, cfg Config) error {
 		return fmt.Errorf("setupCipher failed: %w", err)
 	}
 
+	// Install the SOCKS5 config globally so all HTTP clients used by
+	// auth providers (jazz/wbstream/telemost API calls) and outbound dials
+	// route through the same proxy.
+	if cfg.SOCKSProxyAddr != "" {
+		protect.SetSocks5(protect.Socks5Config{
+			Addr: net.JoinHostPort(cfg.SOCKSProxyAddr, strconv.Itoa(cfg.SOCKSProxyPort)),
+			User: cfg.SOCKSProxyUser,
+			Pass: cfg.SOCKSProxyPass,
+		})
+	} else {
+		protect.SetSocks5(protect.Socks5Config{})
+	}
+
 	hook := cfg.AuthHook
 	if hook == nil {
 		hook = defaultAuthHook
@@ -155,6 +178,10 @@ func Run(ctx context.Context, cfg Config) error {
 		dnsServer:      cfg.DNSServer,
 		socksProxyAddr: cfg.SOCKSProxyAddr,
 		socksProxyPort: cfg.SOCKSProxyPort,
+		socksProxyUser: cfg.SOCKSProxyUser,
+		socksProxyPass: cfg.SOCKSProxyPass,
+		warpProxyAddr:  cfg.WarpProxyAddr,
+		warpProxyPort:  cfg.WarpProxyPort,
 	}
 	s.setupResolver()
 
@@ -590,8 +617,31 @@ func (s *Server) dispatch(stream *smux.Stream, req ConnectRequest) {
 	}
 }
 
+// dial opens a TCP connection to req.Addr:req.Port for client tunnel
+// traffic. If a WARP proxy is configured, all client traffic is routed
+// through it so the remote endpoint sees a Cloudflare WARP IP instead of
+// the VPS IP. The carrier SOCKS5 proxy (used for signalling) is never
+// used here.
 func (s *Server) dial(req ConnectRequest) (net.Conn, error) {
 	addr := net.JoinHostPort(req.Addr, strconv.Itoa(req.Port))
+
+	// If WARP proxy is configured, route client traffic through it.
+	if s.warpProxyAddr != "" {
+		proxyAddr := net.JoinHostPort(s.warpProxyAddr, strconv.Itoa(s.warpProxyPort))
+		dialer, err := proxy.SOCKS5("tcp", proxyAddr, nil, &net.Dialer{
+			Timeout:  10 * time.Second,
+			Resolver: s.resolver,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("warp proxy setup failed: %w", err)
+		}
+		conn, err := dialer.Dial("tcp4", addr)
+		if err != nil {
+			return nil, fmt.Errorf("dial via warp failed: %w", err)
+		}
+		return conn, nil
+	}
+
 	if s.socksProxyAddr == "" {
 		dialer := &net.Dialer{
 			Timeout:   10 * time.Second,

@@ -22,6 +22,8 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/transport/seichannel"
 	"github.com/openlibrecommunity/olcrtc/internal/transport/videochannel"
 	"github.com/openlibrecommunity/olcrtc/internal/transport/vp8channel"
+	subserver "github.com/openlibrecommunity/olcrtc/internal/subscription/server"
+	"github.com/openlibrecommunity/olcrtc/internal/subscription/store"
 )
 
 const (
@@ -139,6 +141,16 @@ type Config struct {
 	SEIFragmentSize int
 	SEIAckTimeoutMS int
 	Amount          int
+
+	// Наши фичи, которых нет в refactor:
+	SOCKSProxyUser string
+	SOCKSProxyPass string
+	WarpProxyAddr  string
+	WarpProxyPort  int
+	SubEnabled     bool
+	SubPort        int
+	SubDBPath      string
+	SubAPIToken    string
 }
 
 // RegisterDefaults registers built-in carriers and transports.
@@ -336,6 +348,11 @@ func Run(ctx context.Context, cfg Config) error {
 
 	switch cfg.Mode {
 	case modeSRV:
+		if cfg.SubEnabled {
+			if err := startSubscriptionServer(ctx, cfg); err != nil {
+				logger.Warnf("subscription server failed to start (continuing without it): %v", err)
+			}
+		}
 		if err := server.Run(ctx, server.Config{
 			Link:            cfg.Link,
 			Transport:       cfg.Transport,
@@ -345,6 +362,10 @@ func Run(ctx context.Context, cfg Config) error {
 			DNSServer:       cfg.DNSServer,
 			SOCKSProxyAddr:  cfg.SOCKSProxyAddr,
 			SOCKSProxyPort:  cfg.SOCKSProxyPort,
+			SOCKSProxyUser:  cfg.SOCKSProxyUser,
+			SOCKSProxyPass:  cfg.SOCKSProxyPass,
+			WarpProxyAddr:   cfg.WarpProxyAddr,
+			WarpProxyPort:   cfg.WarpProxyPort,
 			VideoWidth:      cfg.VideoWidth,
 			VideoHeight:     cfg.VideoHeight,
 			VideoFPS:        cfg.VideoFPS,
@@ -388,6 +409,8 @@ func Run(ctx context.Context, cfg Config) error {
 			DNSServer:       cfg.DNSServer,
 			SOCKSUser:       cfg.SOCKSUser,
 			SOCKSPass:       cfg.SOCKSPass,
+			WarpProxyAddr:   cfg.WarpProxyAddr,
+			WarpProxyPort:   cfg.WarpProxyPort,
 			VideoWidth:      cfg.VideoWidth,
 			VideoHeight:     cfg.VideoHeight,
 			VideoFPS:        cfg.VideoFPS,
@@ -481,5 +504,31 @@ func Gen(ctx context.Context, cfg Config, out func(string)) error {
 		}
 		out(roomID)
 	}
+	return nil
+}
+
+func startSubscriptionServer(ctx context.Context, cfg Config) error {
+	dbPath := cfg.SubDBPath
+	if dbPath == "" {
+		dbPath = "data/subscriptions.db"
+	}
+	port := cfg.SubPort
+	if port == 0 {
+		port = 2096
+	}
+
+	st, err := store.Open(dbPath)
+	if err != nil {
+		return fmt.Errorf("open subscription db: %w", err)
+	}
+
+	srv := subserver.New(st, port, cfg.SubAPIToken)
+	go func() {
+		if err := srv.Start(ctx); err != nil {
+			logger.Errorf("subscription server stopped: %v", err)
+		}
+		_ = st.Close()
+	}()
+
 	return nil
 }

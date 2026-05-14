@@ -74,6 +74,8 @@ type Config struct {
 	DNSServer       string
 	SOCKSUser       string
 	SOCKSPass       string
+	WarpProxyAddr   string
+	WarpProxyPort   int
 	VideoWidth      int
 	VideoHeight     int
 	VideoFPS        int

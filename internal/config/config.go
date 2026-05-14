@@ -29,15 +29,17 @@ type File struct {
 	Room   Room   `yaml:"room"`
 	Crypto Crypto `yaml:"crypto"`
 	Net    Net    `yaml:"net"`
-	SOCKS  SOCKS  `yaml:"socks"`
-	Engine Engine `yaml:"engine"`
-	Video  Video  `yaml:"video"`
-	VP8    VP8    `yaml:"vp8"`
-	SEI    SEI    `yaml:"sei"`
-	Gen    Gen    `yaml:"gen"`
-	Data   string `yaml:"data"`
-	Debug  bool   `yaml:"debug"`
-	FFmpeg string `yaml:"ffmpeg"`
+	SOCKS        SOCKS        `yaml:"socks"`
+	Engine       Engine       `yaml:"engine"`
+	Video        Video        `yaml:"video"`
+	VP8          VP8          `yaml:"vp8"`
+	SEI          SEI          `yaml:"sei"`
+	Gen          Gen          `yaml:"gen"`
+	Subscription Subscription `yaml:"subscription"`
+	Warp         Warp         `yaml:"warp"`
+	Data         string       `yaml:"data"`
+	Debug        bool         `yaml:"debug"`
+	FFmpeg       string       `yaml:"ffmpeg"`
 }
 
 // Auth selects the auth provider.
@@ -69,6 +71,22 @@ type SOCKS struct {
 	Pass      string `yaml:"pass"`
 	ProxyAddr string `yaml:"proxy_addr"`
 	ProxyPort int    `yaml:"proxy_port"`
+	ProxyUser string `yaml:"proxy_user"`   // наша фича
+	ProxyPass string `yaml:"proxy_pass"`   // наша фича
+}
+
+// Warp holds WARP proxy settings.
+type Warp struct {
+	ProxyAddr string `yaml:"proxy_addr"`
+	ProxyPort int    `yaml:"proxy_port"`
+}
+
+// Subscription holds subscription server settings.
+type Subscription struct {
+	Enabled  bool   `yaml:"enabled"`
+	Port     int    `yaml:"port"`
+	DBPath   string `yaml:"db_path"`
+	APIToken string `yaml:"api_token"`
 }
 
 // Engine selects a direct SFU connection when Auth.Provider is "none".
@@ -164,6 +182,14 @@ func Apply(dst session.Config, f File) session.Config {
 	dst.SEIFragmentSize = pickInt(dst.SEIFragmentSize, f.SEI.FragmentSize)
 	dst.SEIAckTimeoutMS = pickInt(dst.SEIAckTimeoutMS, f.SEI.AckTimeoutMS)
 	dst.Amount = pickInt(dst.Amount, f.Gen.Amount)
+	dst.SOCKSProxyUser = pickString(dst.SOCKSProxyUser, f.SOCKS.ProxyUser)
+	dst.SOCKSProxyPass = pickString(dst.SOCKSProxyPass, f.SOCKS.ProxyPass)
+	dst.WarpProxyAddr = pickString(dst.WarpProxyAddr, f.Warp.ProxyAddr)
+	dst.WarpProxyPort = pickInt(dst.WarpProxyPort, f.Warp.ProxyPort)
+	dst.SubEnabled = f.Subscription.Enabled
+	dst.SubPort = pickInt(dst.SubPort, f.Subscription.Port)
+	dst.SubDBPath = pickString(dst.SubDBPath, f.Subscription.DBPath)
+	dst.SubAPIToken = pickString(dst.SubAPIToken, f.Subscription.APIToken)
 	return dst
 }
 
