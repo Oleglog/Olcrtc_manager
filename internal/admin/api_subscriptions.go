@@ -74,7 +74,7 @@ func (s *Server) doProxy(w http.ResponseWriter, req *http.Request) {
 		if strings.Contains(err.Error(), "connection refused") {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusServiceUnavailable)
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"error":    "subscription_service_unavailable",
 				"message":  "Сервис подписок не запущен на порту " + itoa(s.cfg.SubPort) + ". Убедитесь, что olcrtc-server работает с включёнными подписками.",
 				"sub_port": s.cfg.SubPort,
@@ -92,7 +92,7 @@ func (s *Server) doProxy(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	_, _ = io.Copy(w, resp.Body)
 }
 
 func itoa(n int) string {

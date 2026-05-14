@@ -235,5 +235,5 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 		contentType = "image/x-icon"
 	}
 	w.Header().Set("Content-Type", contentType)
-	w.Write(data)
+	_, _ = w.Write(data)
 }

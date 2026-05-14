@@ -209,7 +209,7 @@ func (s *Server) deleteInstance(w http.ResponseWriter, id int) {
 
 	// Remove directory if empty.
 	dir := filepath.Dir(envPath)
-	os.Remove(dir)
+	_ = os.Remove(dir)
 
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": id})
 }

@@ -38,12 +38,12 @@ func Open(dbPath string) (*Store, error) {
 
 	// WAL mode for better concurrent read performance.
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("set WAL mode: %w", err)
 	}
 
 	if err := migrate(db); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, err
 	}
 
@@ -107,7 +107,7 @@ func (s *Store) ListSubscriptions() ([]model.Subscription, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	subs := make([]model.Subscription, 0)
 	for rows.Next() {
@@ -192,7 +192,7 @@ func (s *Store) ListInstances(slug string) ([]model.Instance, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var insts []model.Instance
 	for rows.Next() {
@@ -247,7 +247,7 @@ func (s *Store) InstanceURIs(slug string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var uris []string
 	for rows.Next() {

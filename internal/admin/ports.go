@@ -15,7 +15,7 @@ func FindFreePort() (int, error) {
 	for _, p := range preferredPorts {
 		ln, err := net.Listen("tcp", fmt.Sprintf(":%d", p))
 		if err == nil {
-			ln.Close()
+			_ = ln.Close()
 			return p, nil
 		}
 	}
@@ -24,7 +24,7 @@ func FindFreePort() (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	return ln.Addr().(*net.TCPAddr).Port, nil
 }
 
@@ -34,7 +34,7 @@ func IsPortFree(host string, port int) bool {
 	if err != nil {
 		return false
 	}
-	ln.Close()
+	_ = ln.Close()
 	return true
 }
 

@@ -91,7 +91,7 @@ func main() {
 
 	log.Printf("olcrtc-admin starting on https://%s:%d", publicIP, *port)
 	if err := srv.Start(ctx); err != nil {
-		log.Fatalf("Server error: %v", err)
+		log.Printf("Server error: %v", err)
 	}
 }
 
