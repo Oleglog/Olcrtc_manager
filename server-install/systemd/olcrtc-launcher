@@ -34,8 +34,7 @@
 
 set -euo pipefail
 
-CONFIG_DIR="/etc/olcrtc"
-CONFIG_FILE="${CONFIG_DIR}/config.yaml"
+CONFIG_FILE="./config.yaml"
 
 # Carrier: prefer OLCRTC_CARRIER, fall back to legacy OLCRTC_PROVIDER
 carrier="${OLCRTC_CARRIER:-${OLCRTC_PROVIDER:-}}"
