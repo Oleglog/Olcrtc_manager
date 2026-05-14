@@ -45,7 +45,7 @@ for `linux/amd64` and `linux/arm64`.
 One command, no git required:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/master/server-install/olcrtc-setup.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/refactor-universal-carrier-fork/server-install/olcrtc-setup.sh | sudo bash
 ```
 
 Or from a checkout:
@@ -96,7 +96,7 @@ Menu items include:
 ### Uninstall
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/master/server-install/olcrtc-uninstall.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/refactor-universal-carrier-fork/server-install/olcrtc-uninstall.sh | sudo bash
 ```
 
 See [`server-install/README.md`](server-install/README.md) for details.

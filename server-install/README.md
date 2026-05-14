@@ -77,7 +77,7 @@ Speed (descending): **datachannel** (~6 MB/s) > **vp8channel** > **seichannel** 
 setup script):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/master/server-install/olcrtc-setup.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/refactor-universal-carrier-fork/server-install/olcrtc-setup.sh | sudo bash
 ```
 
 **Option B — from a release tarball** (binary already inside):
@@ -540,7 +540,7 @@ Recommended — use the uninstall script (handles all instances):
 sudo bash olcrtc-uninstall.sh
 
 # Or one-liner (no checkout needed):
-curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/master/server-install/olcrtc-uninstall.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/refactor-universal-carrier-fork/server-install/olcrtc-uninstall.sh | sudo bash
 ```
 
 Manual (main instance only):
@@ -602,7 +602,7 @@ For `telemost`, no API call is needed — the user-supplied ID is the room.
 ### Самый быстрый путь
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/master/server-install/olcrtc-setup.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/refactor-universal-carrier-fork/server-install/olcrtc-setup.sh | sudo bash
 ```
 
 С residential SOCKS5-прокси (если IP VPS заблокирован у wbstream / jazz / telemost):
@@ -825,7 +825,7 @@ sudo bash olcrtc-setup.sh   # → пункт 30) Управление подпи
 sudo bash olcrtc-uninstall.sh
 
 # Или одной командой:
-curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/master/server-install/olcrtc-uninstall.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/refactor-universal-carrier-fork/server-install/olcrtc-uninstall.sh | sudo bash
 ```
 
 Ручное удаление:
