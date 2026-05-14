@@ -135,7 +135,10 @@ func TestSendPublisherTrackAddWritesJazzPayload(t *testing.T) {
 	defer server.Close()
 
 	wsURL := "ws" + server.URL[len("http"):]
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	conn, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if resp != nil && resp.Body != nil {
+		defer func() { _ = resp.Body.Close() }()
+	}
 	if err != nil {
 		t.Fatalf("dial websocket: %v", err)
 	}

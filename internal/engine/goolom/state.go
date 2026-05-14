@@ -176,7 +176,7 @@ func (s *Session) sendTelemetry(ctx context.Context, endpoint, event string) {
 		logger.Verbosef("Telemetry send error: %v", err)
 		return
 	}
-	defer func() { _ = resp.Body.Close() }()
+	_ = resp.Body.Close()
 }
 
 func goolomCapabilitiesOffer() map[string]any {

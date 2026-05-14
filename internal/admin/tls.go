@@ -126,7 +126,7 @@ func generateCA(certPath, keyPath string) error {
 	if err != nil {
 		return err
 	}
-	defer certOut.Close()
+	defer func() { _ = certOut.Close() }()
 	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: certDER}); err != nil {
 		return err
 	}
@@ -135,7 +135,7 @@ func generateCA(certPath, keyPath string) error {
 	if err != nil {
 		return err
 	}
-	defer keyOut.Close()
+	defer func() { _ = keyOut.Close() }()
 	keyBytes, err := x509.MarshalECPrivateKey(key)
 	if err != nil {
 		return err
@@ -192,7 +192,7 @@ func generateServerCert(caCertPath, caKeyPath, certPath, keyPath, publicIP strin
 	if err != nil {
 		return err
 	}
-	defer certOut.Close()
+	defer func() { _ = certOut.Close() }()
 	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: certDER}); err != nil {
 		return err
 	}
@@ -201,7 +201,7 @@ func generateServerCert(caCertPath, caKeyPath, certPath, keyPath, publicIP strin
 	if err != nil {
 		return err
 	}
-	defer keyOut.Close()
+	defer func() { _ = keyOut.Close() }()
 	keyBytes, err := x509.MarshalECPrivateKey(key)
 	if err != nil {
 		return err

@@ -408,8 +408,7 @@ else
 # olcRTC server launcher (refactor-universal-carrier branch).
 set -euo pipefail
 
-CONFIG_DIR="/etc/olcrtc"
-CONFIG_FILE="${CONFIG_DIR}/config.yaml"
+CONFIG_FILE="./config.yaml"
 
 carrier="${OLCRTC_CARRIER:-${OLCRTC_PROVIDER:-}}"
 [ "$carrier" = "wb_stream" ] && carrier="wbstream"

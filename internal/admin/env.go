@@ -48,7 +48,7 @@ func ReadInstanceEnv(path string) map[string]string {
 	if err != nil {
 		return vals
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
@@ -73,7 +73,7 @@ func WriteInstanceEnv(path string, vals map[string]string) error {
 
 	var sb strings.Builder
 	for k, v := range existing {
-		sb.WriteString(fmt.Sprintf("%s=%s\n", k, v))
+		fmt.Fprintf(&sb, "%s=%s\n", k, v)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
