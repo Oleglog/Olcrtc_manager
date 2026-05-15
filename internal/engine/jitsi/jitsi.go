@@ -339,6 +339,22 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session) error {
 	neg.OnIceConnectionStateChange = func(state webrtc.ICEConnectionState) {
 		logger.Debugf("jitsi ICE state: %s", state)
 	}
+
+	// Drain XMPP stanzas BEFORE Accept. Jicofo can push transport-info
+	// (trickle ICE) and source-add (other participants' SSRCs) the moment
+	// it sees us reply to session-initiate. If we started the drain loop
+	// only after Accept and SendSourceAdd, those stanzas would queue in
+	// the 64-slot channel while RTP — which travels straight over UDP/TURN
+	// and reaches us in tens of ms — arrives first. Pion then drops the
+	// peer's RTP as "unhandled SSRC, media section has an explicit SSRC"
+	// because HandleSourceAdd hasn't grafted the SSRC onto the remote SDP
+	// yet. The peer never produces an OnTrack callback, our handshake
+	// never gets an ACK, and the tunnel dies. Starting the consumer first
+	// closes that race window — any source-add Jicofo emits is picked up
+	// the instant it lands on the wire.
+	s.wg.Add(1)
+	go s.trickleDrainLoop(pc, neg, jSess.LowLevel().Stanzas())
+
 	if err := neg.Accept(ctx); err != nil {
 		_ = pc.Close()
 		return fmt.Errorf("session-accept: %w", err)
@@ -353,12 +369,6 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session) error {
 			logger.Debugf("jitsi: source-add (initial): %v", err)
 		}
 	}
-
-	// Drain XMPP stanzas: feed transport-info trickle ICE candidates into
-	// pion, handle incoming source-add (other participants' SSRCs), and
-	// keep the channel from filling its 64-slot buffer.
-	s.wg.Add(1)
-	go s.trickleDrainLoop(pc, neg, jSess.LowLevel().Stanzas())
 
 	// Tell JVB to forward video streams to this endpoint.
 	if err := jSess.RequestVideo(ctx, 720); err != nil {
