@@ -188,6 +188,14 @@ func (s *Session) Close() error {
 		if s.room != nil {
 			s.unpublishLocalTracks()
 			s.room.Disconnect()
+			// LiveKit's Disconnect() returns once the local SDK state
+			// is torn down, not when the server has actually evicted
+			// the participant. Without giving the signalling channel
+			// time to flush the LEAVE_REQUEST and the server to act on
+			// it, a back-to-back reconnect from the same identity in
+			// the same room sees a still-alive ghost participant on
+			// the SFU and inherits stale publication state.
+			time.Sleep(2 * time.Second)
 		}
 		close(s.sendQueue)
 		s.wg.Wait()

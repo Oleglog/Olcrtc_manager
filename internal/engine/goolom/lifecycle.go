@@ -197,8 +197,13 @@ func (s *Session) Close() error {
 	if !alreadyClosing {
 		leaveUID := uuid.New().String()
 		leaveAck := s.registerAckWaiter(leaveUID)
+		// 2s matches our jitsi tear-down budget. The reason is the same:
+		// without giving the server time to register the leave, a
+		// back-to-back reconnection from the same client collides with a
+		// still-alive ghost participant on the SFU side and inherits
+		// stale media-flow state.
 		if s.sendLeave(leaveUID) {
-			_ = s.waitForAck(leaveUID, leaveAck, 1500*time.Millisecond)
+			_ = s.waitForAck(leaveUID, leaveAck, 2*time.Second)
 		} else {
 			s.removeAckWaiter(leaveUID)
 		}
