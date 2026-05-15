@@ -258,6 +258,14 @@ func (s *Session) videoTrackHandler() func(*webrtc.TrackRemote, *webrtc.RTPRecei
 	return s.onVideoTrack
 }
 
+// negotiatePC builds the pion PeerConnection, applies Jicofo's offer,
+// answers it and registers all the per-side wiring (DTLS state, ICE
+// callbacks, transceiver direction). It's branchy on purpose — Jingle
+// negotiation has many discrete steps that can fail and each step
+// belongs to the same logical operation, so splitting it into helpers
+// would obscure the wire order rather than clarify it.
+//
+//nolint:cyclop // sequential Jingle negotiation steps; refactoring would hide ordering
 func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session) error {
 	settings := webrtc.SettingEngine{}
 	settings.LoggerFactory = logger.NewPionLoggerFactory()
@@ -290,7 +298,10 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session) error {
 	// Jicofo's session-initiate always includes m=audio. Without a matching
 	// audio transceiver, pion's answer rejects the audio m-line and JVB may
 	// not complete ICE for the second peer in the room.
-	if _, err := pc.AddTransceiverFromKind(webrtc.RTPCodecTypeAudio, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly}); err != nil {
+	if _, err := pc.AddTransceiverFromKind(
+		webrtc.RTPCodecTypeAudio,
+		webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly},
+	); err != nil {
 		_ = pc.Close()
 		return fmt.Errorf("add audio recvonly: %w", err)
 	}
@@ -313,7 +324,10 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session) error {
 	// AddTrack and AddTransceiverFromKind(video,recvonly) are mutually exclusive
 	// in Plan B; using both produces a malformed SDP.
 	if !hasLocalTracks {
-		if _, err := pc.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly}); err != nil {
+		if _, err := pc.AddTransceiverFromKind(
+			webrtc.RTPCodecTypeVideo,
+			webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly},
+		); err != nil {
 			_ = pc.Close()
 			return fmt.Errorf("add video recvonly: %w", err)
 		}
@@ -497,7 +511,7 @@ func buildSDPCandidate(c xmlCandidate) string {
 		s += fmt.Sprintf(" raddr %s rport %s", c.RelAddr, c.RelPort)
 	}
 	if c.Generation != "" {
-		s += fmt.Sprintf(" generation %s", c.Generation)
+		s += " generation " + c.Generation
 	}
 	return s
 }
@@ -679,31 +693,6 @@ func (s *Session) Close() error {
 	case <-time.After(2 * time.Second):
 	}
 	return nil
-}
-
-// terminateJingleSession USED to send a Jingle session-terminate stanza to
-// Jicofo so the conference state is updated immediately. We removed the
-// call from Close(): empirically Jicofo stops replying to that IQ when
-// the participant's media path has wedged, and waiting on it cost 3s of
-// shutdown budget while still leaving ghost participants behind. The
-// real-world fix mirrors lib-jitsi-meet's leave path which relies purely
-// on MUC presence unavailable to signal departure.
-//
-// We keep this helper around (calling the j-library's TerminateWait) for
-// future flows where an explicit terminate is genuinely needed (e.g. ICE
-// restart) — matching what lib-jitsi-meet's _stopJvbSession does for
-// those specific cases.
-func (s *Session) terminateJingleSession(jSess *j.Session) error {
-	neg := jSess.Negotiator()
-	if neg == nil {
-		return nil
-	}
-	// 3s is enough for a healthy bridge round-trip; on a wedged Jicofo we
-	// still cap the wait. Synchronous result handling mirrors what
-	// lib-jitsi-meet's JingleSessionPC.terminate does via sendIQ() with a
-	// callback, and is what stops the next session in the same MUC from
-	// inheriting our endpoint's ghost.
-	return neg.TerminateWait("success", 3*time.Second)
 }
 
 // SetReconnectCallback registers a callback for reconnection events.

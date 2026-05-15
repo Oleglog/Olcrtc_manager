@@ -414,6 +414,20 @@ func realE2EExpectationLabel(expectation realE2EExpectation) string {
 	}
 }
 
+// logUnstableOutcome records the result of an Unstable matrix entry
+// without failing the test. Unstable combos exist to keep the matrix
+// honest about transports that flap against a particular carrier
+// (e.g. seichannel against meet.cryptopro.ru's bandwidth allocator)
+// while still surfacing whether the run happened to pass or fail.
+func logUnstableOutcome(t *testing.T, label, carrierName, transportName string, err error) {
+	t.Helper()
+	if err == nil {
+		t.Logf("%s PASS %s/%s", label, carrierName, transportName)
+		return
+	}
+	t.Logf("%s FAIL %s/%s: %v", label, carrierName, transportName, err)
+}
+
 func TestRealE2ECaseExpectation(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -1050,15 +1064,7 @@ func TestRealProviderTransportMatrix(t *testing.T) {
 					case err != nil && expectation == realE2EExpectFail:
 						t.Logf("%s %s/%s: %v", label, carrierName, transportName, err)
 					case expectation == realE2EExpectUnstable:
-						// Unstable combos record the outcome but
-						// never fail the suite; they exist to keep
-						// the matrix honest when a transport flaps
-						// against a particular carrier.
-						if err == nil {
-							t.Logf("%s PASS %s/%s", label, carrierName, transportName)
-						} else {
-							t.Logf("%s FAIL %s/%s: %v", label, carrierName, transportName, err)
-						}
+						logUnstableOutcome(t, label, carrierName, transportName, err)
 					}
 				})
 			}
