@@ -120,10 +120,19 @@ func preconnect(ctx context.Context, roomID, password string, headers map[string
 	preconnectPayload := map[string]any{
 		"password": password,
 		"jazzNextMigration": map[string]any{
+			// SaluteJazz preconnect contract. Newly-created rooms (Jazz Next /
+			// "видеовстречи") refuse the connect with HTTP 406
+			//   {"code":"ROOM_NOT_SUPPORTED_BY_CLIENT",
+			//    "message":"Media without auto-subscribe not supported by client"}
+			// when this flag is false. The PoC scripts in code/jazz_*.py advertise
+			// it as true and join successfully, so we mirror that. If a legacy
+			// "old jazz" room ever rejects true with the symmetric error, this
+			// flag will need to become per-room dynamic — for now, true matches
+			// what the production Sber web client does.
 			"b2bBaseRoomSupport":               true,
 			"demoRoomBaseSupport":              true,
 			"demoRoomVersionSupport":           2,
-			"mediaWithoutAutoSubscribeSupport": false,
+			"mediaWithoutAutoSubscribeSupport": true,
 			"webinarSpeakerSupport":            true,
 			"webinarViewerSupport":             true,
 			"sdkRoomSupport":                   true,
