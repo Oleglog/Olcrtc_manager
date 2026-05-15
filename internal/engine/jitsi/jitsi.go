@@ -613,61 +613,39 @@ func decodeRaw(m j.BridgeMessage) []byte {
 
 // Close terminates the session and releases resources.
 //
-// Shutdown is performed in the order a Jitsi web client uses:
+// Shutdown follows the lib-jitsi-meet JitsiConference.leave() contract:
 //
 //  1. Mark the session closed so send/recv loops drop new work.
-//  2. If a pion PeerConnection was negotiated, send Jingle
-//     session-terminate to Jicofo so the conference state is updated and
-//     the JVB bridge slot is freed promptly. Without this, Jicofo only
-//     notices the participant is gone after the MUC presence-unavailable
-//     stanza, and JVB only reclaims resources after a longer idle timeout.
-//  3. Close the pion PeerConnection (stops media, sends DTLS bye).
-//  4. Close the underlying j.Session, which closes the colibri-ws bridge,
-//     sends MUC presence-unavailable, and tears down the XMPP transport.
-//  5. Cancel the supervisor context and wait for goroutines.
+//  2. Close the pion PeerConnection (stops media, sends DTLS bye). This
+//     mirrors jvbJingleSession.close() in lib-jitsi-meet — note that
+//     graceful leave there does NOT send Jingle session-terminate; Jicofo
+//     learns of the departure from the MUC presence-unavailable stanza
+//     and only then frees the JVB bridge slot.
+//  3. Close the underlying j.Session, which closes the colibri-ws bridge,
+//     performs the MUC presence-unavailable handshake (LeaveMUCWait
+//     waits for Prosody to echo our own unavailable presence — the
+//     XMPP-level equivalent of XMPPEvents.MUC_LEFT — with a 5s cap),
+//     and only then tears down the websocket.
+//  4. Cancel the supervisor context and wait for goroutines.
+//
+// Why no session-terminate: empirically, when the application layer (e.g.
+// seichannel) wedges and the test fails before clean shutdown, Jicofo
+// stops replying to our session-terminate IQ. TerminateWait then ate its
+// 3s budget and we still left ghost participants behind. lib-jitsi-meet
+// avoids this entirely by relying on MUC presence as the single source of
+// truth for departure — Prosody's MUC layer is far more reliable than
+// Jicofo's IQ handler under load.
 func (s *Session) Close() error {
 	if !s.closed.CompareAndSwap(false, true) {
 		return nil
 	}
 
-	// Tell Jicofo we're leaving BEFORE closing any transport. The order
-	// matters: a half-torn-down websocket can drop the session-terminate /
-	// presence-unavailable stanzas, leaving the participant in the MUC
-	// roster until idle timeout. Subsequent tests then see ghost endpoints
-	// in the bridge channel and receive garbage during handshake.
 	jSess := s.jSess.Load()
-	if jSess != nil {
-		if err := s.terminateJingleSession(jSess); err != nil {
-			logger.Infof("jitsi: session-terminate failed: %v", err)
-		}
-		// Send MUC presence-unavailable and give Prosody time to fan it
-		// out to Jicofo, which in turn must tell JVB to drop our endpoint
-		// before another participant under the same room can claim a
-		// clean slot.
-		//
-		// Why so long: the j library fires IQ stanzas without waiting
-		// for <iq type="result"/> from Prosody, so "wrote bytes to the
-		// websocket" is not "Jicofo processed the request". The chain
-		// session-terminate → Prosody → Jicofo → JVB takes a real RTT
-		// plus Jicofo's own handling. With <500ms here, restarting a
-		// session in the same room immediately collides with a still-
-		// alive ghost endpoint and the new conference inherits stale
-		// SSRCs / source-add stanzas, which is exactly the failure mode
-		// we kept hitting in back-to-back e2e runs.
-		//
-		// 2s is what jitsi-meet uses internally between leave and
-		// resource cleanup (lib-jitsi-meet's leaveRoomEvent grace) and
-		// matches what the bridge expects for a clean handoff.
-		if conn := jSess.LowLevel(); conn != nil {
-			if err := conn.LeaveMUC(s.room); err != nil {
-				logger.Infof("jitsi: LeaveMUC failed: %v", err)
-			} else {
-				logger.Infof("jitsi: LeaveMUC sent")
-			}
-			time.Sleep(2 * time.Second)
-		}
-	}
 
+	// Close PC first so DTLS goes out and the bridge sees media stop;
+	// this ordering matches lib-jitsi-meet's leave() and lets the
+	// follow-up MUC presence unavailable hit Jicofo with PC already
+	// torn down (no session-terminate dance is involved).
 	s.pcMu.Lock()
 	pc := s.pc
 	s.pc = nil
@@ -676,6 +654,10 @@ func (s *Session) Close() error {
 		_ = pc.Close()
 	}
 
+	// jSess.Close() performs the MUC unavailable handshake and only then
+	// tears down the websocket. It logs the handshake outcome itself so
+	// we can distinguish "Prosody confirmed leave" from "5s timeout,
+	// fell back to fire-and-forget" in failure-mode investigations.
 	if jSess != nil {
 		_ = jSess.Close()
 	}
@@ -699,18 +681,29 @@ func (s *Session) Close() error {
 	return nil
 }
 
-// terminateJingleSession sends a Jingle session-terminate stanza to Jicofo
-// so the conference state is updated immediately. Sent even when no pion
-// PeerConnection was negotiated: Jicofo allocates the JVB bridge slot the
-// moment it dispatches session-initiate, regardless of whether the
-// participant ever sent session-accept, and an explicit session-terminate
-// frees that slot promptly.
+// terminateJingleSession USED to send a Jingle session-terminate stanza to
+// Jicofo so the conference state is updated immediately. We removed the
+// call from Close(): empirically Jicofo stops replying to that IQ when
+// the participant's media path has wedged, and waiting on it cost 3s of
+// shutdown budget while still leaving ghost participants behind. The
+// real-world fix mirrors lib-jitsi-meet's leave path which relies purely
+// on MUC presence unavailable to signal departure.
+//
+// We keep this helper around (calling the j-library's TerminateWait) for
+// future flows where an explicit terminate is genuinely needed (e.g. ICE
+// restart) — matching what lib-jitsi-meet's _stopJvbSession does for
+// those specific cases.
 func (s *Session) terminateJingleSession(jSess *j.Session) error {
 	neg := jSess.Negotiator()
 	if neg == nil {
 		return nil
 	}
-	return neg.Terminate("success")
+	// 3s is enough for a healthy bridge round-trip; on a wedged Jicofo we
+	// still cap the wait. Synchronous result handling mirrors what
+	// lib-jitsi-meet's JingleSessionPC.terminate does via sendIQ() with a
+	// callback, and is what stops the next session in the same MUC from
+	// inheriting our endpoint's ghost.
+	return neg.TerminateWait("success", 3*time.Second)
 }
 
 // SetReconnectCallback registers a callback for reconnection events.
