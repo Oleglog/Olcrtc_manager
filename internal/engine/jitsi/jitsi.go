@@ -320,6 +320,11 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session) error {
 		return fmt.Errorf("session-accept: %w", err)
 	}
 
+	// Tell JVB to forward video streams to this endpoint.
+	if err := jSess.RequestVideo(ctx, 720); err != nil {
+		logger.Debugf("jitsi: request video: %v", err)
+	}
+
 	s.pcMu.Lock()
 	s.pc = pc
 	s.pcMu.Unlock()
