@@ -420,6 +420,12 @@ function renderInstanceCard(inst) {
       '<span>' + (inst.has_password ? 'password set' : 'no password') + '</span>';
     badges.appendChild(passBadge);
   }
+  if (inst.carrier === 'wbstream' && (!inst.room_id || inst.room_id === 'any')) {
+    const noRoomBadge = el('span', 'badge badge-amber');
+    noRoomBadge.innerHTML = icon('alert-triangle', 12) + '<span>Room ID required</span>';
+    noRoomBadge.title = 'wbstream больше не создаёт румы автоматически — задайте Room ID в настройках инстанса';
+    badges.appendChild(noRoomBadge);
+  }
   if (inst.uptime) {
     const upBadge = el('span', 'badge');
     upBadge.innerHTML = icon('clock', 12) + '<span>' + inst.uptime + '</span>';
@@ -440,11 +446,18 @@ function renderInstanceCard(inst) {
   const uriBtn = el('button', 'btn btn-secondary btn-sm');
   uriBtn.setAttribute('aria-label', 'Копировать URI');
   uriBtn.innerHTML = icon('copy') + '<span>URI</span>';
-  uriBtn.onclick = () => { navigator.clipboard.writeText(inst.uri); showToast('URI скопирован'); };
+  uriBtn.onclick = () => {
+    navigator.clipboard.writeText(inst.uri);
+    if (isJazzCarrier(inst.carrier) && inst.has_password) {
+      showToast('URI скопирован. Пароль комнаты в URI не входит — добавьте его в клиенте вручную.');
+    } else {
+      showToast('URI скопирован');
+    }
+  };
   const qrBtn = el('button', 'btn btn-secondary btn-sm');
   qrBtn.setAttribute('aria-label', 'Показать QR-код');
   qrBtn.innerHTML = icon('qr-code') + '<span>QR</span>';
-  qrBtn.onclick = () => showQRModal(inst.uri);
+  qrBtn.onclick = () => showQRModal(inst.uri, inst);
   const cfgBtn = el('button', 'btn btn-secondary btn-sm');
   cfgBtn.setAttribute('aria-label', 'Настройки инстанса');
   cfgBtn.innerHTML = icon('sliders') + '<span>Настройки</span>';
@@ -711,9 +724,24 @@ function showModal(content, opts) {
 
 function closeModal(overlay) { if (overlay && overlay.parentNode) overlay.remove(); }
 
-function showQRModal(uri) {
+function showQRModal(uri, inst) {
   const div = el('div', '');
   div.innerHTML = '<h3 class="text-lg font-semibold mb-3 inline-flex items-center gap-2">' + icon('qr-code', 18) + '<span>QR-код</span></h3>';
+  if (inst && isJazzCarrier(inst.carrier) && inst.has_password) {
+    const notice = el('div', 'p-2 mb-3 text-xs rounded border border-amber-500/50 bg-amber-500/10 text-amber-200');
+    notice.innerHTML =
+      '<strong>Внимание для jazz/salutejazz:</strong> пароль комнаты намеренно не входит в URI/QR. ' +
+      'После импорта откройте настройки профиля в клиенте и введите пароль вручную в поле <em>Room password</em>, ' +
+      'иначе клиент не сможет подключиться к комнате.';
+    div.appendChild(notice);
+  }
+  if (inst && inst.carrier === 'wbstream' && (!inst.room_id || inst.room_id === 'any')) {
+    const notice = el('div', 'p-2 mb-3 text-xs rounded border border-amber-500/50 bg-amber-500/10 text-amber-200');
+    notice.innerHTML =
+      '<strong>Внимание:</strong> Room ID для wbstream не задан. ' +
+      'WB Stream больше не создаёт румы автоматически — задайте Room ID в «Настройках» инстанса перед тем, как делиться QR.';
+    div.appendChild(notice);
+  }
   const qrWrap = el('div', 'qr-wrap flex justify-center mb-3 mx-auto');
   const qrDiv = el('div', '');
   qrWrap.appendChild(qrDiv);
