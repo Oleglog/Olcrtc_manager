@@ -58,7 +58,7 @@ jobs:
       - name: Run real provider e2e matrix
         run: |
           go test -count=1 -v ./internal/e2e \
-            -olcrtc.real-carriers=telemost,wbstream,jazz \
+            -olcrtc.real-carriers=telemost,wbstream,jazz,jitsi \
             -run '^TestRealProviderTransportMatrix$' \
             -olcrtc.real-e2e
 
