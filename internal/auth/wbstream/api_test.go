@@ -73,12 +73,12 @@ func TestWBStreamAPIHappyPath(t *testing.T) {
 	if err := joinRoom(context.Background(), access, room); err != nil {
 		t.Fatalf("joinRoom() error = %v", err)
 	}
-	token, err := getToken(context.Background(), access, room, testPeerName)
+	tok, err := getToken(context.Background(), access, room, testPeerName)
 	if err != nil {
 		t.Fatalf("getToken() error = %v", err)
 	}
-	if token != testToken {
-		t.Fatalf("getToken() = %q", token)
+	if tok.RoomToken != testToken {
+		t.Fatalf("getToken() = %q", tok.RoomToken)
 	}
 }
 

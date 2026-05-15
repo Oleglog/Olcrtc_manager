@@ -38,14 +38,19 @@ func (Provider) Issue(ctx context.Context, cfg auth.Config) (auth.Credentials, e
 		return auth.Credentials{}, fmt.Errorf("join room: %w", err)
 	}
 
-	token, err := getToken(ctx, accessToken, roomID, cfg.Name)
+	tok, err := getToken(ctx, accessToken, roomID, cfg.Name)
 	if err != nil {
 		return auth.Credentials{}, fmt.Errorf("get token: %w", err)
 	}
 
+	url := tok.ServerURL
+	if url == "" {
+		url = defaultWSURL
+	}
+
 	return auth.Credentials{
-		URL:   wsURL,
-		Token: token,
+		URL:   url,
+		Token: tok.RoomToken,
 		Extra: map[string]string{"roomID": roomID},
 	}, nil
 }
