@@ -640,15 +640,31 @@ func (s *Session) Close() error {
 		if err := s.terminateJingleSession(jSess); err != nil {
 			logger.Infof("jitsi: session-terminate failed: %v", err)
 		}
-		// Send MUC presence-unavailable and give Prosody a moment to
-		// route it before we tear down the websocket.
+		// Send MUC presence-unavailable and give Prosody time to fan it
+		// out to Jicofo, which in turn must tell JVB to drop our endpoint
+		// before another participant under the same room can claim a
+		// clean slot.
+		//
+		// Why so long: the j library fires IQ stanzas without waiting
+		// for <iq type="result"/> from Prosody, so "wrote bytes to the
+		// websocket" is not "Jicofo processed the request". The chain
+		// session-terminate → Prosody → Jicofo → JVB takes a real RTT
+		// plus Jicofo's own handling. With <500ms here, restarting a
+		// session in the same room immediately collides with a still-
+		// alive ghost endpoint and the new conference inherits stale
+		// SSRCs / source-add stanzas, which is exactly the failure mode
+		// we kept hitting in back-to-back e2e runs.
+		//
+		// 2s is what jitsi-meet uses internally between leave and
+		// resource cleanup (lib-jitsi-meet's leaveRoomEvent grace) and
+		// matches what the bridge expects for a clean handoff.
 		if conn := jSess.LowLevel(); conn != nil {
 			if err := conn.LeaveMUC(s.room); err != nil {
 				logger.Infof("jitsi: LeaveMUC failed: %v", err)
 			} else {
 				logger.Infof("jitsi: LeaveMUC sent")
 			}
-			time.Sleep(300 * time.Millisecond)
+			time.Sleep(2 * time.Second)
 		}
 	}
 
