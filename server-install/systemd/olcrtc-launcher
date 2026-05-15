@@ -8,7 +8,20 @@
 # Recognised environment variables:
 #   OLCRTC_CARRIER           required: telemost | jazz | wbstream
 #   OLCRTC_PROVIDER          deprecated alias for OLCRTC_CARRIER
-#   OLCRTC_ROOM_ID           required: room ID (for jazz/wbstream "any" auto-creates)
+#   OLCRTC_ROOM_ID           required: room ID (for jazz "any" auto-creates a fresh room)
+#   OLCRTC_ROOM_PASSWORD     optional: SaluteJazz room password.
+#                                       Used only when OLCRTC_CARRIER is jazz / salutejazz —
+#                                       glued onto OLCRTC_ROOM_ID as
+#                                       "<roomID>:<password>" before being written to YAML
+#                                       so the salutejazz auth provider sees the format it
+#                                       expects. Other carriers ignore it.
+#   OLCRTC_CLIENT_ID         advisory: per-instance client identifier issued by the admin
+#                                       UI. Surfaced through the published olcrtc:// URI to
+#                                       seed the mobile client's DeviceID. The tunnel server
+#                                       process itself does not consume it today
+#                                       (defaultAuthHook in internal/server admits any
+#                                       non-empty DeviceID); reserved for future strict
+#                                       AuthHook deployments.
 #   OLCRTC_KEY               required: 64-char hex encryption key
 #   OLCRTC_TRANSPORT         optional: datachannel | vp8channel | seichannel | videochannel (default: datachannel)
 #   OLCRTC_LINK              optional: direct (default: direct)
@@ -46,6 +59,24 @@ if [ -z "$carrier" ] || [ -z "${OLCRTC_ROOM_ID:-}" ] || [ -z "${OLCRTC_KEY:-}" ]
     exit 64
 fi
 
+# For SaluteJazz (carrier=jazz / salutejazz) the auth provider expects
+# RoomURL in the form "<roomID>:<password>" — see
+# internal/auth/salutejazz/salutejazz.go::Issue. Glue OLCRTC_ROOM_PASSWORD
+# onto OLCRTC_ROOM_ID here so the YAML config keeps the simple shape and
+# olcrtc itself does not need a separate password field. If the user left
+# OLCRTC_ROOM_PASSWORD empty we leave the room id alone — the auth
+# provider will return a clear "expected <roomID>:<password>" error and
+# the admin UI will surface it.
+room_id="$OLCRTC_ROOM_ID"
+case "$carrier" in
+    jazz|salutejazz)
+        if [ -n "${OLCRTC_ROOM_PASSWORD:-}" ] && [[ "$room_id" != *:* ]] && \
+           [ "$room_id" != "any" ] && [ "$room_id" != "dummy" ]; then
+            room_id="${room_id}:${OLCRTC_ROOM_PASSWORD}"
+        fi
+        ;;
+esac
+
 transport="${OLCRTC_TRANSPORT:-datachannel}"
 link="${OLCRTC_LINK:-direct}"
 dns="${OLCRTC_DNS:-1.1.1.1:53}"
@@ -61,7 +92,7 @@ link: ${link}
 auth:
   provider: ${carrier}
 room:
-  id: "${OLCRTC_ROOM_ID}"
+  id: "${room_id}"
 crypto:
   key: "${OLCRTC_KEY}"
 net:

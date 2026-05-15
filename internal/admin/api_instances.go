@@ -11,24 +11,47 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 )
 
 // Instance represents an olcrtc server instance.
+//
+// Secret fields follow a mask-with-flag pattern: the actual value is not
+// returned in list/detail responses; instead, a boolean flag (HasPassword)
+// signals presence and a separate authenticated endpoint exposes the raw
+// value when needed (e.g. /api/instances/{id}/room-password).
 type Instance struct {
-	ID         int    `json:"id"`
-	Label      string `json:"label"`
-	Carrier    string `json:"carrier"`
-	Transport  string `json:"transport"`
-	RoomID     string `json:"room_id"`
-	Name       string `json:"name"`
-	Status     string `json:"status"`
-	Uptime     string `json:"uptime"`
-	URI        string `json:"uri"`
-	SocksProxy string `json:"socks_proxy"`
-	WarpProxy  string `json:"warp_proxy"`
-	DNS        string `json:"dns"`
-	Debug      bool   `json:"debug"`
+	ID          int    `json:"id"`
+	Label       string `json:"label"`
+	Carrier     string `json:"carrier"`
+	Transport   string `json:"transport"`
+	RoomID      string `json:"room_id"`
+	HasPassword bool   `json:"has_password"`
+	ClientID    string `json:"client_id"`
+	Name        string `json:"name"`
+	Status      string `json:"status"`
+	Uptime      string `json:"uptime"`
+	URI         string `json:"uri"`
+	SocksProxy  string `json:"socks_proxy"`
+	WarpProxy   string `json:"warp_proxy"`
+	DNS         string `json:"dns"`
+	Debug       bool   `json:"debug"`
+}
+
+// jazzCarriers lists the carrier aliases that consume the
+// "<roomID>:<password>" RoomURL format produced by salutejazz.Provider.
+//
+// "salutejazz" is the registry name of the auth provider; "jazz" is the
+// carrier alias wired in internal/carrier/builtin/register.go and is what
+// the admin UI exposes. Both are accepted defensively in case an operator
+// pastes the registry name into OLCRTC_CARRIER manually.
+func isJazzCarrier(carrier string) bool {
+	switch carrier {
+	case "jazz", "salutejazz":
+		return true
+	}
+	return false
 }
 
 func (s *Server) handleInstancesList(w http.ResponseWriter, r *http.Request) {
@@ -119,6 +142,18 @@ func (s *Server) handleInstances(w http.ResponseWriter, r *http.Request) {
 		} else {
 			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		}
+	case "rotate-client-id":
+		if r.Method == http.MethodPost {
+			s.rotateClientID(w, id)
+		} else {
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		}
+	case "room-password":
+		if r.Method == http.MethodGet {
+			s.getRoomPassword(w, id)
+		} else {
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		}
 	default:
 		http.Error(w, "Not Found", http.StatusNotFound)
 	}
@@ -184,6 +219,15 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
 	vals := ReadInstanceEnv(mainEnv)
 	vals["OLCRTC_KEY"] = hex.EncodeToString(key)
 	vals["OLCRTC_NAME"] = fmt.Sprintf("%s_olcrtc_%d", vals["OLCRTC_CARRIER"], newID+1)
+	// Each instance gets its own client identifier so the VP8 binding
+	// token differs between instances. Inherited OLCRTC_CLIENT_ID is
+	// dropped explicitly — sharing it across instances would let
+	// frames from one tunnel pass the foreign-token check on another.
+	vals["OLCRTC_CLIENT_ID"] = uuid.NewString()
+	// Room password is per-room, not per-template. Don't propagate it from
+	// the main instance — operators would otherwise be surprised when a
+	// new instance silently joins the wrong room.
+	delete(vals, "OLCRTC_ROOM_PASSWORD")
 	if err := WriteInstanceEnv(envPath, vals); err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
@@ -236,6 +280,15 @@ func (s *Server) updateInstanceConfig(w http.ResponseWriter, r *http.Request, id
 	if v, ok := req["room_id"].(string); ok {
 		updates["OLCRTC_ROOM_ID"] = strings.TrimSpace(v)
 	}
+	if v, ok := req["room_password"].(string); ok {
+		// Trim trailing whitespace only — leading whitespace is also stripped
+		// to mirror room_id handling. Empty value clears the password.
+		updates["OLCRTC_ROOM_PASSWORD"] = strings.TrimSpace(v)
+	}
+	// client_id is intentionally NOT accepted from the request body to
+	// prevent typos / accidental overrides. It is rotated only via the
+	// dedicated /rotate-client-id endpoint and seeded by createInstance /
+	// buildInstance lazy-migration.
 	if v, ok := req["dns"].(string); ok {
 		updates["OLCRTC_DNS"] = v
 	}
@@ -285,6 +338,13 @@ func (s *Server) updateInstanceConfig(w http.ResponseWriter, r *http.Request, id
 	room := effective["OLCRTC_ROOM_ID"]
 	if carrier == "wbstream" && (room == "" || room == "any") {
 		http.Error(w, "wbstream requires a Room ID — WB Stream no longer auto-creates rooms; create one at https://stream.wb.ru and paste it into Room ID", http.StatusBadRequest)
+		return
+	}
+	// Jazz with an explicit (non-auto) Room ID also requires a Room ID
+	// field per the documented form contract; an empty Room ID still means
+	// "create a fresh room on the fly", which is allowed.
+	if isJazzCarrier(carrier) && room == "" && effective["OLCRTC_ROOM_PASSWORD"] != "" {
+		http.Error(w, "Room ID required when Room password is set", http.StatusBadRequest)
 		return
 	}
 
@@ -375,9 +435,58 @@ func (s *Server) rotateRoom(w http.ResponseWriter, id int) {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
+	// Rotating the room invalidates the old password too.
+	if isJazzCarrier(carrier) {
+		_ = SetEnvValue(envPath, "OLCRTC_ROOM_PASSWORD", "")
+	}
 	svc := InstanceService(id)
 	_ = SystemctlRestart(svc)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// rotateClientID generates a new client identifier for the instance and
+// restarts the service. The client_id is included in the published URI;
+// peers that imported the previous URI must re-import after rotation.
+func (s *Server) rotateClientID(w http.ResponseWriter, id int) {
+	newID := uuid.NewString()
+	envPath := InstanceEnvPath(s.cfg.ConfigDir, id)
+	if err := SetEnvValue(envPath, "OLCRTC_CLIENT_ID", newID); err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	svc := InstanceService(id)
+	_ = SystemctlRestart(svc)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "client_id": newID})
+}
+
+// getRoomPassword returns the raw OLCRTC_ROOM_PASSWORD value. Reachable
+// only behind the same admin-token gate as the rest of /api; the value is
+// kept out of list/detail responses so it does not leak through casual
+// inspection of the inventory JSON.
+func (s *Server) getRoomPassword(w http.ResponseWriter, id int) {
+	envPath := InstanceEnvPath(s.cfg.ConfigDir, id)
+	vals := ReadInstanceEnv(envPath)
+	writeJSON(w, http.StatusOK, map[string]string{
+		"room_password": vals["OLCRTC_ROOM_PASSWORD"],
+	})
+}
+
+// ensureClientID lazy-migrates legacy instances that pre-date the
+// per-instance client identifier. If OLCRTC_CLIENT_ID is missing or
+// empty it generates a fresh UUID, persists it via SetEnvValue and
+// returns the new value. Errors are logged and an empty string is
+// returned, in which case buildURI will simply omit the client_id query
+// parameter.
+func (s *Server) ensureClientID(envPath string, current string) string {
+	if current != "" {
+		return current
+	}
+	newID := uuid.NewString()
+	if err := SetEnvValue(envPath, "OLCRTC_CLIENT_ID", newID); err != nil {
+		logger.Errorf("ensureClientID: persist %s: %v", envPath, err)
+		return ""
+	}
+	return newID
 }
 
 func (s *Server) buildInstance(id int) Instance {
@@ -397,6 +506,8 @@ func (s *Server) buildInstance(id int) Instance {
 		name = fmt.Sprintf("%s_olcrtc", carrier)
 	}
 
+	clientID := s.ensureClientID(envPath, vals["OLCRTC_CLIENT_ID"])
+
 	label := "Доп. #" + strconv.Itoa(id)
 	if id == 0 {
 		label = "Основной"
@@ -411,26 +522,39 @@ func (s *Server) buildInstance(id int) Instance {
 	}
 
 	return Instance{
-		ID:         id,
-		Label:      label,
-		Carrier:    carrier,
-		Transport:  transport,
-		RoomID:     vals["OLCRTC_ROOM_ID"],
-		Name:       name,
-		Status:     status,
-		Uptime:     uptime,
-		URI:        s.buildURI(id),
-		SocksProxy: vals["OLCRTC_SOCKS_PROXY"],
-		WarpProxy:  vals["OLCRTC_WARP_PROXY"],
-		DNS:        vals["OLCRTC_DNS"],
-		Debug:      vals["OLCRTC_DEBUG"] == "1",
+		ID:          id,
+		Label:       label,
+		Carrier:     carrier,
+		Transport:   transport,
+		RoomID:      vals["OLCRTC_ROOM_ID"],
+		HasPassword: vals["OLCRTC_ROOM_PASSWORD"] != "",
+		ClientID:    clientID,
+		Name:        name,
+		Status:      status,
+		Uptime:      uptime,
+		URI:         s.buildURIWith(vals, clientID),
+		SocksProxy:  vals["OLCRTC_SOCKS_PROXY"],
+		WarpProxy:   vals["OLCRTC_WARP_PROXY"],
+		DNS:         vals["OLCRTC_DNS"],
+		Debug:       vals["OLCRTC_DEBUG"] == "1",
 	}
 }
 
 func (s *Server) buildURI(id int) string {
 	envPath := InstanceEnvPath(s.cfg.ConfigDir, id)
 	vals := ReadInstanceEnv(envPath)
+	clientID := s.ensureClientID(envPath, vals["OLCRTC_CLIENT_ID"])
+	return s.buildURIWith(vals, clientID)
+}
 
+// buildURIWith renders the deep-link URI from a pre-loaded env map. It is
+// extracted so buildInstance does not have to read the env file twice.
+//
+// The URI deliberately omits OLCRTC_ROOM_PASSWORD: the password is kept on
+// the server side and joined to OLCRTC_ROOM_ID by the launcher when
+// constructing RoomURL for salutejazz. Including it in the URI would leak
+// the password through every QR code and every shared link.
+func (s *Server) buildURIWith(vals map[string]string, clientID string) string {
 	carrier := vals["OLCRTC_CARRIER"]
 	if carrier == "" {
 		carrier = vals["OLCRTC_PROVIDER"]
@@ -456,6 +580,9 @@ func (s *Server) buildURI(id int) string {
 				uri += "&vp8_batch=" + vp8Batch
 			}
 		}
+	}
+	if clientID != "" {
+		uri += "&client_id=" + url.QueryEscape(clientID)
 	}
 	uri += "#" + name
 	return uri

@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-INSTALLER_VERSION="1.4.0"
+INSTALLER_VERSION="1.5.0"
 CARRIER_DEFAULT="wbstream"
 TRANSPORT_DEFAULT="datachannel"
 DNS_DEFAULT="1.1.1.1:53"
@@ -417,6 +417,17 @@ if [ -z "$carrier" ] || [ -z "${OLCRTC_ROOM_ID:-}" ] || [ -z "${OLCRTC_KEY:-}" ]
     echo "olcrtc-launcher: missing required env" >&2; exit 64
 fi
 
+# For SaluteJazz the auth provider expects RoomURL "<roomID>:<password>".
+room_id="$OLCRTC_ROOM_ID"
+case "$carrier" in
+    jazz|salutejazz)
+        if [ -n "${OLCRTC_ROOM_PASSWORD:-}" ] && [[ "$room_id" != *:* ]] && \
+           [ "$room_id" != "any" ] && [ "$room_id" != "dummy" ]; then
+            room_id="${room_id}:${OLCRTC_ROOM_PASSWORD}"
+        fi
+        ;;
+esac
+
 transport="${OLCRTC_TRANSPORT:-datachannel}"
 link="${OLCRTC_LINK:-direct}"
 dns="${OLCRTC_DNS:-1.1.1.1:53}"
@@ -431,7 +442,7 @@ link: ${link}
 auth:
   provider: ${carrier}
 room:
-  id: "${OLCRTC_ROOM_ID}"
+  id: "${room_id}"
 crypto:
   key: "${OLCRTC_KEY}"
 net:
@@ -625,11 +636,18 @@ fi
 # Main env file.
 SUB_ENABLED_VAL=""
 if [ "$SUB_ENABLED" = "y" ] || [ "$SUB_ENABLED" = "Y" ]; then SUB_ENABLED_VAL="1"; fi
+# Generate a fresh per-instance client ID. The admin UI also lazy-generates
+# this on first read, but seeding it up front keeps the env file
+# self-documenting and lets the published URI carry &client_id=... before
+# the operator opens the admin UI.
+CLIENT_ID="$(cat /proc/sys/kernel/random/uuid 2>/dev/null || openssl rand -hex 16)"
 cat > "$ENV_FILE" <<EOF
 OLCRTC_CARRIER=$CARRIER
 OLCRTC_TRANSPORT=$TRANSPORT
 OLCRTC_ROOM_ID=$ROOM_ID
+OLCRTC_ROOM_PASSWORD=
 OLCRTC_KEY=$KEY
+OLCRTC_CLIENT_ID=$CLIENT_ID
 OLCRTC_DNS=$DNS_DEFAULT
 OLCRTC_NAME=$SET_NAME
 OLCRTC_SUB_ENABLED=$SUB_ENABLED_VAL
@@ -743,7 +761,7 @@ StandardError=journal
 WantedBy=multi-user.target
 UNIT
 
-cat > /etc/systemd/system/olcrtc-admin.service <<UNIT
+cat > /etc/systemd/system/olcrtc-admin.service <<'UNIT'
 [Unit]
 Description=olcRTC Admin Web UI
 After=network-online.target olcrtc-server.service
@@ -752,11 +770,11 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=/etc/olcrtc/admin.env
-ExecStart=/usr/local/bin/olcrtc-admin \\
-    -port \${OLCRTC_ADMIN_PORT} \\
-    -token \${OLCRTC_ADMIN_TOKEN} \\
-    -domain \"${OLCRTC_ADMIN_DOMAIN}\" \\
-    -sub-port \${OLCRTC_SUB_PORT} \\
+ExecStart=/usr/local/bin/olcrtc-admin \
+    -port ${OLCRTC_ADMIN_PORT} \
+    -token ${OLCRTC_ADMIN_TOKEN} \
+    -domain "${OLCRTC_ADMIN_DOMAIN}" \
+    -sub-port ${OLCRTC_SUB_PORT} \
     -tls-dir /var/lib/olcrtc/admin-tls
 Restart=on-failure
 RestartSec=5
