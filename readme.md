@@ -7,6 +7,8 @@
 
 </div>
 
+## Работаем над [новой веткой](https://github.com/Oleglog/Olcrtc_manager/tree/refactor-universal-carrier-fork)
+
 > ### ⚠ Known issues / Известные проблемы (май 2026)
 >
 > - **WB Stream**: разработчики stream.wb.ru отключили публичный API создания
