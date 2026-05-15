@@ -78,3 +78,13 @@ func TestTransportFrameRoundTrip(t *testing.T) {
 		t.Fatalf("payload mismatch: got=%q", decoded.payload)
 	}
 }
+
+func TestHelloFrameRoundTrip(t *testing.T) {
+	hello, err := decodeTransportFrame(encodeHelloFrame())
+	if err != nil {
+		t.Fatalf("decodeTransportFrame(hello) failed: %v", err)
+	}
+	if hello.typ != frameTypeHello {
+		t.Fatalf("hello frame type = %d, want %d", hello.typ, frameTypeHello)
+	}
+}

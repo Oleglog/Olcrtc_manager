@@ -1043,15 +1043,27 @@ func TestDirectLinkConnectsFastProviderTransportMatrix(t *testing.T) {
 					if err := ln.Connect(context.Background()); err != nil {
 						t.Fatalf("Connect() error = %v", err)
 					}
-					if !ln.CanSend() {
-						t.Fatal("CanSend() = false, want true")
-					}
+					assertLinkCanSendAfterConnect(t, ln, transportName)
 					if err := ln.Close(); err != nil {
 						t.Fatalf("Close() error = %v", err)
 					}
 				})
 			}
 		})
+	}
+}
+
+func assertLinkCanSendAfterConnect(t *testing.T, ln link.Link, transportName string) {
+	t.Helper()
+
+	if transportName == transportSEI {
+		if ln.CanSend() {
+			t.Fatal("CanSend() = true before peer seichannel frame")
+		}
+		return
+	}
+	if !ln.CanSend() {
+		t.Fatal("CanSend() = false, want true")
 	}
 }
 

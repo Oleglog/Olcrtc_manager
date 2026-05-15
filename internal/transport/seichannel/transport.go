@@ -35,6 +35,7 @@ const (
 	protocolVersion       byte   = 1
 	frameTypeData         byte   = 1
 	frameTypeAck          byte   = 2
+	frameTypeHello        byte   = 3
 )
 
 var (
@@ -86,6 +87,7 @@ type streamTransport struct {
 	nextSeq       atomic.Uint32
 	closed        atomic.Bool
 	writerUp      atomic.Bool
+	peerReady     atomic.Bool
 	sendMu        sync.Mutex
 	startWriter   sync.Once
 	ackMu         sync.Mutex
@@ -286,7 +288,7 @@ func (p *streamTransport) WatchConnection(ctx context.Context) {
 
 // CanSend reports whether transport is ready for sending.
 func (p *streamTransport) CanSend() bool {
-	return !p.closed.Load() && p.stream.CanSend()
+	return !p.closed.Load() && p.peerReady.Load() && p.stream.CanSend()
 }
 
 // Features describes the current seichannel transport semantics.
@@ -333,7 +335,7 @@ func (p *streamTransport) writerLoop() {
 	ticker := time.NewTicker(p.effectiveFrameInterval())
 	defer ticker.Stop()
 
-	idle := buildVideoAccessUnit(nil)
+	idle := buildVideoAccessUnit(encodeHelloFrame())
 
 	for {
 		select {
@@ -443,9 +445,13 @@ func (p *streamTransport) handleSample(sample []byte) {
 		}
 
 		switch frame.typ {
+		case frameTypeHello:
+			p.peerReady.Store(true)
 		case frameTypeAck:
+			p.peerReady.Store(true)
 			p.resolveAck(frame.seq, frame.crc)
 		case frameTypeData:
+			p.peerReady.Store(true)
 			p.handleInboundFrame(frame)
 		}
 	}
@@ -562,8 +568,8 @@ func encodeDataFrame(seq, crc uint32, totalLen, fragIdx, fragTotal int, payload 
 	out[5] = frameTypeData
 	binary.BigEndian.PutUint32(out[6:10], seq)
 	binary.BigEndian.PutUint32(out[10:14], crc)
-	binary.BigEndian.PutUint32(out[14:18], uint32(totalLen)) //nolint:gosec,lll // G115: bounded conversion verified by surrounding logic
-	binary.BigEndian.PutUint16(out[18:20], uint16(fragIdx)) //nolint:gosec,lll // G115: bounded conversion verified by surrounding logic
+	binary.BigEndian.PutUint32(out[14:18], uint32(totalLen))  //nolint:gosec,lll // G115: bounded conversion verified by surrounding logic
+	binary.BigEndian.PutUint16(out[18:20], uint16(fragIdx))   //nolint:gosec,lll // G115: bounded conversion verified by surrounding logic
 	binary.BigEndian.PutUint16(out[20:22], uint16(fragTotal)) //nolint:gosec,lll // G115: bounded conversion verified by surrounding logic
 	copy(out[22:], payload)
 	return out
@@ -576,6 +582,14 @@ func encodeAckFrame(seq, crc uint32) []byte {
 	out[5] = frameTypeAck
 	binary.BigEndian.PutUint32(out[6:10], seq)
 	binary.BigEndian.PutUint32(out[10:14], crc)
+	return out
+}
+
+func encodeHelloFrame() []byte {
+	out := make([]byte, 6)
+	binary.BigEndian.PutUint32(out[0:4], protocolMagic)
+	out[4] = protocolVersion
+	out[5] = frameTypeHello
 	return out
 }
 
@@ -592,6 +606,8 @@ func decodeTransportFrame(data []byte) (transportFrame, error) {
 
 	frame := transportFrame{typ: data[5]}
 	switch frame.typ {
+	case frameTypeHello:
+		return frame, nil
 	case frameTypeAck:
 		if len(data) < 14 {
 			return transportFrame{}, ErrAckTooShort

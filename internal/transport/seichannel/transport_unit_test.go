@@ -103,8 +103,12 @@ func TestNewConnectCallbacksAndFeatures(t *testing.T) {
 	if stream.reconnect == nil || stream.should == nil || stream.ended == nil || !stream.watched {
 		t.Fatal("callbacks/watch were not forwarded")
 	}
+	if tr.CanSend() {
+		t.Fatal("CanSend() = true before peer hello")
+	}
+	tr.handleSample(buildVideoAccessUnit(encodeHelloFrame()))
 	if !tr.CanSend() {
-		t.Fatal("CanSend() = false, want true")
+		t.Fatal("CanSend() = false after peer hello")
 	}
 	if features := tr.Features(); !features.Reliable || !features.Ordered || !features.MessageOriented || features.MaxPayloadSize == 0 { //nolint:lll // long test description
 		t.Fatalf("Features() = %+v", features)
