@@ -139,10 +139,19 @@ func RunWithReady(ctx context.Context, cfg Config, onReady func()) error {
 		socksPass: cfg.SOCKSPass,
 	}
 
+	// shutdown is registered BEFORE bringUpLink so we always close any
+	// link/session that bringUpLink managed to set up before it
+	// errored out. The previous ordering returned early on failure
+	// (e.g. handshake timeout against a wedged seichannel transport)
+	// without ever calling Close on the carrier link, leaving our MUC
+	// presence behind as a ghost participant in the next test that
+	// joined the same room. shutdown is nil-safe — it skips fields
+	// that bringUpLink hadn't populated yet.
+	defer c.shutdown()
+
 	if err := c.bringUpLink(runCtx, cfg, cancel); err != nil {
 		return err
 	}
-	defer c.shutdown()
 
 	lc := net.ListenConfig{}
 	listener, err := lc.Listen(runCtx, "tcp4", cfg.LocalAddr)

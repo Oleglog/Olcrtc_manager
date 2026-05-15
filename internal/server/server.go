@@ -195,6 +195,18 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	s.setupResolver()
 
+	// Register shutdown BEFORE bringUpLink so a partial setup (e.g.
+	// link.New succeeded but ln.Connect timed out) still tears the
+	// link down and sends MUC presence-unavailable. Without this, an
+	// early bringUpLink error returns straight to the caller and the
+	// already-joined MUC presence stays behind as a ghost participant
+	// for subsequent tests against the same room. shutdown is
+	// idempotent and safe to call before s.serve runs.
+	defer func() {
+		s.shutdown()
+		s.wg.Wait()
+	}()
+
 	if err := s.bringUpLink(runCtx, cfg, cancel); err != nil {
 		return err
 	}
@@ -205,9 +217,6 @@ func Run(ctx context.Context, cfg Config) error {
 	}()
 
 	s.serve(runCtx)
-
-	s.shutdown()
-	s.wg.Wait()
 
 	return nil
 }
