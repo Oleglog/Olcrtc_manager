@@ -7,8 +7,8 @@
 //	srv := tunnel.New(tunnel.Config{
 //	    Link:      "direct",
 //	    Transport: "datachannel",
-//	    Carrier:   "telemost",
-//	    RoomURL:   "<room-id>",
+//	    Carrier:   "jitsi",
+//	    RoomURL:   "https://meet.cryptopro.ru/myroom",
 //	    KeyHex:    "<64-char hex>",
 //	    DNSServer: "1.1.1.1:53",
 //	    AuthHook: func(deviceID string, claims map[string]any) (string, error) {
@@ -30,7 +30,7 @@
 //	}
 //
 // Call [RegisterDefaults] once at program start to register the built-in
-// carriers (telemost, jazz, wbstream) and transports (datachannel,
+// carriers (jitsi, telemost, jazz, wbstream) and transports (datachannel,
 // videochannel, seichannel, vp8channel).
 package tunnel
 
@@ -67,11 +67,11 @@ type Config struct {
 	// --- carrier selection ---
 	Link      string // currently only "direct"
 	Transport string // datachannel, videochannel, seichannel, vp8channel
-	Carrier   string // telemost, jazz, wbstream, none
+	Carrier   string // jitsi, telemost, jazz, wbstream, none
 	RoomURL   string // conference room identifier for the carrier
 
 	// --- direct engine mode (Carrier == "none") ---
-	Engine string // livekit, goolom, salutejazz
+	Engine string // livekit, goolom, salutejazz, jitsi
 	URL    string
 	Token  string
 

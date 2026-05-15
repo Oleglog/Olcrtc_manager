@@ -13,6 +13,8 @@ var (
 	ErrByteStreamUnsupported = errors.New("carrier does not support byte stream")
 	// ErrVideoTrackUnsupported is returned when a carrier cannot exchange video tracks.
 	ErrVideoTrackUnsupported = errors.New("carrier does not support video tracks")
+	// ErrAuthFailed is returned when a carrier's auth provider rejects the request.
+	ErrAuthFailed = errors.New("carrier auth failed")
 )
 
 // Capabilities describes the transport primitives a carrier can expose.

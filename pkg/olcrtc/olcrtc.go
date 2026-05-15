@@ -11,18 +11,18 @@
 //	conn, err := sess.Dial(ctx)  // blocks until WebRTC data channel is ready
 //	// conn implements net.Conn — pass it to sing-box / any io.ReadWriter consumer
 //
-// Built-in auth providers (telemost, jazz, wbstream):
+// Built-in auth providers (jitsi, telemost, jazz, wbstream):
 //
 //	sess, err := olcrtc.New(ctx, olcrtc.Config{
-//	    Auth:   "telemost",
-//	    RoomID: "<room-hash>",
+//	    Auth:   "jitsi",
+//	    RoomID: "https://meet.cryptopro.ru/myroom",
 //	})
 //
 // Import the implementations you need via blank imports, or call [RegisterDefaults]:
 //
 //	import (
-//	    _ "github.com/openlibrecommunity/olcrtc/internal/engine/livekit"
-//	    _ "github.com/openlibrecommunity/olcrtc/internal/auth/telemost"
+//	    _ "github.com/openlibrecommunity/olcrtc/internal/engine/jitsi"
+//	    _ "github.com/openlibrecommunity/olcrtc/internal/auth/jitsi"
 //	)
 package olcrtc
 
@@ -52,7 +52,7 @@ var (
 // Config is the input to [New].
 type Config struct {
 	// --- built-in auth mode ---
-	// Auth is the name of a registered auth provider ("telemost", "jazz", "wbstream").
+	// Auth is the name of a registered auth provider ("jitsi", "telemost", "jazz", "wbstream").
 	// When set, RoomID is forwarded to the provider as the room reference.
 	Auth   string
 	RoomID string

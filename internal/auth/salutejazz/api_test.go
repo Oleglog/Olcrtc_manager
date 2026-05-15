@@ -58,9 +58,9 @@ func TestCreateMeetingAndPreconnect(t *testing.T) {
 }
 
 const (
-	testRoomID     = "new-room"
-	testPassword   = "new-pass"
-	testConnector  = "wss://connector"
+	testRoomID      = "new-room"
+	testPassword    = "new-pass"
+	testConnector   = "wss://connector"
 	connectorURLKey = "connectorUrl"
 )
 

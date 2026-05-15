@@ -9,7 +9,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/openlibrecommunity/olcrtc/internal/protect"
@@ -17,9 +19,19 @@ import (
 
 const (
 	authTypeAnonymous = "ANONYMOUS"
+	headerAccept      = "Accept"
 	headerAuthType    = "X-Jazz-AuthType"
+	headerClientID    = "X-Jazz-ClientId"
+	headerClientType  = "X-Client-AuthType"
 	headerContentType = "Content-Type"
+	headerJazzUA      = "X-Jazz-Ua"
+	headerOrigin      = "Origin"
+	headerReferer     = "Referer"
 	contentTypeJSON   = "application/json"
+	jazzOrigin        = "https://salutejazz.ru"
+	jazzReferer       = jazzOrigin + "/"
+	jazzUA            = "osName=Linux;osVersion=;appName=jazz;appVersion=26.21.7;" +
+		"surface=WEB;browserName=Firefox;browserVersion=150.0"
 )
 
 var apiBase = "https://bk.salutejazz.ru" //nolint:gochecknoglobals // package-level state intentional
@@ -38,10 +50,14 @@ var (
 
 func anonymousHeaders() map[string]string {
 	return map[string]string{
-		"X-Jazz-ClientId":   uuid.New().String(),
-		headerAuthType:      authTypeAnonymous,
-		"X-Client-AuthType": authTypeAnonymous,
-		headerContentType:   contentTypeJSON,
+		headerAccept:      "application/json, text/plain, */*",
+		headerAuthType:    authTypeAnonymous,
+		headerClientID:    uuid.New().String(),
+		headerClientType:  authTypeAnonymous,
+		headerContentType: contentTypeJSON,
+		headerJazzUA:      jazzUA,
+		headerOrigin:      jazzOrigin,
+		headerReferer:     jazzReferer,
 	}
 }
 
@@ -72,7 +88,7 @@ type createResponse struct {
 
 func createMeeting(ctx context.Context, headers map[string]string) (*createResponse, error) {
 	createPayload := map[string]any{
-		"title":                             "olcrtc",
+		"title":                             "Video meeting",
 		"guestEnabled":                      true,
 		"lobbyEnabled":                      false,
 		"serverVideoRecordAutoStartEnabled": false,
@@ -106,7 +122,7 @@ func createMeeting(ctx context.Context, headers map[string]string) (*createRespo
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%w: status %d", errCreateRoomFailed, resp.StatusCode)
+		return nil, statusError(errCreateRoomFailed, resp)
 	}
 
 	var res createResponse
@@ -167,7 +183,7 @@ func preconnect(ctx context.Context, roomID, password string, headers map[string
 	defer func() { _ = preResp.Body.Close() }()
 
 	if preResp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("%w: status %d", errPreconnectFailed, preResp.StatusCode)
+		return "", statusError(errPreconnectFailed, preResp)
 	}
 
 	var preconnectResp struct {
@@ -177,6 +193,15 @@ func preconnect(ctx context.Context, roomID, password string, headers map[string
 		return "", fmt.Errorf("decode preconnect response: %w", err)
 	}
 	return preconnectResp.ConnectorURL, nil
+}
+
+func statusError(base error, resp *http.Response) error {
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	bodyText := strings.TrimSpace(string(body))
+	if bodyText == "" {
+		return fmt.Errorf("%w: status %d", base, resp.StatusCode)
+	}
+	return fmt.Errorf("%w: status %d: %s", base, resp.StatusCode, bodyText)
 }
 
 func joinRoom(ctx context.Context, roomID, password string) (*roomInfo, error) {

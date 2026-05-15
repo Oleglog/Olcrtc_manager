@@ -2,6 +2,7 @@ package builtin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/openlibrecommunity/olcrtc/internal/auth"
@@ -49,7 +50,7 @@ func registerEngineAuth(carrierName string, authProvider auth.Provider) {
 		}
 		creds, err := authProvider.Issue(ctx, authCfg)
 		if err != nil {
-			return nil, fmt.Errorf("auth issue: %w", err)
+			return nil, fmt.Errorf("auth issue: %w", errors.Join(carrier.ErrAuthFailed, err))
 		}
 
 		sess, err := engine.New(ctx, authProvider.Engine(), engine.Config{
