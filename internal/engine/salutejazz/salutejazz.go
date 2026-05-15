@@ -1010,11 +1010,22 @@ func (s *Session) processSendQueue() {
 }
 
 // Close terminates the connection.
+//
+// Close ordering matters: the WebSocket is shut down BEFORE wg.Wait so that
+// handleSignaling, which is parked in ws.ReadJSON, unblocks immediately. If
+// we waited on wg first the ReadJSON would only return once the deferred
+// ws.Close further down ran, eating the full closeWaitTimeout (and on top
+// of that the e2e harness only allows ~20s for goroutines to drain after
+// cancel — long enough for pion's TURN refresh storm to push the client
+// past the deadline). The data channel and peer connections are torn down
+// after the WS so that any final ICE / signaling cleanup the goroutines do
+// on their way out still has somewhere to write.
 func (s *Session) Close() error {
 	s.closed.Store(true)
 	s.sendQueueClosed.Store(true)
 
 	close(s.closeCh)
+	s.shutdownWebSocket()
 
 	done := make(chan struct{})
 	go func() {
@@ -1036,15 +1047,27 @@ func (s *Session) Close() error {
 	if s.pcSub != nil {
 		_ = s.pcSub.Close()
 	}
-	if s.ws != nil {
-		s.wsMu.Lock()
-		_ = s.ws.WriteControl(websocket.CloseMessage,
-			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
-			time.Now().Add(time.Second))
-		_ = s.ws.Close()
-		s.wsMu.Unlock()
-	}
 	return nil
+}
+
+// shutdownWebSocket politely closes the connector WebSocket and trips its
+// read deadline to the past so any blocked ReadJSON in handleSignaling
+// returns immediately. The conn pointer is left intact on purpose: writers
+// elsewhere (sendICECandidate, etc.) gate on s.closed.Load() rather than a
+// nil check, and zeroing it here would race with handleSignaling reading
+// s.ws unlocked. Safe to call multiple times — gorilla/websocket Close is
+// idempotent.
+func (s *Session) shutdownWebSocket() {
+	s.wsMu.Lock()
+	defer s.wsMu.Unlock()
+	if s.ws == nil {
+		return
+	}
+	_ = s.ws.WriteControl(websocket.CloseMessage,
+		websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
+		time.Now().Add(time.Second))
+	_ = s.ws.SetReadDeadline(time.Now())
+	_ = s.ws.Close()
 }
 
 // AddVideoTrack adds a video track to the publisher peer connection.
