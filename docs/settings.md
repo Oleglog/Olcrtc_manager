@@ -12,20 +12,27 @@
 
 ## Матрица совместимости
 
-| Transport | telemost | jazz | wbstream |
-|-----------|:--------:|:----:|:--------:|
-| datachannel | - | * | ! |
-| vp8channel | + | + | + |
-| seichannel | - | + | + |
-| videochannel | + | + | + |
+| Transport | telemost | jazz | wbstream | jitsi |
+|-----------|:--------:|:----:|:--------:|:-----:|
+| datachannel | - | ~ | ~ | + |
+| vp8channel | + | - | + | ~ |
+| seichannel | - | - | + | ~ |
+| videochannel | + | - | + | ~ |
 
 **Легенда:**
-- `+` - работает
-- `-` - не поддерживается
-- `*` - работает, но не желательно
-- `!` - работает только если участникам выданы права на отправку data packets (`canPublishData`), обычно через модераторские права
+- `+` - работает (pass в E2E тестах)
+- `-` - не работает / не поддерживается (fail в E2E тестах)
+- `~` - нестабильно (может работать, но нестабильно)
 
-**Рекомендуемая комбинация для wbstream: `wbstream + vp8channel`**. `wbstream + datachannel` быстрый, но в обычном guest/anonymous flow WB Stream выдаёт токены с `canPublishData=false`; без выдачи участникам модераторских/permission прав DC не маршрутизирует данные и поэтому не рекомендуется.
+**Jazz:** только datachannel проходит E2E тесты. Все non-data транспорты (vp8channel, seichannel, videochannel) не работают — Jazz не поддерживает VideoTrack для туннелирования. Кроме того, Jazz **банит IP** за паттерны datachannel трафика.
+
+**Telemost:** только vp8channel стабильно проходит. DataChannel удалён из Telemost. seichannel не поддерживается. videochannel — best effort.
+
+**WBStream:** все транспорты кроме datachannel работают. DataChannel в обычном guest flow без выдавания модератора не работает — WB Stream выдаёт токены с `canPublishData=false`, и DC не маршрутизирует данные.
+
+**Jitsi:** datachannel стабильно проходит — реализован поверх colibri-ws bridge channel и шлёт байты через `EndpointMessage{raw}` broadcast. Подходит для self-hosted и публичных Jitsi Meet инстансов без аутентификации (`https://meet.cryptopro.ru/...`, `https://meet.jit.si/...` и т.п.). Видео-транспорты (vp8channel, seichannel, videochannel) экспонируют sendable VideoTrack через pion PeerConnection после Jingle session-accept, но Jicofo требует дополнительных протокольных шагов (LastN, ReceiverVideoConstraints, source-add) для маршрутизации видео — поэтому они помечены `~` (best effort).
+
+**Рекомендуемая комбинация: `jitsi + datachannel`** — стабильно работает на любом self-hosted или публичном Jitsi Meet (например `meet.cryptopro.ru`), не требует регистрации, простая руму создания. Альтернатива: `wbstream + vp8channel` — стабильно для коммерческих сценариев, не требует специальных прав.
 
 Скорость по убыванию: `datachannel` > `vp8channel` > `seichannel` > `videochannel`
 
@@ -36,7 +43,7 @@
 | YAML поле | Что вводить |
 |-----------|-------------|
 | `mode` | `srv` на сервере, `cnc` на клиенте, `gen` для генерации Room ID |
-| `auth.provider` | `telemost`, `jazz` или `wbstream` |
+| `auth.provider` | `telemost`, `jazz`, `wbstream` или `jitsi` |
 | `net.transport` | `datachannel`, `vp8channel`, `seichannel` или `videochannel` |
 | `room.id` | Room ID |
 | `crypto.key` | Ключ шифрования hex 64 символа. Генерация: `openssl rand -hex 32` |
@@ -163,9 +170,9 @@ gen:
 
 ## Готовые конфиги
 
-### wbstream + datachannel (не рекомендуется без модераторских прав)
+### wbstream + datachannel (не работает в обычном guest flow)
 
-WB Stream DataChannel работает только когда участникам выданы права на отправку data packets (`canPublishData=true`), обычно через модераторские/permission права комнаты. В обычном guest flow WB Stream может выдавать токены с `canPublishData=false`, тогда соединение поднимется, но данные через DC не пойдут. Для обычного использования выбирай `vp8channel`, `seichannel` или `videochannel`.
+WB Stream DataChannel **не работает** в обычном guest flow — WB Stream выдаёт токены с `canPublishData=false`, и DC не маршрутизирует данные. Этот режим помечен как expected fail в E2E тестах. Для обычного использования выбирай `vp8channel`, `seichannel` или `videochannel`.
 
 ```yaml
 # room ID нужно создать вручную через https://stream.wb.ru
@@ -204,7 +211,7 @@ socks:
 data: data
 ```
 
-### wbstream + datachannel + SOCKS5 аутентификация (только с модераторскими правами)
+### wbstream + datachannel + SOCKS5 аутентификация (не работает в обычном guest flow)
 
 ```yaml
 # client.yaml с логином и паролем на прокси
@@ -279,7 +286,9 @@ vp8:
 data: data
 ```
 
-### telemost + seichannel
+### telemost + seichannel (не работает)
+
+> ⚠️ Эта комбинация помечена как expected fail в E2E тестах. Telemost не поддерживает seichannel.
 
 ```yaml
 # server.yaml
@@ -326,7 +335,7 @@ sei:
 data: data
 ```
 
-### telemost + videochannel (крайний случай)
+### telemost + videochannel (best effort, нестабильно)
 
 ```yaml
 # server.yaml

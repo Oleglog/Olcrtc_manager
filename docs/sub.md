@@ -154,7 +154,7 @@ olcrtc://wbstream?datachannel@abc123xyz#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 ##name: DE-Backup
 ##icon: 🇩🇪
 ##color: #2EBD85
-##comment: reserve route, wbstream+datachannel requires canPublishData/moderator permissions
+##comment: reserve route, wbstream+datachannel does not work in guest flow
 ```
 
 ## Имплементация клиента для подписок

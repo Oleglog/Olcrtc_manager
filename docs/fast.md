@@ -94,15 +94,16 @@ cd olcrtc
 
 ```
 Select auth provider:
-  1) telemost
-  2) jazz
-  3) wbstream
-Enter choice [1-3, default: 3]:
+  1) jitsi
+  2) telemost
+  3) jazz
+  4) wbstream
+Enter choice [1-4, default: 1]:
 ```
 
 Выбери сервис. Полную матрицу совместимости смотри в [settings.md](settings.md).
 
-**По умолчанию `wbstream`** - работает со всеми транспортами, рекомендуется.
+**По умолчанию `jitsi`** — стабильно работает на datachannel против self-hosted и публичных Jitsi инстансов (например `meet.cryptopro.ru`).
 
 ### Transport (как именно передавать данные)
 
@@ -116,18 +117,20 @@ Enter choice [1-4, default: 1]:
 ```
 
 Рекомендации:
-- **datachannel** - самый быстрый, минимальный пинг. Работает с `jazz` и условно с `wbstream`. **Jazz банит IP за datachannel**; **WBStream DC требует `canPublishData`/модераторские права у участников**, поэтому для обычного guest flow не рекомендуется.
-- **vp8channel** - работает везде, быстрый, но большой пинг.
-- **seichannel** - работает везде кроме telemost, медленный, но мелкий пинг.
-- **videochannel** - работает везде, самый медленный и большой пинг.
+- **datachannel** - самый быстрый, минимальный пинг. Стабильно работает с `jitsi` через colibri-ws bridge channel. С `jazz` тоже работает, но Jazz банит IP за паттерны трафика. **WBStream DC не работает** в обычном guest flow (токены без `canPublishData`). **Telemost удалил DC**.
+- **vp8channel** - работает с telemost и wbstream, быстрый, но большой пинг.
+- **seichannel** - работает только с wbstream, медленный, но мелкий пинг.
+- **videochannel** - работает с wbstream (стабильно) и telemost (best effort), самый медленный и большой пинг.
 
-**Рекомендуемая комбинация для wbstream: `wbstream + vp8channel`**. `wbstream + datachannel` используй только если участникам выданы права на отправку data packets.
+**Рекомендуемая комбинация: `jitsi + datachannel`** — работает стабильно, не требует регистрации, легко поднимать на своём сервере. Альтернатива: `wbstream + vp8channel`.
 
 ### Room ID
 
 ```
 Enter Room ID:
 ```
+
+Для **jitsi** — полный URL комнаты в формате `https://host/room` (например `https://meet.cryptopro.ru/myroom`). Имя комнаты придумывается на лету, без регистрации. Подойдёт любой публичный или self-hosted Jitsi Meet.
 
 Для **telemost** и **wbstream** - создай руму через сайт ([телемост](https://telemost.yandex.ru/), [wbstream](https://stream.wb.ru)) и вставь её ID.
 

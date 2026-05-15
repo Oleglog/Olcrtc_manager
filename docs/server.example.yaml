@@ -7,10 +7,12 @@ mode: srv
 link: direct           # p2p link type
 
 auth:
-  provider: wbstream   # telemost | jazz | wbstream | none
+  provider: jitsi      # jitsi | telemost | jazz | wbstream | none
 
+# For jitsi: full conference URL (https://host/room or host/room).
+# For telemost / wbstream / jazz: room ID returned by the service.
 room:
-  id: "ROOM_ID_HERE"
+  id: "https://meet.cryptopro.ru/REPLACE_WITH_ROOM_NAME"
 
 crypto:
   # 32-byte hex (64 chars). Generate with: openssl rand -hex 32
@@ -27,7 +29,7 @@ socks:
 
 # Direct engine mode — only used when auth.provider is "none"
 engine:
-  name: ""    # livekit | goolom | salutejazz
+  name: ""    # livekit | goolom | salutejazz | jitsi
   url: ""
   token: ""
 

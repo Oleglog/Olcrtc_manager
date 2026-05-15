@@ -6,10 +6,12 @@ mode: cnc
 link: direct
 
 auth:
-  provider: wbstream   # must match the server
+  provider: jitsi      # must match the server
 
+# For jitsi: full conference URL (https://host/room or host/room).
+# Must match the server.
 room:
-  id: "ROOM_ID_HERE"   # must match the server
+  id: "https://meet.cryptopro.ru/REPLACE_WITH_ROOM_NAME"
 
 crypto:
   key: "REPLACE_ME_WITH_64_HEX_CHARS"   # must match the server
