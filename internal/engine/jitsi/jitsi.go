@@ -18,6 +18,7 @@ package jitsi
 import (
 	"context"
 	"encoding/base64"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"strings"
@@ -275,11 +276,9 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session) error {
 		webrtc.WithInterceptorRegistry(registry),
 	)
 
-	// Jicofo emits Plan B style SDP with separate <content> sections per
-	// media kind and SSRC-keyed source descriptors. pion's default
-	// UnifiedPlan parser rejects this with "remote SessionDescription
-	// semantics does not match configuration", so we explicitly request
-	// Plan B for the conference PeerConnection.
+	// Jicofo emits Plan B style SDP. Explicit Plan B semantics match what
+	// the j library reference setup uses; source-add renegotiation drives
+	// reception of other participants' SSRCs on the same m=video section.
 	pcConfig := jSess.IceConfig()
 	pcConfig.SDPSemantics = webrtc.SDPSemanticsPlanB
 
@@ -288,7 +287,16 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session) error {
 		return fmt.Errorf("new pc: %w", err)
 	}
 
+	// Jicofo's session-initiate always includes m=audio. Without a matching
+	// audio transceiver, pion's answer rejects the audio m-line and JVB may
+	// not complete ICE for the second peer in the room.
+	if _, err := pc.AddTransceiverFromKind(webrtc.RTPCodecTypeAudio, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly}); err != nil {
+		_ = pc.Close()
+		return fmt.Errorf("add audio recvonly: %w", err)
+	}
+
 	s.videoTrackMu.RLock()
+	hasLocalTracks := len(s.videoTracks) > 0
 	for _, track := range s.videoTracks {
 		if _, addErr := pc.AddTrack(track); addErr != nil {
 			s.videoTrackMu.RUnlock()
@@ -297,6 +305,19 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session) error {
 		}
 	}
 	s.videoTrackMu.RUnlock()
+
+	// When sending video, AddTrack already creates the video m-line (sendonly).
+	// When only receiving, an explicit recvonly transceiver is required so the
+	// SDP answer includes a video m-line — without it JVB does not set up a
+	// video forwarding path and ICE stalls. Mirrors the j library reference CLI:
+	// AddTrack and AddTransceiverFromKind(video,recvonly) are mutually exclusive
+	// in Plan B; using both produces a malformed SDP.
+	if !hasLocalTracks {
+		if _, err := pc.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly}); err != nil {
+			_ = pc.Close()
+			return fmt.Errorf("add video recvonly: %w", err)
+		}
+	}
 
 	pc.OnTrack(func(track *webrtc.TrackRemote, recv *webrtc.RTPReceiver) {
 		if track.Kind() != webrtc.RTPCodecTypeVideo {
@@ -315,10 +336,29 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session) error {
 
 	neg := jSess.Negotiator()
 	neg.PC = pc
+	neg.OnIceConnectionStateChange = func(state webrtc.ICEConnectionState) {
+		logger.Debugf("jitsi ICE state: %s", state)
+	}
 	if err := neg.Accept(ctx); err != nil {
 		_ = pc.Close()
 		return fmt.Errorf("session-accept: %w", err)
 	}
+	logger.Debugf("jitsi: session-accept sent")
+
+	// Announce our SSRCs explicitly via source-add. Even though session-accept
+	// already carries them, Jicofo only propagates sources advertised via
+	// source-add to peers that join AFTER us.
+	if hasLocalTracks {
+		if err := neg.SendSourceAddFromSDP(pc.LocalDescription().SDP); err != nil {
+			logger.Debugf("jitsi: source-add (initial): %v", err)
+		}
+	}
+
+	// Drain XMPP stanzas: feed transport-info trickle ICE candidates into
+	// pion, handle incoming source-add (other participants' SSRCs), and
+	// keep the channel from filling its 64-slot buffer.
+	s.wg.Add(1)
+	go s.trickleDrainLoop(pc, neg, jSess.LowLevel().Stanzas())
 
 	// Tell JVB to forward video streams to this endpoint.
 	if err := jSess.RequestVideo(ctx, 720); err != nil {
@@ -329,6 +369,127 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session) error {
 	s.pc = pc
 	s.pcMu.Unlock()
 	return nil
+}
+
+// negotiator is the subset of *peer.Negotiator we need. Defined as an
+// interface here because peer is in j's internal/ tree and not importable.
+type negotiator interface {
+	HandleSourceAdd(stanza string) error
+}
+
+// trickleDrainLoop reads the XMPP stanza channel and feeds any
+// transport-info ICE candidates into the PeerConnection. It also drains
+// non-jingle stanzas so the channel never fills and blocks the read loop.
+// Incoming source-add stanzas (announcing other participants' SSRCs) are
+// merged into the remote SDP via neg.HandleSourceAdd so pion can route the
+// inbound RTP through OnTrack.
+func (s *Session) trickleDrainLoop(pc *webrtc.PeerConnection, neg negotiator, stanzas <-chan string) {
+	defer s.wg.Done()
+	for {
+		select {
+		case <-s.done:
+			return
+		case raw, ok := <-stanzas:
+			if !ok {
+				return
+			}
+			switch {
+			case strings.Contains(raw, "transport-info"):
+				if err := s.applyTrickleICE(pc, raw); err != nil {
+					logger.Debugf("jitsi trickle ICE: %v", err)
+				}
+			case strings.Contains(raw, "source-add"):
+				if err := neg.HandleSourceAdd(raw); err != nil {
+					logger.Debugf("jitsi source-add: %v", err)
+				}
+			}
+		}
+	}
+}
+
+
+// xmlCandidate is a minimal XML representation of a Jingle ICE candidate.
+type xmlCandidate struct {
+	Component  string `xml:"component,attr"`
+	Foundation string `xml:"foundation,attr"`
+	Generation string `xml:"generation,attr"`
+	IP         string `xml:"ip,attr"`
+	Port       string `xml:"port,attr"`
+	Priority   string `xml:"priority,attr"`
+	Protocol   string `xml:"protocol,attr"`
+	Type       string `xml:"type,attr"`
+	RelAddr    string `xml:"rel-addr,attr"`
+	RelPort    string `xml:"rel-port,attr"`
+}
+
+// xmlTransportInfo is the minimal structure needed to extract candidates
+// from a <jingle action="transport-info"> stanza.
+type xmlTransportInfo struct {
+	XMLName  xml.Name `xml:"iq"`
+	Jingle   struct {
+		Action   string `xml:"action,attr"`
+		Contents []struct {
+			Name      string `xml:"name,attr"`
+			Transport struct {
+				Candidates []xmlCandidate `xml:"candidate"`
+			} `xml:"transport"`
+		} `xml:"content"`
+	} `xml:"jingle"`
+}
+
+func (s *Session) applyTrickleICE(pc *webrtc.PeerConnection, raw string) error {
+	var ti xmlTransportInfo
+	if err := xml.Unmarshal([]byte(raw), &ti); err != nil {
+		return fmt.Errorf("parse transport-info: %w", err)
+	}
+	for _, content := range ti.Jingle.Contents {
+		mid := content.Name
+		for _, c := range content.Transport.Candidates {
+			sdpLine := buildSDPCandidate(c)
+			if sdpLine == "" {
+				continue
+			}
+			init := webrtc.ICECandidateInit{
+				Candidate: sdpLine,
+				SDPMid:    &mid,
+			}
+			if err := pc.AddICECandidate(init); err != nil {
+				logger.Debugf("jitsi add ICE candidate (%s): %v", mid, err)
+			}
+		}
+	}
+	return nil
+}
+
+func buildSDPCandidate(c xmlCandidate) string {
+	if c.IP == "" || c.Port == "" {
+		return ""
+	}
+	comp := c.Component
+	if comp == "" {
+		comp = "1"
+	}
+	proto := strings.ToLower(c.Protocol)
+	if proto == "" {
+		proto = "udp"
+	}
+	priority := c.Priority
+	if priority == "" {
+		priority = "1"
+	}
+	candType := c.Type
+	if candType == "" {
+		candType = "host"
+	}
+	s := fmt.Sprintf("candidate:%s %s %s %s %s %s typ %s",
+		c.Foundation, comp, proto, priority, c.IP, c.Port, candType)
+	if c.RelAddr != "" && c.RelPort != "" {
+		s += fmt.Sprintf(" raddr %s rport %s", c.RelAddr, c.RelPort)
+	}
+	if c.Generation != "" {
+		s += fmt.Sprintf(" generation %s", c.Generation)
+	}
+	return s
 }
 
 // Send queues data for transmission over the bridge.
@@ -459,9 +620,26 @@ func (s *Session) Close() error {
 		return nil
 	}
 
+	// Tell Jicofo we're leaving BEFORE closing any transport. The order
+	// matters: a half-torn-down websocket can drop the session-terminate /
+	// presence-unavailable stanzas, leaving the participant in the MUC
+	// roster until idle timeout. Subsequent tests then see ghost endpoints
+	// in the bridge channel and receive garbage during handshake.
 	jSess := s.jSess.Load()
 	if jSess != nil {
-		s.terminateJingleSession(jSess)
+		if err := s.terminateJingleSession(jSess); err != nil {
+			logger.Infof("jitsi: session-terminate failed: %v", err)
+		}
+		// Send MUC presence-unavailable and give Prosody a moment to
+		// route it before we tear down the websocket.
+		if conn := jSess.LowLevel(); conn != nil {
+			if err := conn.LeaveMUC(s.room); err != nil {
+				logger.Infof("jitsi: LeaveMUC failed: %v", err)
+			} else {
+				logger.Infof("jitsi: LeaveMUC sent")
+			}
+			time.Sleep(300 * time.Millisecond)
+		}
 	}
 
 	s.pcMu.Lock()
@@ -501,14 +679,12 @@ func (s *Session) Close() error {
 // moment it dispatches session-initiate, regardless of whether the
 // participant ever sent session-accept, and an explicit session-terminate
 // frees that slot promptly.
-func (s *Session) terminateJingleSession(jSess *j.Session) {
+func (s *Session) terminateJingleSession(jSess *j.Session) error {
 	neg := jSess.Negotiator()
 	if neg == nil {
-		return
+		return nil
 	}
-	if err := neg.Terminate("success"); err != nil {
-		logger.Debugf("jitsi: session-terminate: %v", err)
-	}
+	return neg.Terminate("success")
 }
 
 // SetReconnectCallback registers a callback for reconnection events.

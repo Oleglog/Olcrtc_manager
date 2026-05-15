@@ -29,6 +29,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"hash/crc32"
@@ -141,13 +142,15 @@ func New(ctx context.Context, cfg transport.Config) (transport.Transport, error)
 		return nil, fmt.Errorf("open video track: %w", err)
 	}
 
+	// Stream/track IDs must be unique per peer — Jitsi rejects session-accept
+	// when msid collides with another participant in the conference.
 	track, err := webrtc.NewTrackLocalStaticSample(
 		webrtc.RTPCodecCapability{
 			MimeType:  webrtc.MimeTypeVP8,
 			ClockRate: 90000,
 		},
-		"vp8channel",
-		"olcrtc",
+		"vp8channel-"+randomID(),
+		"olcrtc-"+randomID(),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create local video track: %w", err)
@@ -245,6 +248,17 @@ func bindingToken(clientID string) uint32 {
 		token = 1
 	}
 	return token
+}
+
+// randomID returns 8 random hex characters for use as a per-peer suffix on
+// track and stream IDs. Required for Jitsi: msid collisions between
+// participants cause Jicofo to reject session-accept.
+func randomID() string {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("%08x", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b[:])
 }
 
 func randomEpoch() uint32 {

@@ -3,6 +3,8 @@ package videochannel
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"hash/crc32"
@@ -104,7 +106,10 @@ func New(ctx context.Context, cfg transport.Config) (transport.Transport, error)
 	}
 
 	codec := codecSpecForCarrier(cfg.Carrier)
-	track, err := webrtc.NewTrackLocalStaticSample(codec.capability, "videochannel", "olcrtc")
+	// Stream/track IDs must be unique per peer: Jitsi/Jicofo keys participant
+	// sources by msid (stream-id+track-id) and rejects a session-accept whose
+	// msid collides with one already in the conference.
+	track, err := webrtc.NewTrackLocalStaticSample(codec.capability, "videochannel-"+randomID(), "olcrtc-"+randomID())
 	if err != nil {
 		return nil, fmt.Errorf("create local video track: %w", err)
 	}
@@ -631,4 +636,15 @@ func (p *streamTransport) resolveAck(seq, crc uint32) {
 	case waiter <- crc:
 	default:
 	}
+}
+
+// randomID returns 8 random hex characters for use as a per-peer suffix on
+// track and stream IDs. Required for Jitsi: msid collisions between
+// participants cause Jicofo to reject session-accept.
+func randomID() string {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("%08x", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b[:])
 }

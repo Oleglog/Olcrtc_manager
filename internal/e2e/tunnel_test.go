@@ -374,9 +374,7 @@ func realE2ECaseExpectation(carrierName, transportName string) realE2EExpectatio
 		// Jitsi colibri-ws bridge channel maps cleanly onto the
 		// datachannel transport (raw bytes broadcast through
 		// EndpointMessage). Video transports go through pion's
-		// PeerConnection negotiated via Jingle session-accept; results
-		// are bridge/instance dependent (some operators throttle or
-		// strip non-camera video), hence best-effort.
+		// PeerConnection negotiated via Jingle session-accept.
 		return realE2EExpectPass
 	default:
 		return realE2EExpectPass

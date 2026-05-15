@@ -3,7 +3,9 @@ package seichannel
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"hash/crc32"
@@ -124,15 +126,17 @@ func New(ctx context.Context, cfg transport.Config) (transport.Transport, error)
 		return nil, fmt.Errorf("open video track: %w", err)
 	}
 
+	// Stream/track IDs must be unique per peer — Jitsi rejects session-accept
+	// when msid collides with another participant in the conference.
 	track, err := webrtc.NewTrackLocalStaticSample(
 		webrtc.RTPCodecCapability{
 			MimeType:    webrtc.MimeTypeH264,
 			ClockRate:   90000,
 			Channels:    0,
-			SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42c00a",
+			SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f",
 		},
-		"seichannel",
-		"olcrtc",
+		"seichannel-"+randomID(),
+		"olcrtc-"+randomID(),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create local video track: %w", err)
@@ -609,4 +613,15 @@ func decodeTransportFrame(data []byte) (transportFrame, error) {
 	default:
 		return transportFrame{}, ErrUnexpectedFrameType
 	}
+}
+
+// randomID returns 8 random hex characters for use as a per-peer suffix on
+// track and stream IDs. Required for Jitsi: msid collisions between
+// participants cause Jicofo to reject session-accept.
+func randomID() string {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("%08x", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b[:])
 }
