@@ -7,6 +7,8 @@
 
 </div>
 
+## В разарботке. Пилим под [новую ветку](https://github.com/openlibrecommunity/olcrtc/tree/refactor/universal-carrier) так что может вообще не работать.
+
 > ### ⚠ Known issues / Известные проблемы (май 2026)
 >
 > - **WB Stream**: разработчики stream.wb.ru отключили публичный API создания
