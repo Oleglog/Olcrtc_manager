@@ -654,24 +654,29 @@ func (s *Session) deliverBridgeMessage(msg j.BridgeMessage, ok bool) bool {
 	if len(payload) < len(bridgeMagic) || !bytes.Equal(payload[:len(bridgeMagic)], bridgeMagic[:]) {
 		return true
 	}
-	// peer-latch: the first sender whose payload survived the magic check
-	// becomes our partner; everyone else is ignored. Cleared on reconnect by
-	// the supervisor (peerEndpoint is reset whenever the bridge is reopened).
-	if cur := s.peerEndpoint.Load(); cur != nil {
-		if *cur != msg.From {
-			return true
-		}
-	} else if msg.From != "" {
-		from := msg.From
-		s.peerEndpoint.CompareAndSwap(nil, &from)
-		// Re-check after CAS: a concurrent latch may have picked a different
-		// peer first; if so, drop this frame.
-		if cur := s.peerEndpoint.Load(); cur != nil && *cur != msg.From {
-			return true
-		}
+	if !s.peerLatchAccepts(msg.From) {
+		return true
 	}
 	s.onData(payload[len(bridgeMagic):])
 	return true
+}
+
+// peerLatchAccepts implements the peer-latch logic: the first sender whose
+// payload survived the magic check becomes our partner; everyone else is
+// ignored. Cleared on reconnect by the supervisor (peerEndpoint is reset
+// whenever the bridge is reopened).
+func (s *Session) peerLatchAccepts(from string) bool {
+	if cur := s.peerEndpoint.Load(); cur != nil {
+		return *cur == from
+	}
+	if from == "" {
+		return true
+	}
+	s.peerEndpoint.CompareAndSwap(nil, &from)
+	// Re-check after CAS: a concurrent latch may have picked a different
+	// peer first; if so, drop this frame.
+	cur := s.peerEndpoint.Load()
+	return cur == nil || *cur == from
 }
 
 // decodeRaw extracts the bytes from an EndpointMessage produced by the j

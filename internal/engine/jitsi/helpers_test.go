@@ -19,9 +19,9 @@ func makeBridgeMessage(class string, fields map[string]any) j.BridgeMessage {
 	}
 }
 
-func makeBridgeMessageFrom(class, from string, fields map[string]any) j.BridgeMessage {
+func makeBridgeMessageFrom(from string, fields map[string]any) j.BridgeMessage {
 	return j.BridgeMessage{
-		Class:  class,
+		Class:  "EndpointMessage",
 		From:   from,
 		Fields: fields,
 	}

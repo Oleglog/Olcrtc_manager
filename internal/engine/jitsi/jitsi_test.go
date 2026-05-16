@@ -154,7 +154,10 @@ func TestDeliverBridgeMessageMagicAndPeerLatch(t *testing.T) {
 	}
 	defer func() { _ = sess.Close() }()
 
-	js := sess.(*Session)
+	js, ok := sess.(*Session)
+	if !ok {
+		t.Fatal("sess is not *Session")
+	}
 	var received [][]byte
 	js.onData = func(b []byte) {
 		received = append(received, append([]byte(nil), b...))
@@ -164,16 +167,16 @@ func TestDeliverBridgeMessageMagicAndPeerLatch(t *testing.T) {
 	bad := encodeForTest(t, []byte("alpha")) // no magic prefix
 
 	// First valid frame from peerA latches the peer and is delivered.
-	if !js.deliverBridgeMessage(makeBridgeMessageFrom(classEndpoint, "peerA", map[string]any{rawFieldKey: good}), true) {
+	if !js.deliverBridgeMessage(makeBridgeMessageFrom("peerA", map[string]any{rawFieldKey: good}), true) {
 		t.Fatal("deliverBridgeMessage returned false on valid frame")
 	}
 	// Frame without magic is dropped.
-	js.deliverBridgeMessage(makeBridgeMessageFrom(classEndpoint, "peerA", map[string]any{rawFieldKey: bad}), true)
+	js.deliverBridgeMessage(makeBridgeMessageFrom("peerA", map[string]any{rawFieldKey: bad}), true)
 	// Frame from a different sender after latch is dropped even with magic.
-	js.deliverBridgeMessage(makeBridgeMessageFrom(classEndpoint, "peerB", map[string]any{rawFieldKey: good}), true)
+	js.deliverBridgeMessage(makeBridgeMessageFrom("peerB", map[string]any{rawFieldKey: good}), true)
 	// Another frame from latched peer still flows.
 	beta := makeBridgeFrame(t, []byte("beta"))
-	js.deliverBridgeMessage(makeBridgeMessageFrom(classEndpoint, "peerA", map[string]any{rawFieldKey: beta}), true)
+	js.deliverBridgeMessage(makeBridgeMessageFrom("peerA", map[string]any{rawFieldKey: beta}), true)
 
 	if len(received) != 2 {
 		t.Fatalf("received frames = %d, want 2 (%q)", len(received), received)
