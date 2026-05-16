@@ -4,6 +4,11 @@ on:
   push:
   pull_request:
     branches: ["main", "master"]
+  schedule:
+    # Nightly stress soak — 03:17 UTC keeps it off the hour to avoid
+    # contention with the GitHub Actions hourly stampede.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
 
 jobs:
   test:
@@ -38,6 +43,23 @@ jobs:
       - name: Run tests with coverage
         run: go test -count=1 ./... --cover
 
+  race:
+    name: Test (-race)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+
+      - name: Run tests with -race
+        run: go test -count=1 -race ./...
+
   real-e2e:
     name: Real E2E (Providers x Transports)
     runs-on: ubuntu-latest
@@ -61,6 +83,39 @@ jobs:
             -olcrtc.real-carriers=telemost,wbstream,jazz,jitsi \
             -run '^TestRealProviderTransportMatrix$' \
             -olcrtc.real-e2e
+
+  stress-soak:
+    name: Real E2E Stress Soak (Nightly)
+    # Long-form stress over real carriers: only on schedule or manual
+    # dispatch. Push and PR runs stay fast.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+
+      - name: Install media tools
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Run real stress soak
+        run: |
+          go test -count=1 -v ./internal/e2e \
+            -run '^TestRealProviderTransportStress$' \
+            -timeout=85m \
+            -olcrtc.real-e2e \
+            -olcrtc.stress \
+            -olcrtc.real-carriers=telemost,wbstream,jazz,jitsi \
+            -olcrtc.stress-bytes=16777216 \
+            -olcrtc.stress-duration=120s \
+            -olcrtc.stress-echo-size=1024 \
+            -olcrtc.stress-case-timeout=8m
 
   lint:
     name: Lint
