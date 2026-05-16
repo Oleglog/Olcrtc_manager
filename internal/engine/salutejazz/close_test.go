@@ -134,3 +134,28 @@ func TestShutdownWebSocketIsIdempotent(t *testing.T) {
 	go func() { defer wg.Done(); s.shutdownWebSocket() }()
 	wg.Wait()
 }
+
+// TestCloseWithDeadlineDoesNotBlockOnStraggler pins down that a wedged
+// PeerConnection.Close (modeled here as a never-returning closer) does not
+// hold up Session.Close past its budget. The historical failure mode showed
+// up in the real e2e matrix as "tunnel goroutine did not stop: client" when
+// pion's TURN refresh storm kept the ICE agent alive long after the test
+// asked it to shut down.
+func TestCloseWithDeadlineDoesNotBlockOnStraggler(t *testing.T) {
+	deadline := 50 * time.Millisecond
+	closers := []func() error{
+		func() error { return nil },
+		func() error { select {} }, //nolint:revive // intentional block to model a wedged pion close
+	}
+
+	start := time.Now()
+	closeWithDeadline(closers, deadline)
+	elapsed := time.Since(start)
+
+	if elapsed > deadline*4 {
+		t.Fatalf("closeWithDeadline blocked for %s, expected ~%s", elapsed, deadline)
+	}
+	if elapsed < deadline {
+		t.Fatalf("closeWithDeadline returned in %s before deadline %s; should have waited for the straggler", elapsed, deadline)
+	}
+}

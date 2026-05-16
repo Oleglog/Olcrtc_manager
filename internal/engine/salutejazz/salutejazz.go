@@ -57,6 +57,7 @@ const (
 	wsHandshakeTimeout   = 15 * time.Second
 	sendQueueTimeout     = 50 * time.Millisecond
 	closeWaitTimeout     = 2 * time.Second
+	pcCloseTimeout       = 3 * time.Second
 	subscriberOfferGap   = 300 * time.Millisecond
 	audioFrameDuration   = 20 * time.Millisecond
 )
@@ -1020,6 +1021,14 @@ func (s *Session) processSendQueue() {
 // past the deadline). The data channel and peer connections are torn down
 // after the WS so that any final ICE / signaling cleanup the goroutines do
 // on their way out still has somewhere to write.
+//
+// pion's PeerConnection.Close blocks until the ICE agent and its TURN
+// allocations drain; on the jazz e2e runner most relays get rejected with
+// "403: Forbidden IP" and the agent keeps logging "Failed to handle
+// message: the agent is closed" every 2s while it churns through them. We
+// fire dc/pc closes in parallel and cap them with pcCloseTimeout so a
+// stuck pion goroutine never holds up the carrier link teardown past the
+// e2e harness's 20s budget.
 func (s *Session) Close() error {
 	s.closed.Store(true)
 	s.sendQueueClosed.Store(true)
@@ -1038,16 +1047,46 @@ func (s *Session) Close() error {
 	case <-time.After(closeWaitTimeout):
 	}
 
+	closers := make([]func() error, 0, 3)
 	if s.dc != nil {
-		_ = s.dc.Close()
+		closers = append(closers, s.dc.Close)
 	}
 	if s.pcPub != nil {
-		_ = s.pcPub.Close()
+		closers = append(closers, s.pcPub.Close)
 	}
 	if s.pcSub != nil {
-		_ = s.pcSub.Close()
+		closers = append(closers, s.pcSub.Close)
 	}
+	closeWithDeadline(closers, pcCloseTimeout)
 	return nil
+}
+
+// closeWithDeadline runs the supplied Close funcs concurrently and returns
+// once all of them have returned OR the deadline elapses, whichever comes
+// first. Stragglers (typically a pion PeerConnection.Close waiting on a
+// wedged TURN allocation) are left to finish in the background so they
+// don't block carrier-link teardown.
+func closeWithDeadline(closers []func() error, timeout time.Duration) {
+	if len(closers) == 0 {
+		return
+	}
+	var wg sync.WaitGroup
+	wg.Add(len(closers))
+	for _, fn := range closers {
+		go func(fn func() error) {
+			defer wg.Done()
+			_ = fn()
+		}(fn)
+	}
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+	}
 }
 
 // shutdownWebSocket politely closes the connector WebSocket and trips its
