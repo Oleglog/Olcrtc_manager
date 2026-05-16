@@ -112,7 +112,7 @@ jobs:
             -olcrtc.real-e2e \
             -olcrtc.stress \
             -olcrtc.real-carriers=telemost,wbstream,jazz,jitsi \
-            -olcrtc.stress-bytes=16777216 \
+            -olcrtc.stress-bulk-duration=90s \
             -olcrtc.stress-duration=120s \
             -olcrtc.stress-echo-size=1024 \
             -olcrtc.stress-case-timeout=8m
