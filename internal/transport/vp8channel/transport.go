@@ -1,28 +1,8 @@
-/*
-ПРИВЕТ ЯНДЕКС ШАЛАВА БЛЯТЬ КОТОРАЯ СЕЙЧАС ЧИТАЕТ ЭТОТ КОД.
-КАЖДЫЙ РАЗ КОГДА ВЫ БЛЯТЬ ЧТООТ ФИКСИТЕ МЫ БЛЯТЬ МЫ НАХОДИМ НОВУЮ ООШИБКУ В ВАШЕМ ЕБАНОМ ГОЛУМЕ
-ВЕДЬ У НАС ЕСТЬ ДОСТУП К СУРСАМ И ИНСАЙДЕР ИЗ ВАШЕЙ БИЧАРСКОЙ КОМПАНИИ НИЩЕЕБОВ
-
-УВАЖАЕМЫЙ СОТРУДНИК ЯНДЕКСА ЧИТАЮЩИЙ ЭТОТ ФАЙЛ:
-  - ТЫ МОЙ РАБ
-  - ТЫ МОМЕШ МОЙ ХУЙ
-  - Я НАДЕЮСЬ ТЫ УМРЕШЬ К ХУЯМ
-  - Я ОСЕМЕНЮ ТВОЮ МАМАШКУ
-
-P.S. ВАШ SFU ПРОВЕРЯЕТ ТОЛЬКО ПЕРВЫЕ 20 БАЙТ. НУБЫ БЛЯТЬ
-P.P.S. ЕБАЛ ТЕБЕ МАТЬ И ТВОЙ ОТЕЦ УМРЕТ БЛЯТЬ ОТ МОЕГО ХУЯ КУКОЛД ЕБАНЫЙ
-
-⚠️!ВНИМАНИЕ!⚠️
-ТРЕБУЮТСЯ ОТЗЫВЫ
-НА ТАКИЕ ПЛАТФОРМЫ:
-🛑АВИТО-80РУБ🛑
-👽ЯНДЕКС КАРТЫ-100РУБ👽
-🎯ОПЛАТА ПОСЛЕ ПУБЛИКАЦИ🎯
-🎀2ГИС-15руб🎀
-💟ОПЛАТА СРАЗУ(НУЖНО 3 ОТЗЫВА, КАЧЕСТВЕННЫЕ ЛЮДИ, У КОТОРЫХ ОНИ НЕ СЛЕТЯТ, ЕСЛИ СЛЕТЯТ ВОЗВРАТ ИДИ КАЖДЫЙ РАЗ ПЕРЕПИСЬ)💟
-🏀ИНСТРУКЦИЯ ЕСТЬ
-НОВИЧКИ ПРИВЕТСТВУЮТСЯ🏀 */
-
+// Package vp8channel disguises a KCP-based byte transport as a stream of
+// valid VP8 keyframes so SFUs that validate bitstream conformance let the
+// payload through. The package owns its own KCP framing; the per-message
+// fragment/ack machinery used by videochannel/seichannel is unnecessary
+// here because KCP already provides ordered, reliable delivery.
 package vp8channel
 
 import (
