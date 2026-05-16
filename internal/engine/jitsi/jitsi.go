@@ -97,11 +97,11 @@ type Session struct {
 	closed       atomic.Bool
 	reconnecting atomic.Bool
 
-	reconnectCh    chan struct{}
-	lastReconnect  time.Time
-	reconnectCount int
-	localEpoch     atomic.Uint32
-	peerEpoch      atomic.Uint32
+	reconnectCh          chan struct{}
+	reconnectWindowStart time.Time
+	reconnectCount       int
+	localEpoch           atomic.Uint32
+	peerEpoch            atomic.Uint32
 
 	// peerEndpoint latches the MUC nick of the first occupant whose
 	// EndpointMessage passed the bridgeMagic check. Once set, all bridge
@@ -944,11 +944,12 @@ func (s *Session) requestReconnect(reason string) {
 }
 
 func (s *Session) handleReconnectAttempt(ctx context.Context) bool {
-	if time.Since(s.lastReconnect) > reconnectWindow {
+	now := time.Now()
+	if s.reconnectWindowStart.IsZero() || now.Sub(s.reconnectWindowStart) > reconnectWindow {
+		s.reconnectWindowStart = now
 		s.reconnectCount = 0
 	}
 	s.reconnectCount++
-	s.lastReconnect = time.Now()
 
 	if s.reconnectCount > maxReconnects {
 		s.signalEnded("jitsi reconnect limit reached")
