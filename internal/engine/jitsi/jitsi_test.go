@@ -198,7 +198,10 @@ func TestBridgeCloseRequestsReconnect(t *testing.T) {
 	}
 	defer func() { _ = sess.Close() }()
 
-	js := sess.(*Session)
+	js, ok := sess.(*Session)
+	if !ok {
+		t.Fatal("sess is not *Session")
+	}
 	var ended string
 	js.SetEndedCallback(func(reason string) { ended = reason })
 	js.SetShouldReconnect(func() bool { return true })
@@ -226,7 +229,10 @@ func TestBridgeCloseEndsWhenReconnectDisabled(t *testing.T) {
 	}
 	defer func() { _ = sess.Close() }()
 
-	js := sess.(*Session)
+	js, ok := sess.(*Session)
+	if !ok {
+		t.Fatal("sess is not *Session")
+	}
 	var ended string
 	js.SetEndedCallback(func(reason string) { ended = reason })
 	js.SetShouldReconnect(func() bool { return false })
