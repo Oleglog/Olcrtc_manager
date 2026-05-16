@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/openlibrecommunity/olcrtc/internal/engine"
+	"github.com/zarazaex69/j"
 )
 
 const (
@@ -183,6 +185,57 @@ func TestDeliverBridgeMessageMagicAndPeerLatch(t *testing.T) {
 	}
 	if string(received[0]) != "alpha" || string(received[1]) != "beta" {
 		t.Fatalf("received = %q, want [alpha beta]", received)
+	}
+}
+
+func TestBridgeCloseRequestsReconnect(t *testing.T) {
+	sess, err := New(context.Background(), engine.Config{
+		URL:   testHost,
+		Extra: map[string]string{credentialKeyRoom: testRoom},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer func() { _ = sess.Close() }()
+
+	js := sess.(*Session)
+	var ended string
+	js.SetEndedCallback(func(reason string) { ended = reason })
+	js.SetShouldReconnect(func() bool { return true })
+
+	if js.deliverBridgeMessage(j.BridgeMessage{}, false) {
+		t.Fatal("deliverBridgeMessage returned true on closed bridge")
+	}
+	select {
+	case <-js.reconnectCh:
+	case <-time.After(time.Second):
+		t.Fatal("bridge close did not request reconnect")
+	}
+	if ended != "" {
+		t.Fatalf("ended = %q, want empty", ended)
+	}
+}
+
+func TestBridgeCloseEndsWhenReconnectDisabled(t *testing.T) {
+	sess, err := New(context.Background(), engine.Config{
+		URL:   testHost,
+		Extra: map[string]string{credentialKeyRoom: testRoom},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer func() { _ = sess.Close() }()
+
+	js := sess.(*Session)
+	var ended string
+	js.SetEndedCallback(func(reason string) { ended = reason })
+	js.SetShouldReconnect(func() bool { return false })
+
+	if js.deliverBridgeMessage(j.BridgeMessage{}, false) {
+		t.Fatal("deliverBridgeMessage returned true on closed bridge")
+	}
+	if ended != "jitsi bridge closed" {
+		t.Fatalf("ended = %q, want bridge close reason", ended)
 	}
 }
 
