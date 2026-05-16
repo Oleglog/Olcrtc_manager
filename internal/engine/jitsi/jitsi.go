@@ -995,6 +995,7 @@ func (s *Session) reconnect(ctx context.Context) error {
 		_ = oldPC.Close()
 	}
 	s.localEpoch.Store(randomEpoch())
+	s.peerEpoch.Store(0)
 	s.drainSendQueue()
 
 	logger.Infof("jitsi: reconnecting %s/%s as %s ...", s.host, s.room, s.name)
@@ -1006,12 +1007,13 @@ func (s *Session) reconnect(ctx context.Context) error {
 	s.peerEndpoint.Store(nil)
 	s.peerVideoSSRC.Store(0)
 	s.bridgeReady.Store(true)
-	if err := s.Send(nil); err != nil {
-		logger.Debugf("jitsi: epoch announce failed: %v", err)
-	}
 
 	s.wg.Add(1)
 	go s.recvLoop()
+
+	if err := s.Send(nil); err != nil {
+		logger.Debugf("jitsi: epoch announce failed: %v", err)
+	}
 
 	if s.onReconnect != nil {
 		s.onReconnect(nil)

@@ -213,6 +213,29 @@ func TestDeliverBridgeMessageDropsStalePeerEpoch(t *testing.T) {
 	}
 }
 
+func TestReconnectEpochAnnounceWithZeroPeerEpochIsAccepted(t *testing.T) {
+	sess, err := New(context.Background(), engine.Config{
+		URL:   testHost,
+		Extra: map[string]string{credentialKeyRoom: testRoom},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer func() { _ = sess.Close() }()
+
+	js, ok := sess.(*Session)
+	if !ok {
+		t.Fatal("sess is not *Session")
+	}
+	js.localEpoch.Store(0x2222)
+
+	announce := makeBridgeFrameForEpoch(t, 0x1111, 0, nil)
+	js.deliverBridgeMessage(makeBridgeMessageFrom("peerA", map[string]any{rawFieldKey: announce}), true)
+	if got := js.peerEpoch.Load(); got != 0x1111 {
+		t.Fatalf("peerEpoch = 0x%08x, want announce epoch", got)
+	}
+}
+
 func TestDeliverBridgeMessagePeerEpochChangeRequestsReconnect(t *testing.T) {
 	sess, err := New(context.Background(), engine.Config{
 		URL:   testHost,
