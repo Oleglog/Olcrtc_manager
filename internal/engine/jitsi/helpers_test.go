@@ -18,3 +18,18 @@ func makeBridgeMessage(class string, fields map[string]any) j.BridgeMessage {
 		Fields: fields,
 	}
 }
+
+func makeBridgeMessageFrom(class, from string, fields map[string]any) j.BridgeMessage {
+	return j.BridgeMessage{
+		Class:  class,
+		From:   from,
+		Fields: fields,
+	}
+}
+
+func makeBridgeFrame(t *testing.T, payload []byte) string {
+	t.Helper()
+	framed := append([]byte{}, bridgeMagic[:]...)
+	framed = append(framed, payload...)
+	return base64.StdEncoding.EncodeToString(framed)
+}
