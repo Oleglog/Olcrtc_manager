@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-INSTALLER_VERSION="1.5.2"
+INSTALLER_VERSION="1.5.3"
 CARRIER_DEFAULT="wbstream"
 TRANSPORT_DEFAULT="datachannel"
 DNS_DEFAULT="1.1.1.1:53"

@@ -19,6 +19,14 @@ import (
 // On Android, this calls VpnService.protect(fd) to bypass VPN routing.
 var Protector func(fd int) bool //nolint:gochecknoglobals
 
+// HTTPDNSServer is the IPv4 DNS resolver used for plain HTTP/HTTPS dials
+// from auth providers. The Android client cannot rely on the system
+// resolver because, while the VpnService is up, system DNS lookups go
+// through the VPN tunnel — which deadlocks when the auth-path
+// HTTP call is trying to set up. Empty string falls back to the system
+// resolver (used in tests).
+var HTTPDNSServer string //nolint:gochecknoglobals // package-level state intentional
+
 // Socks5Config configures an outbound SOCKS5 proxy that all helpers in this
 // package will route through. Empty Addr means "no proxy, dial directly".
 //

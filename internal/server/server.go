@@ -299,7 +299,7 @@ func (s *Server) bringUpLink(
 	})
 
 	logger.Infof("Connecting link via %s/%s/%s...", cfg.Link, cfg.Transport, cfg.Carrier)
-	if err := ln.Connect(ctx); err != nil {
+	if err := connectWithRetry(ctx, ln, cfg); err != nil {
 		return fmt.Errorf("failed to connect link: %w", err)
 	}
 	logger.Infof("Link connected")
@@ -312,6 +312,48 @@ func (s *Server) bringUpLink(
 		ln.WatchConnection(ctx)
 	}()
 	return nil
+}
+
+// connectWithRetry attempts to connect the link with exponential backoff.
+// It retries up to 10 times with delays from 5s to 60s. If the context is
+// cancelled, it returns immediately.
+func connectWithRetry(ctx context.Context, ln link.Link, cfg Config) error {
+	const maxAttempts = 10
+	delay := 5 * time.Second
+	const maxDelay = 60 * time.Second
+
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		lastErr = ln.Connect(ctx)
+		if lastErr == nil {
+			return nil
+		}
+
+		if attempt == maxAttempts {
+			break
+		}
+
+		logger.Warnf("connect attempt %d/%d failed: %v; retrying in %v...",
+			attempt, maxAttempts, lastErr, delay)
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+
+		// Exponential backoff: double the delay, cap at maxDelay.
+		delay *= 2
+		if delay > maxDelay {
+			delay = maxDelay
+		}
+	}
+
+	return fmt.Errorf("all %d connect attempts failed, last error: %w", maxAttempts, lastErr)
 }
 
 func (s *Server) installSession() {

@@ -77,11 +77,15 @@ var (
 )
 
 type mobileConfig struct {
-	link         string
-	transport    string
-	dnsServer    string
-	vp8FPS       int
-	vp8BatchSize int
+	link            string
+	transport       string
+	dnsServer       string
+	vp8FPS          int
+	vp8BatchSize    int
+	seiFPS          int
+	seiBatchSize    int
+	seiFragmentSize int
+	seiAckTimeoutMS int
 }
 
 // SetProtector sets the Android VPN socket protector.
@@ -126,12 +130,20 @@ func SetLink(link string) {
 	defaults.link = link
 }
 
-// SetDNS selects the DNS server used by the tunnel.
+// SetDNS selects the DNS server used by the tunnel and the auth-path
+// HTTP resolver. Empty string keeps the previous value untouched.
 func SetDNS(dnsServer string) {
 	mu.Lock()
 	defer mu.Unlock()
 	ensureDefaultConfigLocked()
+	if dnsServer == "" {
+		return
+	}
 	defaults.dnsServer = dnsServer
+	// Mirror the value into protect.HTTPDNSServer so auth providers
+	// (salutejazz / telemost / wbstream) reach their HTTP APIs through
+	// the same protected resolver as the tunnel itself.
+	protect.HTTPDNSServer = dnsServer
 }
 
 // SetVP8Options configures vp8channel.
@@ -141,6 +153,35 @@ func SetVP8Options(fps, batchSize int) {
 	ensureDefaultConfigLocked()
 	defaults.vp8FPS = clampAtLeastOne(fps, 120)
 	defaults.vp8BatchSize = clampAtLeastOne(batchSize, 64)
+}
+
+// SetSEIOptions configures seichannel parameters.
+// fps: encoded frame rate per second (1..120), 0 = keep current default.
+// batchSize: messages per tick (1..64), 0 = keep current default.
+// fragmentSize: max bytes per SEI fragment (>= 1), 0 = keep current default.
+// ackTimeoutMs: per-message ack timeout in milliseconds (>= 1), 0 = keep current default.
+//
+// Calling this is optional. When values are not set, mobileConfig defaults
+// (sweet-spot 30/8/900/1500) are passed to client.Config; the seichannel
+// transport additionally substitutes its own internal defaults if the
+// resulting Config still contains zeros, so downstream session.ValidateSEI
+// will not trip ErrSEI*Required.
+func SetSEIOptions(fps, batchSize, fragmentSize, ackTimeoutMs int) {
+	mu.Lock()
+	defer mu.Unlock()
+	ensureDefaultConfigLocked()
+	if fps > 0 {
+		defaults.seiFPS = clampAtLeastOne(fps, 120)
+	}
+	if batchSize > 0 {
+		defaults.seiBatchSize = clampAtLeastOne(batchSize, 64)
+	}
+	if fragmentSize > 0 {
+		defaults.seiFragmentSize = fragmentSize
+	}
+	if ackTimeoutMs > 0 {
+		defaults.seiAckTimeoutMS = ackTimeoutMs
+	}
 }
 
 // SetDebug enables or disables verbose logging.
@@ -531,6 +572,15 @@ func startWithConfig(
 
 	roomURL := buildRoomURL(carrierName, roomID)
 
+	// Pin the auth-path HTTP resolver to the same DNS server we configured
+	// for the tunnel. Without this, salutejazz/telemost/wbstream HTTP calls
+	// fall through to the system resolver — which on Android, while the
+	// VpnService is active, races with the very session we're trying to
+	// establish and routinely returns ENETUNREACH.
+	if cfg.dnsServer != "" {
+		protect.HTTPDNSServer = cfg.dnsServer
+	}
+
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	cancel = cancelFunc
 	done = make(chan struct{})
@@ -545,18 +595,22 @@ func startWithConfig(
 		err := runClientWithReady(
 			ctx,
 			client.Config{
-				Link:         cfg.link,
-				Transport:    cfg.transport,
-				Carrier:      carrierName,
-				RoomURL:      roomURL,
-				KeyHex:       keyHex,
-				DeviceID:     clientID,
-				LocalAddr:    fmt.Sprintf("127.0.0.1:%d", socksPort),
-				DNSServer:    cfg.dnsServer,
-				SOCKSUser:    socksUser,
-				SOCKSPass:    socksPass,
-				VP8FPS:       cfg.vp8FPS,
-				VP8BatchSize: cfg.vp8BatchSize,
+				Link:            cfg.link,
+				Transport:       cfg.transport,
+				Carrier:         carrierName,
+				RoomURL:         roomURL,
+				KeyHex:          keyHex,
+				DeviceID:        clientID,
+				LocalAddr:       fmt.Sprintf("127.0.0.1:%d", socksPort),
+				DNSServer:       cfg.dnsServer,
+				SOCKSUser:       socksUser,
+				SOCKSPass:       socksPass,
+				VP8FPS:          cfg.vp8FPS,
+				VP8BatchSize:    cfg.vp8BatchSize,
+				SEIFPS:          cfg.seiFPS,
+				SEIBatchSize:    cfg.seiBatchSize,
+				SEIFragmentSize: cfg.seiFragmentSize,
+				SEIAckTimeoutMS: cfg.seiAckTimeoutMS,
 			},
 			func() {
 				readyOnce.Do(func() {
@@ -666,11 +720,15 @@ func waitForCheckDone(doneCh <-chan error) {
 func ensureDefaultConfigLocked() {
 	defaultsSet.Do(func() {
 		defaults = mobileConfig{
-			link:         defaultLink,
-			transport:    defaultTransport,
-			dnsServer:    defaultDNSServer,
-			vp8FPS:       60,
-			vp8BatchSize: 8,
+			link:            defaultLink,
+			transport:       defaultTransport,
+			dnsServer:       defaultDNSServer,
+			vp8FPS:          60,
+			vp8BatchSize:    8,
+			seiFPS:          30,
+			seiBatchSize:    8,
+			seiFragmentSize: 900,
+			seiAckTimeoutMS: 1500,
 		}
 	})
 }
