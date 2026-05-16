@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -28,16 +30,17 @@ import (
 )
 
 const (
-	testKeyHex         = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
-	transportData      = "datachannel"
-	transportVideo     = "videochannel"
-	transportSEI       = "seichannel"
-	transportVP8       = "vp8channel"
-	linkDirect         = "direct"
-	testRoom           = "room"
-	localDNSServer     = "127.0.0.1:53"
-	videoHWNone        = "none"
-	testClientDeviceID = "client-1"
+	testKeyHex          = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+	transportData       = "datachannel"
+	transportVideo      = "videochannel"
+	transportSEI        = "seichannel"
+	transportVP8        = "vp8channel"
+	linkDirect          = "direct"
+	testRoom            = "room"
+	localDNSServer      = "127.0.0.1:53"
+	videoHWNone         = "none"
+	testClientDeviceID  = "client-1"
+	defaultJitsiRoomURL = "https://meet.cryptopro.ru/deadbeef"
 )
 
 var (
@@ -82,8 +85,10 @@ var (
 	)
 	realE2EJitsiRoom = flag.String( //nolint:gochecknoglobals // package-level state intentional
 		"olcrtc.real-jitsi-room",
-		"https://meet.cryptopro.ru/deadbeef",
-		"Jitsi Meet room URL for real e2e (format https://host/room or host/room)",
+		defaultJitsiRoomURL,
+		"Jitsi Meet room URL for real e2e (format https://host/room or host/room); "+
+			"when left at default, a per-process random suffix is appended so concurrent "+
+			"test runs don't share a room",
 	)
 	realE2ETimeout = flag.Duration( //nolint:gochecknoglobals // package-level state intentional
 		"olcrtc.real-timeout",
@@ -556,17 +561,47 @@ func realRoomURL(ctx context.Context, t *testing.T, carrierName string) string {
 	case "jitsi":
 		// Jitsi has no notion of "creating" a room — names are conjured
 		// on first join. The default flag points at meet.cryptopro.ru
-		// (a CryptoPro-operated public Jitsi instance) with a fixed
-		// room slug so the server and client land in the same MUC.
+		// (a CryptoPro-operated public Jitsi instance). When the flag is
+		// left at its default value, a per-process random suffix is appended
+		// to the slug: two participants share a single room by design (one
+		// pair, one shared key), so any third participant — including another
+		// concurrent test process with the same shared key — would corrupt
+		// the wire protocol on both sides. Users overriding the flag are
+		// trusted to manage room uniqueness themselves.
 		_ = ctx
 		room := *realE2EJitsiRoom
 		if room == "" {
 			t.Skip("skip jitsi real e2e: empty -olcrtc.real-jitsi-room")
 		}
+		if room == defaultJitsiRoomURL {
+			room = defaultJitsiRoomWithSuffix()
+		}
 		return room
 	default:
 		return ""
 	}
+}
+
+var (
+	jitsiRoomOnce sync.Once                                          //nolint:gochecknoglobals // per-process suffix cache
+	jitsiRoomURL  string                                             //nolint:gochecknoglobals // per-process suffix cache
+)
+
+// defaultJitsiRoomWithSuffix returns the default Jitsi room URL with a random
+// 8-hex-char suffix appended to the slug. Computed once per test process and
+// cached so all sub-tests (server + client) land in the same MUC.
+func defaultJitsiRoomWithSuffix() string {
+	jitsiRoomOnce.Do(func() {
+		var b [4]byte
+		if _, err := rand.Read(b[:]); err != nil {
+			// crypto/rand failing on a healthy host is exceptional; fall back
+			// to PID to keep tests usable rather than blowing up here.
+			jitsiRoomURL = fmt.Sprintf("%s-%d", defaultJitsiRoomURL, os.Getpid())
+			return
+		}
+		jitsiRoomURL = defaultJitsiRoomURL + "-" + hex.EncodeToString(b[:])
+	})
+	return jitsiRoomURL
 }
 
 func requireRealRoom(ctx context.Context, t *testing.T, carrierName string) string {
