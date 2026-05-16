@@ -143,9 +143,11 @@ func TestShutdownWebSocketIsIdempotent(t *testing.T) {
 // asked it to shut down.
 func TestCloseWithDeadlineDoesNotBlockOnStraggler(t *testing.T) {
 	deadline := 50 * time.Millisecond
+	block := make(chan struct{})
+	t.Cleanup(func() { close(block) })
 	closers := []func() error{
 		func() error { return nil },
-		func() error { select {} }, //nolint:revive // intentional block to model a wedged pion close
+		func() error { <-block; return nil },
 	}
 
 	start := time.Now()
@@ -156,6 +158,7 @@ func TestCloseWithDeadlineDoesNotBlockOnStraggler(t *testing.T) {
 		t.Fatalf("closeWithDeadline blocked for %s, expected ~%s", elapsed, deadline)
 	}
 	if elapsed < deadline {
-		t.Fatalf("closeWithDeadline returned in %s before deadline %s; should have waited for the straggler", elapsed, deadline)
+		t.Fatalf("closeWithDeadline returned in %s before deadline %s; straggler ignored",
+			elapsed, deadline)
 	}
 }
