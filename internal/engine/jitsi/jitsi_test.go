@@ -188,6 +188,67 @@ func TestDeliverBridgeMessageMagicAndPeerLatch(t *testing.T) {
 	}
 }
 
+func TestDeliverBridgeMessageDropsStalePeerEpoch(t *testing.T) {
+	sess, err := New(context.Background(), engine.Config{
+		URL:   testHost,
+		Extra: map[string]string{credentialKeyRoom: testRoom},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer func() { _ = sess.Close() }()
+
+	js, ok := sess.(*Session)
+	if !ok {
+		t.Fatal("sess is not *Session")
+	}
+	js.localEpoch.Store(0x2222)
+	delivered := false
+	js.onData = func([]byte) { delivered = true }
+
+	stale := makeBridgeFrameForEpoch(t, 0x1111, 0xaaaa, []byte("old-smux"))
+	js.deliverBridgeMessage(makeBridgeMessageFrom("peerA", map[string]any{rawFieldKey: stale}), true)
+	if delivered {
+		t.Fatal("stale peer-epoch frame was delivered")
+	}
+}
+
+func TestDeliverBridgeMessagePeerEpochChangeRequestsReconnect(t *testing.T) {
+	sess, err := New(context.Background(), engine.Config{
+		URL:   testHost,
+		Extra: map[string]string{credentialKeyRoom: testRoom},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer func() { _ = sess.Close() }()
+
+	js, ok := sess.(*Session)
+	if !ok {
+		t.Fatal("sess is not *Session")
+	}
+	js.localEpoch.Store(0x3333)
+	js.SetShouldReconnect(func() bool { return true })
+	var received [][]byte
+	js.onData = func(b []byte) {
+		received = append(received, append([]byte(nil), b...))
+	}
+
+	first := makeBridgeFrameForEpoch(t, 0x1111, 0, []byte("first"))
+	js.deliverBridgeMessage(makeBridgeMessageFrom("peerA", map[string]any{rawFieldKey: first}), true)
+	changed := makeBridgeFrameForEpoch(t, 0x2222, 0x3333, nil)
+	js.deliverBridgeMessage(makeBridgeMessageFrom("peerA", map[string]any{rawFieldKey: changed}), true)
+
+	if len(received) != 1 || string(received[0]) != "first" {
+		t.Fatalf("received = %q, want only first payload", received)
+	}
+	select {
+	case <-js.reconnectCh:
+	case <-time.After(time.Second):
+		t.Fatal("peer epoch change did not request reconnect")
+	}
+}
+
 func TestBridgeCloseRequestsReconnect(t *testing.T) {
 	sess, err := New(context.Background(), engine.Config{
 		URL:   testHost,
