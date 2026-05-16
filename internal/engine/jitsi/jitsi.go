@@ -316,6 +316,13 @@ func (s *Session) joinAndOpenBridge(ctx context.Context) (*j.Session, error) {
 }
 
 func (s *Session) shouldNegotiatePC() bool {
+	if s.onData != nil {
+		return true
+	}
+	return s.shouldRequestVideo()
+}
+
+func (s *Session) shouldRequestVideo() bool {
 	s.videoTrackMu.RLock()
 	defer s.videoTrackMu.RUnlock()
 	return len(s.videoTracks) > 0 || s.onVideoTrack != nil
@@ -472,9 +479,11 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session) error {
 		}
 	}
 
-	// Tell JVB to forward video streams to this endpoint.
-	if err := jSess.RequestVideo(ctx, 720); err != nil {
-		logger.Debugf("jitsi: request video: %v", err)
+	if s.shouldRequestVideo() {
+		// Tell JVB to forward video streams to this endpoint.
+		if err := jSess.RequestVideo(ctx, 720); err != nil {
+			logger.Debugf("jitsi: request video: %v", err)
+		}
 	}
 
 	s.pcMu.Lock()
