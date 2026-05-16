@@ -98,6 +98,7 @@ type Session struct {
 	reconnecting atomic.Bool
 
 	reconnectCh          chan struct{}
+	reconnectMu          sync.Mutex // guards reconnectWindowStart and reconnectCount
 	reconnectWindowStart time.Time
 	reconnectCount       int
 	localEpoch           atomic.Uint32
@@ -954,18 +955,21 @@ func (s *Session) requestReconnect(reason string) {
 
 func (s *Session) handleReconnectAttempt(ctx context.Context) bool {
 	now := time.Now()
+	s.reconnectMu.Lock()
 	if s.reconnectWindowStart.IsZero() || now.Sub(s.reconnectWindowStart) > reconnectWindow {
 		s.reconnectWindowStart = now
 		s.reconnectCount = 0
 	}
 	s.reconnectCount++
+	count := s.reconnectCount
+	s.reconnectMu.Unlock()
 
-	if s.reconnectCount > maxReconnects {
+	if count > maxReconnects {
 		s.signalEnded("jitsi reconnect limit reached")
 		return true
 	}
 
-	backoff := time.Duration(s.reconnectCount) * 2 * time.Second
+	backoff := time.Duration(count) * 2 * time.Second
 	if backoff > 30*time.Second {
 		backoff = 30 * time.Second
 	}
