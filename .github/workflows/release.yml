@@ -1,0 +1,103 @@
+name: Release Build
+
+on:
+  push:
+    tags:
+      - "server-v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. server-v1.5.4)"
+        required: true
+      prerelease:
+        description: "Mark as pre-release (y/n)"
+        required: false
+        default: "n"
+
+jobs:
+  build:
+    name: Build CLI binaries (cross)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+
+      - name: Install Mage
+        run: go install github.com/magefile/mage@latest
+
+      - name: Build cross binaries
+        run: mage cross
+
+      - name: Build admin binaries (linux amd64/arm64)
+        run: |
+          mkdir -p build
+          GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o build/olcrtc-admin-linux-amd64 ./cmd/olcrtc-admin
+          GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o build/olcrtc-admin-linux-arm64 ./cmd/olcrtc-admin
+
+      - name: List artifacts
+        run: ls -la build/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: olcrtc-binaries
+          path: build/
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: olcrtc-binaries
+          path: artifacts
+
+      - name: Resolve release tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "tag=${GITHUB_REF##*/}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+            if [ "${{ github.event.inputs.prerelease }}" = "y" ]; then
+              echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Create release
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          PRE="${{ steps.tag.outputs.prerelease }}"
+          ls -la artifacts/
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists — uploading artifacts to it"
+            gh release upload "$TAG" artifacts/* --clobber
+          else
+            FLAGS="--title $TAG --notes Built by .github/workflows/release.yml"
+            if [ "$PRE" = "true" ]; then
+              FLAGS="$FLAGS --prerelease"
+            fi
+            gh release create "$TAG" $FLAGS artifacts/*
+          fi
