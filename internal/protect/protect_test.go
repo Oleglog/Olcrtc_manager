@@ -88,10 +88,13 @@ func TestNewDialerAndHTTPClient(t *testing.T) {
 	if !ok {
 		t.Fatalf("Transport type = %T, want *http.Transport", client.Transport)
 	}
-	if tr.DialContext == nil || !tr.ForceAttemptHTTP2 || tr.MaxIdleConns != 10 ||
+	if tr.DialContext == nil || tr.ForceAttemptHTTP2 || tr.MaxIdleConns != 10 ||
 		tr.IdleConnTimeout != 30*time.Second || tr.TLSHandshakeTimeout != 10*time.Second ||
-		tr.ResponseHeaderTimeout != 10*time.Second {
+		tr.ResponseHeaderTimeout != 15*time.Second {
 		t.Fatalf("transport = %+v", tr)
+	}
+	if client.Timeout != 25*time.Second {
+		t.Fatalf("client.Timeout = %v, want 25s", client.Timeout)
 	}
 }
 

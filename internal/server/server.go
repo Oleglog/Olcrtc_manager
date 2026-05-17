@@ -152,6 +152,16 @@ func Run(ctx context.Context, cfg Config) error {
 		protect.SetSocks5(protect.Socks5Config{})
 	}
 
+	// Mirror the configured DNS server into protect.HTTPDNSServer so that
+	// auth-provider HTTP calls (jazz/wbstream/telemost) resolve through
+	// the same resolver as the rest of the server. Without this, the
+	// providers fall back to the system resolver which on some VPS
+	// configurations is broken, blocked, or routed over IPv6 — exactly
+	// the failure mode that surfaces as 502 from the provider's edge.
+	if cfg.DNSServer != "" {
+		protect.HTTPDNSServer = cfg.DNSServer
+	}
+
 	hook := cfg.AuthHook
 	if hook == nil {
 		hook = defaultAuthHook
