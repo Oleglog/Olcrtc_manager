@@ -247,8 +247,6 @@ github.com/xtaci/smux v1.5.57/go.mod h1:IGQ9QYrBphmb/4aTnLEcJby0TNr3NV+OslIOMrX8
 github.com/yuin/goldmark v1.4.13/go.mod h1:6yULJ656Px+3vBD8DxQVa3kxgyrAnzto9xy5taEt/CY=
 github.com/zarazaex69/gr v0.0.0-20260430043628-45b595f4fef0 h1:dMjHX/YPV3ZD/KJKFjQdlMBwj2/rZIuOVKOvGv26m9k=
 github.com/zarazaex69/gr v0.0.0-20260430043628-45b595f4fef0/go.mod h1:7vALI2tjaLTOGiDKV7V2JkVU9bA1YADBDQA6uvpp1ac=
-github.com/zarazaex69/j v0.0.0-20260515222039-806b50503e36 h1:0MNDFrI0gsXivKHSK1YSLqTkrOzYk5QXZeii04Bx714=
-github.com/zarazaex69/j v0.0.0-20260515222039-806b50503e36/go.mod h1:7/ypJTenOIPx23fpo5uF7l4u+rxZqg9cFbTL/N77Ktc=
 github.com/zarazaex69/j v0.0.0-20260516013155-bffcfe38e7d9 h1:hsD5J10K8xUJ1AOg2A5SLYDSCz/tw7WOOoaiO69KafY=
 github.com/zarazaex69/j v0.0.0-20260516013155-bffcfe38e7d9/go.mod h1:7/ypJTenOIPx23fpo5uF7l4u+rxZqg9cFbTL/N77Ktc=
 github.com/zeebo/assert v1.3.0 h1:g7C04CbJuIDKNPFHmsk4hwZDO5O+kntRxzaUoNXj+IQ=
