@@ -11,10 +11,10 @@
 
 set -euo pipefail
 
-INSTALLER_VERSION="1.2.0"
-CARRIER_DEFAULT="wbstream"
+INSTALLER_VERSION="1.2.1"
+CARRIER_DEFAULT="jazz"
 TRANSPORT_DEFAULT="datachannel"
-DNS_DEFAULT="1.1.1.1:53"
+DNS_DEFAULT="77.88.8.8:53"
 
 CONFIG_DIR=/etc/olcrtc
 STATE_DIR=/var/lib/olcrtc
@@ -335,12 +335,16 @@ echo "              ✓"
 echo "  [4/7] Настройка:"
 echo ""
 echo "        Доступные carrier:"
-echo "          wbstream  — Wildberries Stream (руму нужно создать вручную на stream.wb.ru)"
-echo "          jazz      — SaluteJazz (автосоздание румы)"
+echo ""
+echo "  ⚠️  ВНИМАНИЕ: wbstream (Wildberries Stream) в настоящее время НЕ РАБОТАЕТ."
+echo "      WB отключил подключение гостей к звонкам. Используйте jazz или telemost."
+echo ""
+echo "          jazz      — SaluteJazz (рекомендуется: автосоздание румы, datachannel ~6 МБ/с)"
 echo "          telemost  — Yandex Telemost"
+echo "          wbstream  — Wildberries Stream (⚠️ НЕ РАБОТАЕТ, API отключён)"
 if [ -z "$CARRIER" ]; then
-    tty_read -rp "        Carrier [wbstream]: " CARRIER
-    CARRIER="${CARRIER:-wbstream}"
+    tty_read -rp "        Carrier [jazz]: " CARRIER
+    CARRIER="${CARRIER:-jazz}"
 fi
 CARRIER="$(normalize_carrier "$CARRIER")"
 
@@ -397,7 +401,7 @@ if [ -z "$carrier" ] || [ -z "${OLCRTC_ROOM_ID:-}" ] || [ -z "${OLCRTC_KEY:-}" ]
     echo "missing env" >&2; exit 64
 fi
 transport="${OLCRTC_TRANSPORT:-datachannel}"
-ARGS=(-mode srv -carrier "$carrier" -transport "$transport" -link direct -data data -id "$OLCRTC_ROOM_ID" -key "$OLCRTC_KEY" -dns "${OLCRTC_DNS:-1.1.1.1:53}")
+ARGS=(-mode srv -carrier "$carrier" -transport "$transport" -link direct -data data -id "$OLCRTC_ROOM_ID" -key "$OLCRTC_KEY" -dns "${OLCRTC_DNS:-77.88.8.8:53}")
 if [ -n "${OLCRTC_DEBUG:-}" ] && [ "$OLCRTC_DEBUG" != "0" ] && [ "$OLCRTC_DEBUG" != "false" ]; then ARGS+=(-debug); fi
 if [ "$transport" = "vp8channel" ]; then ARGS+=(-vp8-fps "${OLCRTC_VP8_FPS:-60}" -vp8-batch "${OLCRTC_VP8_BATCH:-8}"); fi
 if [ "$transport" = "seichannel" ]; then

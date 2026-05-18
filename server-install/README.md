@@ -48,7 +48,7 @@ What the installer does:
   wbstream / jazz / telemost, and an optional `-debug` flag,
 - prints the credentials you need to fill into the Android app.
 
-Default carrier is **`wbstream`**. Default transport is **`datachannel`**.
+Default carrier is **`jazz`** (⚠️ wbstream currently broken — WB disabled guest API). Default transport is **`datachannel`**.
 
 ### Carrier & transport matrix
 
