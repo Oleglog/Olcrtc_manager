@@ -11,8 +11,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openlibrecommunity/olcrtc/internal/control"
 	cryptopkg "github.com/openlibrecommunity/olcrtc/internal/crypto"
 	"github.com/openlibrecommunity/olcrtc/internal/muxconn"
+	"github.com/openlibrecommunity/olcrtc/internal/runtime"
+	"github.com/openlibrecommunity/olcrtc/internal/transport"
 	"github.com/xtaci/smux"
 )
 
@@ -44,9 +47,15 @@ func TestSetupCipherRejectsBadInput(t *testing.T) {
 }
 
 func TestSmuxConfig(t *testing.T) {
-	cfg := smuxConfig()
-	if cfg.Version != 2 || !cfg.KeepAliveDisabled || cfg.MaxFrameSize != 32768 || cfg.MaxReceiveBuffer != 16*1024*1024 {
-		t.Fatalf("smuxConfig() = %+v", cfg)
+	cfg := smuxConfig(0)
+	if cfg.Version != 2 || cfg.KeepAliveDisabled || cfg.MaxFrameSize != 32768 || cfg.MaxReceiveBuffer != 16*1024*1024 {
+		t.Fatalf("smuxConfig(0) = %+v", cfg)
+	}
+	capped := smuxConfig(4096)
+	want := 4096 - runtime.SmuxWireOverhead
+	if capped.MaxFrameSize != want {
+		t.Fatalf("smuxConfig(4096).MaxFrameSize = %d, want %d",
+			capped.MaxFrameSize, want)
 	}
 }
 
@@ -396,12 +405,12 @@ func TestSendConnectRequestOverSmux(t *testing.T) {
 		_ = b.Close()
 	}()
 
-	serverSess, err := smux.Server(a, smuxConfig())
+	serverSess, err := smux.Server(a, smuxConfig(0))
 	if err != nil {
 		t.Fatalf("smux.Server() error = %v", err)
 	}
 	defer func() { _ = serverSess.Close() }()
-	clientSess, err := smux.Client(b, smuxConfig())
+	clientSess, err := smux.Client(b, smuxConfig(0))
 	if err != nil {
 		t.Fatalf("smux.Client() error = %v", err)
 	}
@@ -450,12 +459,12 @@ func TestSendConnectRequestRejectsBadAck(t *testing.T) {
 		_ = a.Close()
 		_ = b.Close()
 	}()
-	serverSess, err := smux.Server(a, smuxConfig())
+	serverSess, err := smux.Server(a, smuxConfig(0))
 	if err != nil {
 		t.Fatalf("smux.Server() error = %v", err)
 	}
 	defer func() { _ = serverSess.Close() }()
-	clientSess, err := smux.Client(b, smuxConfig())
+	clientSess, err := smux.Client(b, smuxConfig(0))
 	if err != nil {
 		t.Fatalf("smux.Client() error = %v", err)
 	}
@@ -483,8 +492,47 @@ func TestSendConnectRequestRejectsBadAck(t *testing.T) {
 	}
 }
 
+func TestOpenControlStreamStopsOnContextCancel(t *testing.T) {
+	a, b := net.Pipe()
+	defer func() {
+		_ = a.Close()
+		_ = b.Close()
+	}()
+
+	serverSess, err := smux.Server(a, smuxConfig(0))
+	if err != nil {
+		t.Fatalf("smux.Server() error = %v", err)
+	}
+	defer func() { _ = serverSess.Close() }()
+	clientSess, err := smux.Client(b, smuxConfig(0))
+	if err != nil {
+		t.Fatalf("smux.Client() error = %v", err)
+	}
+	defer func() { _ = clientSess.Close() }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		_, _, err := openControlStreamTimeout(ctx, clientSess, "dev", nil, time.Hour)
+		errCh <- err
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("openControlStreamTimeout() error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for context cancellation")
+	}
+}
+
 type closerLinkStub struct {
-	closed bool
+	closed     bool
+	resetCount int
 }
 
 func (s *closerLinkStub) Connect(context.Context) error   { return nil }
@@ -495,6 +543,9 @@ func (s *closerLinkStub) SetShouldReconnect(func() bool)  {}
 func (s *closerLinkStub) SetEndedCallback(func(string))   {}
 func (s *closerLinkStub) WatchConnection(context.Context) {}
 func (s *closerLinkStub) CanSend() bool                   { return true }
+func (s *closerLinkStub) Features() transport.Features    { return transport.Features{} }
+func (s *closerLinkStub) Reconnect(string)                {}
+func (s *closerLinkStub) ResetPeer()                      { s.resetCount++ }
 
 func TestOnDataWithNilConn(_ *testing.T) {
 	c := &Client{}
@@ -515,5 +566,108 @@ func TestShutdownClosesLinkAndConn(t *testing.T) {
 	c.shutdown()
 	if !ln.closed {
 		t.Fatal("shutdown() did not close link")
+	}
+}
+
+func TestResetLinkPeer(t *testing.T) {
+	ln := &closerLinkStub{}
+	c := &Client{ln: ln}
+	c.resetLinkPeer()
+	if ln.resetCount != 1 {
+		t.Fatalf("ResetPeer calls = %d, want 1", ln.resetCount)
+	}
+}
+
+//nolint:cyclop // integration-style control loop test needs setup and async assertions together
+func TestStartControlLoopReportsPong(t *testing.T) {
+	a, b := net.Pipe()
+	defer func() {
+		_ = a.Close()
+		_ = b.Close()
+	}()
+
+	serverSess, err := smux.Server(a, smuxConfig(0))
+	if err != nil {
+		t.Fatalf("smux.Server() error = %v", err)
+	}
+	defer func() { _ = serverSess.Close() }()
+	clientSess, err := smux.Client(b, smuxConfig(0))
+	if err != nil {
+		t.Fatalf("smux.Client() error = %v", err)
+	}
+	defer func() { _ = clientSess.Close() }()
+
+	peerStreamCh := make(chan *smux.Stream, 1)
+	go func() {
+		stream, err := serverSess.AcceptStream()
+		if err == nil {
+			peerStreamCh <- stream
+		}
+	}()
+
+	stream, err := clientSess.OpenStream()
+	if err != nil {
+		t.Fatalf("OpenStream() error = %v", err)
+	}
+	peerStream := <-peerStreamCh
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	got := make(chan control.Health, 1)
+	c := &Client{sessionID: "sid-control", health: runtime.NewHealthTracker(nil)}
+	c.recordSession("sid-control")
+	c.startControlLoop(ctx, Config{
+		Liveness: control.Config{
+			Interval: 10 * time.Millisecond,
+			Timeout:  100 * time.Millisecond,
+			Failures: 2,
+			OnPong: func(h control.Health) {
+				select {
+				case got <- h:
+				default:
+				}
+			},
+		},
+	}, cancel, stream)
+	go func() {
+		_ = control.Run(ctx, peerStream, control.Config{
+			Interval: 10 * time.Millisecond,
+			Timeout:  100 * time.Millisecond,
+			Failures: 2,
+		})
+	}()
+
+	select {
+	case h := <-got:
+		if h.Seq == 0 {
+			t.Fatal("Health.Seq = 0")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for control pong")
+	}
+	status := c.Status()
+	if status.SessionID != "sid-control" {
+		t.Fatalf("Status.SessionID = %q, want sid-control", status.SessionID)
+	}
+	if status.LastPong.IsZero() || status.LastRTT < 0 || status.MissedPongs != 0 {
+		t.Fatalf("Status() = %+v", status)
+	}
+}
+
+func TestStatusRecordsReconnectAndUnhealthy(t *testing.T) {
+	updates := 0
+	c := &Client{health: runtime.NewHealthTracker(func(control.Status) { updates++ })}
+	c.recordSession("sid-1")
+	c.recordMissed(2)
+	c.recordUnhealthy(3)
+	c.recordReconnect()
+
+	status := c.Status()
+	if status.SessionID != "sid-1" || status.MissedPongs != 3 ||
+		status.UnhealthyEvents != 1 || status.Reconnects != 1 || status.LastUnhealthy.IsZero() {
+		t.Fatalf("Status() = %+v", status)
+	}
+	if updates != 4 {
+		t.Fatalf("health updates = %d, want 4", updates)
 	}
 }

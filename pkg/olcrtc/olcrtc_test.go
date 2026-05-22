@@ -37,6 +37,7 @@ func (s *stubSession) WatchConnection(_ context.Context)                { <-s.wa
 func (s *stubSession) CanSend() bool                                    { return s.connected }
 func (s *stubSession) GetSendQueue() chan []byte                        { return nil }
 func (s *stubSession) GetBufferedAmount() uint64                        { return 0 }
+func (s *stubSession) Reconnect(_ string)                               {}
 func (s *stubSession) Capabilities() engine.Capabilities               { return engine.Capabilities{ByteStream: true} }
 
 // Compile-time check: stubSession must satisfy engine.Session.

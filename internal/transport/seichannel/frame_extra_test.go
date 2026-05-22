@@ -6,24 +6,6 @@ import (
 	"testing"
 )
 
-func TestFragmentPayload(t *testing.T) {
-	frags := fragmentPayload([]byte("abcdef"), 2)
-	want := [][]byte{[]byte("ab"), []byte("cd"), []byte("ef")}
-	if len(frags) != len(want) {
-		t.Fatalf("fragment count = %d, want %d", len(frags), len(want))
-	}
-	for i := range frags {
-		if !bytes.Equal(frags[i], want[i]) {
-			t.Fatalf("frag %d = %q, want %q", i, frags[i], want[i])
-		}
-	}
-
-	empty := fragmentPayload(nil, 10)
-	if len(empty) != 1 || len(empty[0]) != 0 {
-		t.Fatalf("fragmentPayload(nil) = %#v, want one empty frag", empty)
-	}
-}
-
 func TestDecodeTransportFrameErrorsAndAck(t *testing.T) {
 	tests := []struct {
 		data []byte

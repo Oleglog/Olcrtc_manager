@@ -10,6 +10,7 @@ import (
 	"time"
 
 	cryptopkg "github.com/openlibrecommunity/olcrtc/internal/crypto"
+	"github.com/openlibrecommunity/olcrtc/internal/transport"
 )
 
 var errMuxBoom = errors.New("boom")
@@ -19,6 +20,7 @@ type stubLink struct {
 	canSend   bool
 	sendErr   error
 	sent      [][]byte
+	peerSent  map[string][][]byte
 	canSendFn func() bool
 }
 
@@ -28,6 +30,8 @@ func (s *stubLink) SetReconnectCallback(func())     {}
 func (s *stubLink) SetShouldReconnect(func() bool)  {}
 func (s *stubLink) SetEndedCallback(func(string))   {}
 func (s *stubLink) WatchConnection(context.Context) {}
+func (s *stubLink) Reconnect(string)                {}
+func (s *stubLink) Features() transport.Features    { return transport.Features{} }
 func (s *stubLink) Send(data []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -42,6 +46,16 @@ func (s *stubLink) CanSend() bool {
 	defer s.mu.Unlock()
 	return s.canSend
 }
+func (s *stubLink) SendTo(peerID string, data []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.peerSent == nil {
+		s.peerSent = make(map[string][][]byte)
+	}
+	s.peerSent[peerID] = append(s.peerSent[peerID], append([]byte(nil), data...))
+	return s.sendErr
+}
+func (s *stubLink) SupportsPeerRouting() bool { return true }
 
 func newTestCipher(t *testing.T) *cryptopkg.Cipher {
 	t.Helper()
@@ -113,6 +127,34 @@ func TestWriteEncryptsAndSends(t *testing.T) {
 	got, err := cipher.Decrypt(ln.sent[0])
 	if err != nil {
 		t.Fatalf("Decrypt(sent) error = %v", err)
+	}
+	if !bytes.Equal(got, []byte("payload")) {
+		t.Fatalf("decrypted payload = %q, want %q", got, "payload")
+	}
+}
+
+func TestPeerWriteEncryptsAndSendsToPeer(t *testing.T) {
+	cipher := newTestCipher(t)
+	ln := &stubLink{canSend: true}
+	conn := NewPeer(ln, cipher, "peer-a")
+
+	n, err := conn.Write([]byte("payload"))
+	if err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	if n != len("payload") {
+		t.Fatalf("Write() n = %d, want %d", n, len("payload"))
+	}
+	if len(ln.sent) != 0 {
+		t.Fatalf("broadcast sent packets = %d, want 0", len(ln.sent))
+	}
+	if len(ln.peerSent["peer-a"]) != 1 {
+		t.Fatalf("peer sent packets = %d, want 1", len(ln.peerSent["peer-a"]))
+	}
+
+	got, err := cipher.Decrypt(ln.peerSent["peer-a"][0])
+	if err != nil {
+		t.Fatalf("Decrypt(peer sent) error = %v", err)
 	}
 	if !bytes.Equal(got, []byte("payload")) {
 		t.Fatalf("decrypted payload = %q, want %q", got, "payload")

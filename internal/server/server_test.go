@@ -11,8 +11,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openlibrecommunity/olcrtc/internal/control"
 	cryptopkg "github.com/openlibrecommunity/olcrtc/internal/crypto"
 	"github.com/openlibrecommunity/olcrtc/internal/muxconn"
+	"github.com/openlibrecommunity/olcrtc/internal/runtime"
+	"github.com/openlibrecommunity/olcrtc/internal/transport"
 	"github.com/xtaci/smux"
 )
 
@@ -45,9 +48,15 @@ func TestSetupCipherRejectsBadInput(t *testing.T) {
 }
 
 func TestSmuxConfig(t *testing.T) {
-	cfg := smuxConfig()
-	if cfg.Version != 2 || !cfg.KeepAliveDisabled || cfg.MaxFrameSize != 32768 || cfg.MaxReceiveBuffer != 16*1024*1024 {
-		t.Fatalf("smuxConfig() = %+v", cfg)
+	cfg := smuxConfig(0)
+	if cfg.Version != 2 || cfg.KeepAliveDisabled || cfg.MaxFrameSize != 32768 || cfg.MaxReceiveBuffer != 16*1024*1024 {
+		t.Fatalf("smuxConfig(0) = %+v", cfg)
+	}
+	capped := smuxConfig(4096)
+	want := 4096 - runtime.SmuxWireOverhead
+	if capped.MaxFrameSize != want {
+		t.Fatalf("smuxConfig(4096).MaxFrameSize = %d, want %d",
+			capped.MaxFrameSize, want)
 	}
 }
 
@@ -203,7 +212,9 @@ func TestOnDataWithNilConn(_ *testing.T) {
 }
 
 type serverLinkStub struct {
-	closed bool
+	closed     bool
+	resetCount int
+	resetCh    chan struct{}
 }
 
 func (s *serverLinkStub) Connect(context.Context) error   { return nil }
@@ -214,6 +225,17 @@ func (s *serverLinkStub) SetShouldReconnect(func() bool)  {}
 func (s *serverLinkStub) SetEndedCallback(func(string))   {}
 func (s *serverLinkStub) WatchConnection(context.Context) {}
 func (s *serverLinkStub) CanSend() bool                   { return true }
+func (s *serverLinkStub) Features() transport.Features    { return transport.Features{} }
+func (s *serverLinkStub) Reconnect(string)                {}
+func (s *serverLinkStub) ResetPeer() {
+	s.resetCount++
+	if s.resetCh != nil {
+		select {
+		case s.resetCh <- struct{}{}:
+		default:
+		}
+	}
+}
 
 func TestShutdownClosesLinkAndConn(t *testing.T) {
 	cipher, err := cryptopkg.NewCipher("01234567890123456789012345678901")
@@ -313,12 +335,12 @@ func TestHandleStreamDispatchAfterConnect(t *testing.T) {
 		_ = b.Close()
 	}()
 
-	serverSess, err := smux.Server(a, smuxConfig())
+	serverSess, err := smux.Server(a, smuxConfig(0))
 	if err != nil {
 		t.Fatalf("smux.Server() error = %v", err)
 	}
 	defer func() { _ = serverSess.Close() }()
-	clientSess, err := smux.Client(b, smuxConfig())
+	clientSess, err := smux.Client(b, smuxConfig(0))
 	if err != nil {
 		t.Fatalf("smux.Client() error = %v", err)
 	}
@@ -328,7 +350,7 @@ func TestHandleStreamDispatchAfterConnect(t *testing.T) {
 	go func() {
 		stream, err := serverSess.AcceptStream()
 		if err == nil {
-			(&Server{}).handleStream(context.Background(), stream)
+			(&Server{}).handleStream(context.Background(), stream, "")
 		}
 		close(done)
 	}()
@@ -373,6 +395,173 @@ func TestReinstallSessionFiresOnClose(t *testing.T) {
 	}
 }
 
+//nolint:cyclop // integration-style control loop test needs setup and async assertions together
+func TestStartControlLoopReportsPong(t *testing.T) {
+	a, b := net.Pipe()
+	defer func() {
+		_ = a.Close()
+		_ = b.Close()
+	}()
+
+	serverSess, err := smux.Server(a, smuxConfig(0))
+	if err != nil {
+		t.Fatalf("smux.Server() error = %v", err)
+	}
+	defer func() { _ = serverSess.Close() }()
+	clientSess, err := smux.Client(b, smuxConfig(0))
+	if err != nil {
+		t.Fatalf("smux.Client() error = %v", err)
+	}
+	defer func() { _ = clientSess.Close() }()
+
+	serverStreamCh := make(chan *smux.Stream, 1)
+	go func() {
+		stream, err := serverSess.AcceptStream()
+		if err == nil {
+			serverStreamCh <- stream
+		}
+	}()
+
+	clientStream, err := clientSess.OpenStream()
+	if err != nil {
+		t.Fatalf("OpenStream() error = %v", err)
+	}
+	serverStream := <-serverStreamCh
+
+	ctx, cancel := context.WithCancel(context.Background())
+	got := make(chan control.Health, 1)
+	s := &Server{
+		sessionID: "sid-control",
+		health:    runtime.NewHealthTracker(nil),
+		liveness: control.Config{
+			Interval: 10 * time.Millisecond,
+			Timeout:  100 * time.Millisecond,
+			Failures: 2,
+			OnPong: func(h control.Health) {
+				select {
+				case got <- h:
+				default:
+				}
+			},
+		},
+	}
+	s.recordSession("sid-control")
+	defer func() {
+		cancel()
+		s.wg.Wait()
+	}()
+	s.startControlLoop(ctx, serverSess, serverStream)
+	go func() {
+		_ = control.Run(ctx, clientStream, control.Config{
+			Interval: 10 * time.Millisecond,
+			Timeout:  100 * time.Millisecond,
+			Failures: 2,
+		})
+	}()
+
+	select {
+	case h := <-got:
+		if h.Seq == 0 {
+			t.Fatal("Health.Seq = 0")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for control pong")
+	}
+	status := s.Status()
+	if status.SessionID != "sid-control" {
+		t.Fatalf("Status.SessionID = %q, want sid-control", status.SessionID)
+	}
+	if status.LastPong.IsZero() || status.LastRTT < 0 || status.MissedPongs != 0 {
+		t.Fatalf("Status() = %+v", status)
+	}
+}
+
+func TestStartControlLoopResetsPeerBeforeReinstall(t *testing.T) {
+	a, b := net.Pipe()
+	defer func() {
+		_ = a.Close()
+		_ = b.Close()
+	}()
+
+	serverSess, err := smux.Server(a, smuxConfig(0))
+	if err != nil {
+		t.Fatalf("smux.Server() error = %v", err)
+	}
+	clientSess, err := smux.Client(b, smuxConfig(0))
+	if err != nil {
+		t.Fatalf("smux.Client() error = %v", err)
+	}
+
+	serverStreamCh := make(chan *smux.Stream, 1)
+	go func() {
+		stream, err := serverSess.AcceptStream()
+		if err == nil {
+			serverStreamCh <- stream
+		}
+	}()
+
+	clientStream, err := clientSess.OpenStream()
+	if err != nil {
+		t.Fatalf("OpenStream() error = %v", err)
+	}
+	serverStream := <-serverStreamCh
+
+	cipher, err := cryptopkg.NewCipher("01234567890123456789012345678901")
+	if err != nil {
+		t.Fatalf("NewCipher() error = %v", err)
+	}
+	ln := &serverLinkStub{resetCh: make(chan struct{}, 1)}
+	ctx, cancel := context.WithCancel(context.Background())
+	s := &Server{
+		ln:      ln,
+		cipher:  cipher,
+		conn:    muxconn.New(ln, cipher),
+		session: serverSess,
+		health:  runtime.NewHealthTracker(nil),
+		liveness: control.Config{
+			Interval: time.Hour,
+			Timeout:  time.Hour,
+			Failures: 1,
+		},
+	}
+	defer func() {
+		cancel()
+		s.shutdown()
+		s.wg.Wait()
+		_ = clientSess.Close()
+	}()
+
+	s.startControlLoop(ctx, serverSess, serverStream)
+	_ = clientStream.Close()
+
+	select {
+	case <-ln.resetCh:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for ResetPeer")
+	}
+	if ln.resetCount != 1 {
+		t.Fatalf("ResetPeer calls = %d, want 1", ln.resetCount)
+	}
+}
+
+func TestStatusRecordsReconnectAndUnhealthy(t *testing.T) {
+	updates := 0
+	s := &Server{health: runtime.NewHealthTracker(func(control.Status) { updates++ })}
+	s.recordSession("sid-1")
+	s.recordMissed(2)
+	s.recordUnhealthy(3)
+	s.recordReconnect()
+
+	status := s.Status()
+	if status.SessionID != "sid-1" || status.MissedPongs != 3 ||
+		status.UnhealthyEvents != 1 || status.Reconnects != 1 || status.LastUnhealthy.IsZero() {
+		t.Fatalf("Status() = %+v", status)
+	}
+	if updates != 4 {
+		t.Fatalf("health updates = %d, want 4", updates)
+	}
+}
+
 //nolint:cyclop // integration-style test needs setup, proxying, and traffic assertions together.
 func TestDispatchFiresOnTraffic(t *testing.T) {
 	var lc net.ListenConfig
@@ -398,12 +587,12 @@ func TestDispatchFiresOnTraffic(t *testing.T) {
 		_ = b.Close()
 	}()
 
-	serverSess, err := smux.Server(a, smuxConfig())
+	serverSess, err := smux.Server(a, smuxConfig(0))
 	if err != nil {
 		t.Fatalf("smux.Server() error = %v", err)
 	}
 	defer func() { _ = serverSess.Close() }()
-	clientSess, err := smux.Client(b, smuxConfig())
+	clientSess, err := smux.Client(b, smuxConfig(0))
 	if err != nil {
 		t.Fatalf("smux.Client() error = %v", err)
 	}
@@ -432,7 +621,7 @@ func TestDispatchFiresOnTraffic(t *testing.T) {
 		if err != nil {
 			return
 		}
-		s.handleStream(context.Background(), stream)
+		s.handleStream(context.Background(), stream, "")
 	}()
 
 	stream, err := clientSess.OpenStream()

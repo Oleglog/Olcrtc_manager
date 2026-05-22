@@ -12,7 +12,7 @@
 //
 // The Jingle session-initiate is only delivered by Jicofo once at least one
 // other participant is present in the conference, mirroring the Telemost /
-// SaluteJazz two-peer requirement that olcrtc already accommodates.
+// two-peer tunnel model that olcrtc already accommodates.
 package jitsi
 
 import (
@@ -83,6 +83,7 @@ type Session struct {
 	name string
 
 	onData          func([]byte)
+	onPeerData      func(peerID string, data []byte)
 	onReconnect     func(*webrtc.DataChannel)
 	shouldReconnect func() bool
 	onEnded         func(string)
@@ -92,10 +93,11 @@ type Session struct {
 	pcMu sync.Mutex
 	pc   *webrtc.PeerConnection
 
-	sendQueue    chan []byte
-	bridgeReady  atomic.Bool
-	closed       atomic.Bool
-	reconnecting atomic.Bool
+	sendQueue     chan []byte
+	peerSendQueue chan bridgeOutbound
+	bridgeReady   atomic.Bool
+	closed        atomic.Bool
+	reconnecting  atomic.Bool
 
 	reconnectCh          chan struct{}
 	reconnectMu          sync.Mutex // guards reconnectWindowStart and reconnectCount
@@ -109,6 +111,8 @@ type Session struct {
 	// messages from other senders are dropped, isolating us from chatter by
 	// unrelated olcrtc processes that happen to share the same room.
 	peerEndpoint atomic.Pointer[string]
+	peerEpochMu  sync.Mutex
+	peerEpochs   map[string]uint32
 	done         chan struct{}
 	doneOnce     sync.Once
 	cancel       context.CancelFunc
@@ -125,6 +129,11 @@ type Session struct {
 	// participant's video confuses the vp8channel epoch/CRC machinery on
 	// the receiver side. Once set, additional video tracks are drained.
 	peerVideoSSRC atomic.Uint32
+}
+
+type bridgeOutbound struct {
+	to   string
+	data []byte
 }
 
 // New creates a new Jitsi engine session.
@@ -151,15 +160,18 @@ func New(_ context.Context, cfg engine.Config) (engine.Session, error) {
 
 	runCtx, cancel := context.WithCancel(context.Background())
 	s := &Session{
-		host:        host,
-		room:        room,
-		name:        name,
-		onData:      cfg.OnData,
-		sendQueue:   make(chan []byte, defaultSendQueueSize),
-		reconnectCh: make(chan struct{}, 1),
-		done:        make(chan struct{}),
-		cancel:      cancel,
-		runCtx:      runCtx,
+		host:          host,
+		room:          room,
+		name:          name,
+		onData:        cfg.OnData,
+		onPeerData:    cfg.OnPeerData,
+		sendQueue:     make(chan []byte, defaultSendQueueSize),
+		peerSendQueue: make(chan bridgeOutbound, defaultSendQueueSize),
+		peerEpochs:    make(map[string]uint32),
+		reconnectCh:   make(chan struct{}, 1),
+		done:          make(chan struct{}),
+		cancel:        cancel,
+		runCtx:        runCtx,
 	}
 	s.localEpoch.Store(randomEpoch())
 	return s, nil
@@ -290,7 +302,7 @@ func (s *Session) joinAndOpenBridge(ctx context.Context) (*j.Session, error) {
 	}
 	logger.Infof("jitsi: joined %s/%s; colibri-ws=%s", s.host, s.room, jSess.ColibriWS)
 
-	if s.onData != nil {
+	if s.onData != nil || s.onPeerData != nil {
 		bctx, bcancel := context.WithTimeout(ctx, bridgeOpenTimeout)
 		err := jSess.OpenBridge(bctx)
 		bcancel()
@@ -318,6 +330,9 @@ func (s *Session) joinAndOpenBridge(ctx context.Context) (*j.Session, error) {
 
 func (s *Session) shouldNegotiatePC() bool {
 	if s.onData != nil {
+		return true
+	}
+	if s.onPeerData != nil {
 		return true
 	}
 	return s.shouldRequestVideo()
@@ -625,14 +640,32 @@ func (s *Session) Send(data []byte) error {
 	if !s.bridgeReady.Load() {
 		return ErrBridgeNotReady
 	}
-	framed, err := s.encodeBridgeFrame(data)
+	framed, err := s.encodeBridgeFrame(data, "")
 	if err != nil {
 		return err
 	}
 	return s.enqueueBridgeFrame(framed)
 }
 
-func (s *Session) encodeBridgeFrame(data []byte) ([]byte, error) {
+// SendTo queues data for transmission to a specific Jitsi endpoint.
+func (s *Session) SendTo(peerID string, data []byte) error {
+	if peerID == "" {
+		return s.Send(data)
+	}
+	if s.closed.Load() {
+		return ErrSessionClosed
+	}
+	if !s.bridgeReady.Load() {
+		return ErrBridgeNotReady
+	}
+	framed, err := s.encodeBridgeFrame(data, peerID)
+	if err != nil {
+		return err
+	}
+	return s.enqueuePeerBridgeFrame(peerID, framed)
+}
+
+func (s *Session) encodeBridgeFrame(data []byte, peerID string) ([]byte, error) {
 	const epochHeaderLen = 8
 	if len(data)+len(bridgeMagic)+epochHeaderLen > bridgeMaxMessageSize {
 		return nil, ErrSendTooLarge
@@ -641,9 +674,18 @@ func (s *Session) encodeBridgeFrame(data []byte) ([]byte, error) {
 	copy(framed, bridgeMagic[:])
 	off := len(bridgeMagic)
 	binary.BigEndian.PutUint32(framed[off:off+4], s.localEpoch.Load())
-	binary.BigEndian.PutUint32(framed[off+4:off+epochHeaderLen], s.peerEpoch.Load())
+	binary.BigEndian.PutUint32(framed[off+4:off+epochHeaderLen], s.peerEpochFor(peerID))
 	copy(framed[off+epochHeaderLen:], data)
 	return framed, nil
+}
+
+func (s *Session) peerEpochFor(peerID string) uint32 {
+	if peerID == "" || s.onPeerData == nil {
+		return s.peerEpoch.Load()
+	}
+	s.peerEpochMu.Lock()
+	defer s.peerEpochMu.Unlock()
+	return s.peerEpochs[peerID]
 }
 
 func (s *Session) enqueueBridgeFrame(framed []byte) error {
@@ -666,6 +708,26 @@ func (s *Session) enqueueBridgeFrame(framed []byte) error {
 	}
 }
 
+func (s *Session) enqueuePeerBridgeFrame(peerID string, framed []byte) error {
+	if s.closed.Load() {
+		return ErrSessionClosed
+	}
+	if !s.bridgeReady.Load() {
+		return ErrBridgeNotReady
+	}
+	if len(framed) > bridgeMaxMessageSize {
+		return ErrSendTooLarge
+	}
+	select {
+	case s.peerSendQueue <- bridgeOutbound{to: peerID, data: framed}:
+		return nil
+	case <-s.done:
+		return ErrSessionClosed
+	default:
+		return ErrSendQueueFull
+	}
+}
+
 func (s *Session) sendLoop() {
 	defer s.wg.Done()
 	for {
@@ -676,23 +738,32 @@ func (s *Session) sendLoop() {
 			if !ok {
 				return
 			}
-			if !s.outboundFrameCurrent(data) {
-				continue
-			}
-			jSess := s.waitJSession()
-			if jSess == nil {
+			s.sendBridgeFrame("", data)
+		case frame, ok := <-s.peerSendQueue:
+			if !ok {
 				return
 			}
-			if !s.outboundFrameCurrent(data) {
-				continue
-			}
-			if err := jSess.BridgeSendRaw("", data); err != nil {
-				if s.closed.Load() {
-					return
-				}
-				logger.Debugf("jitsi bridge send: %v", err)
-			}
+			s.sendBridgeFrame(frame.to, frame.data)
 		}
+	}
+}
+
+func (s *Session) sendBridgeFrame(to string, data []byte) {
+	if !s.outboundFrameCurrent(data) {
+		return
+	}
+	jSess := s.waitJSession()
+	if jSess == nil {
+		return
+	}
+	if !s.outboundFrameCurrent(data) {
+		return
+	}
+	if err := jSess.BridgeSendRaw(to, data); err != nil {
+		if s.closed.Load() {
+			return
+		}
+		logger.Debugf("jitsi bridge send: %v", err)
 	}
 }
 
@@ -727,7 +798,7 @@ func (s *Session) recvLoop() {
 	defer s.wg.Done()
 
 	jSess := s.jSess.Load()
-	if jSess == nil || s.onData == nil || !s.bridgeReady.Load() {
+	if jSess == nil || (s.onData == nil && s.onPeerData == nil) || !s.bridgeReady.Load() {
 		return
 	}
 	msgs := jSess.BridgeMessages()
@@ -756,12 +827,12 @@ func (s *Session) deliverBridgeMessage(msg j.BridgeMessage, ok bool) bool {
 		}
 		return false
 	}
-	payload := decodeRaw(msg)
-	if payload == nil {
+	payload, valid := bridgePayload(msg)
+	if !valid {
 		return true
 	}
-	if len(payload) < len(bridgeMagic) || !bytes.Equal(payload[:len(bridgeMagic)], bridgeMagic[:]) {
-		return true
+	if s.onPeerData != nil && msg.From != "" {
+		return s.deliverPeerBridgePayload(msg.From, payload)
 	}
 	if !s.peerLatchAccepts(msg.From) {
 		return true
@@ -775,6 +846,51 @@ func (s *Session) deliverBridgeMessage(msg j.BridgeMessage, ok bool) bool {
 	}
 	s.onData(data)
 	return true
+}
+
+func bridgePayload(msg j.BridgeMessage) ([]byte, bool) {
+	payload := decodeRaw(msg)
+	if payload == nil {
+		return nil, false
+	}
+	if len(payload) < len(bridgeMagic) || !bytes.Equal(payload[:len(bridgeMagic)], bridgeMagic[:]) {
+		return nil, false
+	}
+	return payload, true
+}
+
+func (s *Session) deliverPeerBridgePayload(from string, payload []byte) bool {
+	data, ok := s.acceptPeerEpochFrame(from, payload)
+	if !ok || len(data) == 0 {
+		return true
+	}
+	s.onPeerData(from, data)
+	return true
+}
+
+func (s *Session) acceptPeerEpochFrame(from string, payload []byte) ([]byte, bool) {
+	const epochHeaderLen = 8
+	if len(payload) < len(bridgeMagic)+epochHeaderLen {
+		return nil, false
+	}
+	off := len(bridgeMagic)
+	senderEpoch := binary.BigEndian.Uint32(payload[off : off+4])
+	receiverEpoch := binary.BigEndian.Uint32(payload[off+4 : off+epochHeaderLen])
+	if senderEpoch == 0 || senderEpoch == s.localEpoch.Load() {
+		return nil, false
+	}
+	if receiverEpoch != 0 && receiverEpoch != s.localEpoch.Load() {
+		logger.Debugf("jitsi: drop stale bridge frame peerEpoch=0x%08x localEpoch=0x%08x",
+			receiverEpoch, s.localEpoch.Load())
+		return nil, false
+	}
+	s.peerEpochMu.Lock()
+	prev := s.peerEpochs[from]
+	if prev == 0 || prev != senderEpoch {
+		s.peerEpochs[from] = senderEpoch
+	}
+	s.peerEpochMu.Unlock()
+	return payload[off+epochHeaderLen:], true
 }
 
 func (s *Session) acceptEpochFrame(payload []byte) ([]byte, bool) {
@@ -911,6 +1027,15 @@ func (s *Session) Close() error {
 	return nil
 }
 
+// ResetPeer clears endpoint/epoch binding after an upper-layer handshake
+// failure so the next fresh peer in the room is not ignored because a stale
+// participant spoke first.
+func (s *Session) ResetPeer() {
+	s.peerEndpoint.Store(nil)
+	s.peerEpoch.Store(0)
+	s.resetPeerEpochs()
+}
+
 // SetReconnectCallback registers a callback for reconnection events.
 func (s *Session) SetReconnectCallback(cb func(*webrtc.DataChannel)) { s.onReconnect = cb }
 
@@ -936,6 +1061,11 @@ func (s *Session) WatchConnection(ctx context.Context) {
 		}
 	}
 }
+
+// Reconnect asks the jitsi session to tear down its bridge connection and
+// re-establish it. Triggered by upper layers when liveness probes declare the
+// carrier dead before jitsi has noticed.
+func (s *Session) Reconnect(reason string) { s.requestReconnect(reason) }
 
 func (s *Session) requestReconnect(reason string) {
 	s.bridgeReady.Store(false)
@@ -1010,6 +1140,7 @@ func (s *Session) reconnect(ctx context.Context) error {
 	}
 	s.localEpoch.Store(randomEpoch())
 	s.peerEpoch.Store(0)
+	s.resetPeerEpochs()
 	s.drainSendQueue()
 
 	logger.Infof("jitsi: reconnecting %s/%s as %s ...", s.host, s.room, s.name)
@@ -1050,10 +1181,17 @@ func (s *Session) drainSendQueue() {
 	for {
 		select {
 		case <-s.sendQueue:
+		case <-s.peerSendQueue:
 		default:
 			return
 		}
 	}
+}
+
+func (s *Session) resetPeerEpochs() {
+	s.peerEpochMu.Lock()
+	clear(s.peerEpochs)
+	s.peerEpochMu.Unlock()
 }
 
 // CanSend reports whether the session is ready to accept new data.
@@ -1061,7 +1199,7 @@ func (s *Session) CanSend() bool {
 	if s.closed.Load() {
 		return false
 	}
-	if s.onData == nil {
+	if s.onData == nil && s.onPeerData == nil {
 		// pure video mode — readiness driven by PC connection state
 		s.pcMu.Lock()
 		ready := s.pc != nil && s.pc.ConnectionState() == webrtc.PeerConnectionStateConnected

@@ -4,7 +4,7 @@
 // byte/video primitives the rest of olcrtc consumes.
 //
 // Engines model the SFU protocol family (e.g. LiveKit, Goolom). Service-
-// specific bits (e.g. WB / Jazz / Telemost API flows) live in the auth
+// specific bits (e.g. WB / Telemost API flows) live in the auth
 // package, not here.
 package engine
 
@@ -41,22 +41,23 @@ type Credentials struct {
 // Config is the runtime input to an engine factory. URL/Token are produced by
 // an auth provider (or supplied directly by the caller for "none" auth).
 // Extra carries engine-specific fields that don't fit the common shape
-// (e.g. SaluteJazz needs a separate room password alongside the room ID).
+// (e.g. providers that need metadata beyond URL/token can pass it here).
 //
 // Refresh, when set, is called by an engine whose protocol requires fresh
 // credentials on each reconnect (e.g. Goolom: every reconnect needs a new
 // peerID/credentials tuple from the room-info HTTP endpoint). Engines that
 // don't need this should ignore it.
 type Config struct {
-	URL       string
-	Token     string
-	Name      string
-	Extra     map[string]string
-	OnData    func([]byte)
-	DNSServer string
-	ProxyAddr string
-	ProxyPort int
-	Refresh   func(ctx context.Context) (Credentials, error)
+	URL        string
+	Token      string
+	Name       string
+	Extra      map[string]string
+	OnData     func([]byte)
+	OnPeerData func(peerID string, data []byte)
+	DNSServer  string
+	ProxyAddr  string
+	ProxyPort  int
+	Refresh    func(ctx context.Context) (Credentials, error)
 }
 
 // Session is the engine-level runtime handle. It is shaped to match what
@@ -76,6 +77,18 @@ type Session interface {
 	GetSendQueue() chan []byte
 	GetBufferedAmount() uint64
 	Capabilities() Capabilities
+	// Reconnect asks the engine to tear down and re-establish the underlying
+	// SFU connection. Used by upper layers when a liveness probe declares the
+	// carrier dead before the engine has noticed (e.g. silent packet loss on
+	// a video track). Implementations should be best-effort and idempotent;
+	// reason is logged for diagnostics.
+	Reconnect(reason string)
+}
+
+// PeerSession is implemented by engines that can address byte payloads to a
+// specific remote endpoint and report the sender endpoint on receive.
+type PeerSession interface {
+	SendTo(peerID string, data []byte) error
 }
 
 // VideoTrackCapable is implemented by engines that can exchange video tracks.

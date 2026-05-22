@@ -12,9 +12,21 @@
 Этот способ для тех кто хочет собрать бинарник руками без Docker/Podman.
 Нужен Go 1.25+, mage, git.
 
-Проект в бете. По проблемам: t.me/openlibrecommunity
+---
+
+
+### swap (ОЗУ)
+
+Если у вас меньше 4ГБ оперативной памяти, сборка может вылетать. **Обязательно включите SWAP**:
+
+```bash
+sudo fallocate -l 4G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+```
+
 
 ---
+
+## Что нужно установить
 
 ## Шаг 1: Установить git
 
@@ -31,7 +43,7 @@ dnf install git       # Fedora / RHEL   / CentOS
 ### Arch / Fedora (всё просто)
 
 ```sh
-pacman -S go    # Arch / CachyOS / Manjaro
+pacman -S go    # Arch    / CachyOS / Manjaro
 dnf install go  # Fedora / RHEL   / CentOS
 ```
 
@@ -106,7 +118,6 @@ git clone https://github.com/openlibrecommunity/olcrtc --recurse-submodules
 cd olcrtc
 ```
 
-`--recurse-submodules` обязателен - без него videochannel не соберётся.
 
 ---
 
@@ -121,9 +132,6 @@ mage cross   # все платформы сразу (если собираешь
 
 ```
 build/olcrtc-linux-amd64
-build/olcrtc-linux-arm64
-build/olcrtc-windows-amd64.exe
-build/olcrtc-darwin-amd64
 ```
 
 ---
@@ -143,18 +151,17 @@ openssl rand -hex 32
 
 ## Шаг 7: Запустить сервер
 
-На серверной машине (VPS и т.д.). Подбери нужную комбинацию carrier + transport из матрицы в [settings.md](settings.md).
+На серверной машине (VPS и т.д.). Подбери нужную комбинацию auth provider + transport из матрицы в [settings.md](settings.md).
 
 ### jitsi + datachannel (рекомендуется)
 
-Самый простой способ: используй любой self-hosted или публичный Jitsi Meet инстанс. Регистрация не нужна, имя комнаты выдумывается на лету. По умолчанию в примерах ниже — `meet.cryptopro.ru` (публичный CryptoPro Jitsi), но подойдёт любой другой (`meet.jit.si`, свой self-hosted и т.п.).
+Самый простой способ: используй любой self-hosted или публичный Jitsi Meet инстанс. Регистрация не нужна, имя комнаты выдумывается на лету. По умолчанию в примерах ниже — `meet.cryptopro.ru`, но подойдёт любой другой (`meet.jit.si`, свой self-hosted и т.п.).
 
 Создай YAML конфиг:
 
 ```yaml
 # server.yaml
 mode: srv
-link: direct
 auth:
   provider: jitsi
 room:
@@ -163,7 +170,7 @@ crypto:
   key: "d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799"
 net:
   transport: datachannel
-  dns: "1.1.1.1:53"
+  dns: "8.8.8.8:53"
 data: data
 ```
 
@@ -177,7 +184,7 @@ data: data
 
 ### wbstream + vp8channel (альтернатива)
 
-Сначала создай руму вручную через сайт [wbstream](https://stream.wb.ru) (автогенерация через `mode: gen` для wbstream больше не поддерживается) и сохрани её ID.
+Создай руму через сайт [wbstream](https://stream.wb.ru) и вставь её ID в `room.id`.
 
 `wbstream + datachannel` **не работает** в обычном guest flow — WB Stream выдаёт токены с `canPublishData=false`, и DC не маршрутизирует данные. Для обычного использования выбирай `vp8channel`.
 
@@ -186,7 +193,6 @@ data: data
 ```yaml
 # server.yaml
 mode: srv
-link: direct
 auth:
   provider: wbstream
 room:
@@ -195,7 +201,7 @@ crypto:
   key: "d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799"
 net:
   transport: vp8channel
-  dns: "1.1.1.1:53"
+  dns: "8.8.8.8:53"
 data: data
 ```
 
@@ -223,14 +229,13 @@ Room ID нужно передать клиенту.
 
 ## Шаг 8: Запустить клиент
 
-На своей машине. Auth provider, transport, room ID и key должны совпадать с сервером.
+На своей машине. `auth.provider`, `net.transport`, `room.id` и `crypto.key` должны совпадать с сервером.
 
 ### jitsi + datachannel (рекомендуется)
 
 ```yaml
 # client.yaml
 mode: cnc
-link: direct
 auth:
   provider: jitsi
 room:
@@ -239,7 +244,7 @@ crypto:
   key: "<hex-key-такой-же-как-на-сервере>"
 net:
   transport: datachannel
-  dns: "1.1.1.1:53"
+  dns: "8.8.8.8:53"
 socks:
   host: "127.0.0.1"
   port: 8808
@@ -257,7 +262,6 @@ data: data
 ```yaml
 # client.yaml
 mode: cnc
-link: direct
 auth:
   provider: wbstream
 room:
@@ -266,7 +270,7 @@ crypto:
   key: "<hex-key>"
 net:
   transport: vp8channel
-  dns: "1.1.1.1:53"
+  dns: "8.8.8.8:53"
 socks:
   host: "127.0.0.1"
   port: 8808
@@ -288,7 +292,6 @@ SOCKS5 server listening on 127.0.0.1:8808
 ```yaml
 # client.yaml
 mode: cnc
-link: direct
 auth:
   provider: wbstream
 room:
@@ -297,7 +300,7 @@ crypto:
   key: "<hex-key>"
 net:
   transport: vp8channel
-  dns: "1.1.1.1:53"
+  dns: "8.8.8.8:53"
 socks:
   host: "127.0.0.1"
   port: 8808
@@ -318,12 +321,6 @@ curl --socks5-hostname 127.0.0.1:8808 https://icanhazip.com
 
 Должен вернуть IP сервера.
 
-Или выставить переменную чтобы весь трафик шёл через прокси:
-
-```sh
-export all_proxy=socks5h://127.0.0.1:8808
-curl https://icanhazip.com
-```
 
 ---
 

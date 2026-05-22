@@ -13,11 +13,10 @@ var errNo = errors.New("no")
 func TestRun_FailsWithoutKey(t *testing.T) {
 	tunnel.RegisterDefaults()
 	err := tunnel.New(tunnel.Config{
-		Link:      "direct",
 		Transport: "datachannel",
 		Carrier:   "telemost",
 		RoomURL:   "room-1",
-		DNSServer: "1.1.1.1:53",
+		DNSServer: "8.8.8.8:53",
 	}).Run(context.Background())
 	if err == nil {
 		t.Fatal("Run(no key) error = nil")

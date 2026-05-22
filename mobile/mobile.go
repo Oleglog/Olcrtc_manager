@@ -15,8 +15,11 @@ import (
 
 	"github.com/openlibrecommunity/olcrtc/internal/app/session"
 	"github.com/openlibrecommunity/olcrtc/internal/client"
+	"github.com/openlibrecommunity/olcrtc/internal/control"
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 	"github.com/openlibrecommunity/olcrtc/internal/protect"
+
+	"github.com/openlibrecommunity/olcrtc/internal/transport/vp8channel"
 
 	_ "golang.org/x/mobile/bind"                       // ensure gomobile bind is available
 	_ "google.golang.org/genproto/protobuf/field_mask" // keep gomobile on post-split genproto modules
@@ -47,14 +50,11 @@ var (
 )
 
 const (
-	defaultLink        = "direct"
 	defaultTransport   = "vp8channel"
 	dataTransport      = "datachannel"
-	defaultDNSServer   = "1.1.1.1:53"
+	defaultDNSServer   = "8.8.8.8:53"
 	defaultHTTPPingURL = "https://www.google.com/generate_204"
 	carrierWBStream    = "wbstream"
-	carrierJazz        = "jazz"
-	roomURLAny         = "any"
 )
 
 const (
@@ -65,27 +65,25 @@ const (
 )
 
 var (
-	mu                 sync.Mutex //nolint:gochecknoglobals // package-level state intentional
-	defaults           mobileConfig //nolint:gochecknoglobals // package-level state intentional
-	defaultsSet        sync.Once //nolint:gochecknoglobals // package-level state intentional
-	registerSet        sync.Once //nolint:gochecknoglobals // package-level state intentional
+	mu                 sync.Mutex            //nolint:gochecknoglobals // package-level state intentional
+	defaults           mobileConfig          //nolint:gochecknoglobals // package-level state intentional
+	defaultsSet        sync.Once             //nolint:gochecknoglobals // package-level state intentional
+	registerSet        sync.Once             //nolint:gochecknoglobals // package-level state intentional
 	runClientWithReady = client.RunWithReady //nolint:gochecknoglobals // package-level state intentional
-	cancel             context.CancelFunc //nolint:gochecknoglobals // package-level state intentional
-	done               chan struct{} //nolint:gochecknoglobals // package-level state intentional
-	ready              chan struct{} //nolint:gochecknoglobals // package-level state intentional
+	cancel             context.CancelFunc    //nolint:gochecknoglobals // package-level state intentional
+	done               chan struct{}         //nolint:gochecknoglobals // package-level state intentional
+	ready              chan struct{}         //nolint:gochecknoglobals // package-level state intentional
 	errRun             error
 )
 
 type mobileConfig struct {
-	link            string
-	transport       string
-	dnsServer       string
-	vp8FPS          int
-	vp8BatchSize    int
-	seiFPS          int
-	seiBatchSize    int
-	seiFragmentSize int
-	seiAckTimeoutMS int
+	transport        string
+	dnsServer        string
+	vp8FPS           int
+	vp8BatchSize     int
+	livenessInterval time.Duration
+	livenessTimeout  time.Duration
+	livenessFailures int
 }
 
 // SetProtector sets the Android VPN socket protector.
@@ -121,29 +119,12 @@ func SetTransport(transport string) {
 	defaults.transport = normalizeTransport(transport)
 }
 
-// SetLink selects the link used by Start.
-// Supported value today: direct.
-func SetLink(link string) {
-	mu.Lock()
-	defer mu.Unlock()
-	ensureDefaultConfigLocked()
-	defaults.link = link
-}
-
-// SetDNS selects the DNS server used by the tunnel and the auth-path
-// HTTP resolver. Empty string keeps the previous value untouched.
+// SetDNS selects the DNS server used by the tunnel.
 func SetDNS(dnsServer string) {
 	mu.Lock()
 	defer mu.Unlock()
 	ensureDefaultConfigLocked()
-	if dnsServer == "" {
-		return
-	}
 	defaults.dnsServer = dnsServer
-	// Mirror the value into protect.HTTPDNSServer so auth providers
-	// (salutejazz / telemost / wbstream) reach their HTTP APIs through
-	// the same protected resolver as the tunnel itself.
-	protect.HTTPDNSServer = dnsServer
 }
 
 // SetVP8Options configures vp8channel.
@@ -155,33 +136,19 @@ func SetVP8Options(fps, batchSize int) {
 	defaults.vp8BatchSize = clampAtLeastOne(batchSize, 64)
 }
 
-// SetSEIOptions configures seichannel parameters.
-// fps: encoded frame rate per second (1..120), 0 = keep current default.
-// batchSize: messages per tick (1..64), 0 = keep current default.
-// fragmentSize: max bytes per SEI fragment (>= 1), 0 = keep current default.
-// ackTimeoutMs: per-message ack timeout in milliseconds (>= 1), 0 = keep current default.
-//
-// Calling this is optional. When values are not set, mobileConfig defaults
-// (sweet-spot 30/8/900/1500) are passed to client.Config; the seichannel
-// transport additionally substitutes its own internal defaults if the
-// resulting Config still contains zeros, so downstream session.ValidateSEI
-// will not trip ErrSEI*Required.
-func SetSEIOptions(fps, batchSize, fragmentSize, ackTimeoutMs int) {
+// SetLivenessOptions configures control-stream ping/pong checks.
+// Values <= 0 reset that field to its default. Durations are milliseconds.
+func SetLivenessOptions(intervalMillis, timeoutMillis, failures int) {
 	mu.Lock()
 	defer mu.Unlock()
 	ensureDefaultConfigLocked()
-	if fps > 0 {
-		defaults.seiFPS = clampAtLeastOne(fps, 120)
+	defaults.livenessInterval = durationFromMillisOrDefault(intervalMillis, control.DefaultInterval)
+	defaults.livenessTimeout = durationFromMillisOrDefault(timeoutMillis, control.DefaultTimeout)
+	if failures <= 0 {
+		defaults.livenessFailures = control.DefaultFailures
+		return
 	}
-	if batchSize > 0 {
-		defaults.seiBatchSize = clampAtLeastOne(batchSize, 64)
-	}
-	if fragmentSize > 0 {
-		defaults.seiFragmentSize = fragmentSize
-	}
-	if ackTimeoutMs > 0 {
-		defaults.seiAckTimeoutMS = ackTimeoutMs
-	}
+	defaults.livenessFailures = failures
 }
 
 // SetDebug enables or disables verbose logging.
@@ -196,7 +163,7 @@ func SetDebug(enabled bool) {
 }
 
 // Start launches the olcRTC client in background.
-// carrierName: carrier name ("telemost", "jazz", "wbstream")
+// carrierName: carrier name ("telemost", "wbstream", "jitsi")
 // roomID: carrier-specific room ID
 // clientID: client identifier that must match the server's -client-id
 // keyHex: 64-char hex encryption key
@@ -236,6 +203,11 @@ func Check(
 	vp8BatchSize int,
 ) (int64, error) {
 	registerDefaults()
+	mu.Lock()
+	ensureDefaultConfigLocked()
+	cfg := defaults
+	mu.Unlock()
+
 	carrierName = normalizeCarrier(carrierName)
 	transportName = normalizeTransport(transportName)
 	if err := validateStartArgs(carrierName, roomID, clientID, keyHex); err != nil {
@@ -258,16 +230,18 @@ func Check(
 		doneCh <- runClientWithReady(
 			ctx,
 			client.Config{
-				Link:         defaultLink,
-				Transport:    transportName,
-				Carrier:      carrierName,
-				RoomURL:      buildRoomURL(carrierName, roomID),
-				KeyHex:       keyHex,
-				DeviceID:     clientID,
-				LocalAddr:    fmt.Sprintf("127.0.0.1:%d", socksPort),
-				DNSServer:    defaultDNSServer,
-				VP8FPS:       clampAtLeastOne(vp8FPS, 120),
-				VP8BatchSize: clampAtLeastOne(vp8BatchSize, 64),
+				Transport: transportName,
+				Carrier:   carrierName,
+				RoomURL:   buildRoomURL(carrierName, roomID),
+				KeyHex:    keyHex,
+				DeviceID:  clientID,
+				LocalAddr: fmt.Sprintf("127.0.0.1:%d", socksPort),
+				DNSServer: defaultDNSServer,
+				TransportOptions: vp8channel.Options{
+					FPS:       clampAtLeastOne(vp8FPS, 120),
+					BatchSize: clampAtLeastOne(vp8BatchSize, 64),
+				},
+				Liveness: livenessConfig(cfg),
 			},
 			func() {
 				readyOnce.Do(func() {
@@ -312,6 +286,11 @@ func Ping(
 	vp8BatchSize int,
 ) (int64, error) {
 	registerDefaults()
+	mu.Lock()
+	ensureDefaultConfigLocked()
+	cfg := defaults
+	mu.Unlock()
+
 	carrierName = normalizeCarrier(carrierName)
 	transportName = normalizeTransport(transportName)
 
@@ -341,16 +320,18 @@ func Ping(
 		doneCh <- runClientWithReady(
 			ctx,
 			client.Config{
-				Link:         defaultLink,
-				Transport:    transportName,
-				Carrier:      carrierName,
-				RoomURL:      buildRoomURL(carrierName, roomID),
-				KeyHex:       keyHex,
-				DeviceID:     clientID,
-				LocalAddr:    fmt.Sprintf("127.0.0.1:%d", socksPort),
-				DNSServer:    defaultDNSServer,
-				VP8FPS:       clampAtLeastOne(vp8FPS, 120),
-				VP8BatchSize: clampAtLeastOne(vp8BatchSize, 64),
+				Transport: transportName,
+				Carrier:   carrierName,
+				RoomURL:   buildRoomURL(carrierName, roomID),
+				KeyHex:    keyHex,
+				DeviceID:  clientID,
+				LocalAddr: fmt.Sprintf("127.0.0.1:%d", socksPort),
+				DNSServer: defaultDNSServer,
+				TransportOptions: vp8channel.Options{
+					FPS:       clampAtLeastOne(vp8FPS, 120),
+					BatchSize: clampAtLeastOne(vp8BatchSize, 64),
+				},
+				Liveness: livenessConfig(cfg),
 			},
 			func() {
 				readyOnce.Do(func() {
@@ -572,15 +553,6 @@ func startWithConfig(
 
 	roomURL := buildRoomURL(carrierName, roomID)
 
-	// Pin the auth-path HTTP resolver to the same DNS server we configured
-	// for the tunnel. Without this, salutejazz/telemost/wbstream HTTP calls
-	// fall through to the system resolver — which on Android, while the
-	// VpnService is active, races with the very session we're trying to
-	// establish and routinely returns ENETUNREACH.
-	if cfg.dnsServer != "" {
-		protect.HTTPDNSServer = cfg.dnsServer
-	}
-
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	cancel = cancelFunc
 	done = make(chan struct{})
@@ -595,22 +567,20 @@ func startWithConfig(
 		err := runClientWithReady(
 			ctx,
 			client.Config{
-				Link:            cfg.link,
-				Transport:       cfg.transport,
-				Carrier:         carrierName,
-				RoomURL:         roomURL,
-				KeyHex:          keyHex,
-				DeviceID:        clientID,
-				LocalAddr:       fmt.Sprintf("127.0.0.1:%d", socksPort),
-				DNSServer:       cfg.dnsServer,
-				SOCKSUser:       socksUser,
-				SOCKSPass:       socksPass,
-				VP8FPS:          cfg.vp8FPS,
-				VP8BatchSize:    cfg.vp8BatchSize,
-				SEIFPS:          cfg.seiFPS,
-				SEIBatchSize:    cfg.seiBatchSize,
-				SEIFragmentSize: cfg.seiFragmentSize,
-				SEIAckTimeoutMS: cfg.seiAckTimeoutMS,
+				Transport: cfg.transport,
+				Carrier:   carrierName,
+				RoomURL:   roomURL,
+				KeyHex:    keyHex,
+				DeviceID:  clientID,
+				LocalAddr: fmt.Sprintf("127.0.0.1:%d", socksPort),
+				DNSServer: cfg.dnsServer,
+				SOCKSUser: socksUser,
+				SOCKSPass: socksPass,
+				TransportOptions: vp8channel.Options{
+					FPS:       cfg.vp8FPS,
+					BatchSize: cfg.vp8BatchSize,
+				},
+				Liveness: livenessConfig(cfg),
 			},
 			func() {
 				readyOnce.Do(func() {
@@ -630,6 +600,7 @@ func startWithConfig(
 }
 
 // WaitReady blocks until the selected transport is connected and the local SOCKS5 listener is ready.
+//
 //nolint:cyclop // straightforward state-machine waits with multiple terminal conditions
 func WaitReady(timeoutMillis int) error {
 	mu.Lock()
@@ -720,17 +691,35 @@ func waitForCheckDone(doneCh <-chan error) {
 func ensureDefaultConfigLocked() {
 	defaultsSet.Do(func() {
 		defaults = mobileConfig{
-			link:            defaultLink,
-			transport:       defaultTransport,
-			dnsServer:       defaultDNSServer,
-			vp8FPS:          60,
-			vp8BatchSize:    8,
-			seiFPS:          30,
-			seiBatchSize:    8,
-			seiFragmentSize: 900,
-			seiAckTimeoutMS: 1500,
+			transport:        defaultTransport,
+			dnsServer:        defaultDNSServer,
+			vp8FPS:           60,
+			vp8BatchSize:     8,
+			livenessInterval: control.DefaultInterval,
+			livenessTimeout:  control.DefaultTimeout,
+			livenessFailures: control.DefaultFailures,
 		}
 	})
+}
+
+func livenessConfig(cfg mobileConfig) control.Config {
+	interval := cfg.livenessInterval
+	if interval <= 0 {
+		interval = control.DefaultInterval
+	}
+	timeout := cfg.livenessTimeout
+	if timeout <= 0 {
+		timeout = control.DefaultTimeout
+	}
+	failures := cfg.livenessFailures
+	if failures <= 0 {
+		failures = control.DefaultFailures
+	}
+	return control.Config{
+		Interval: interval,
+		Timeout:  timeout,
+		Failures: failures,
+	}
 }
 
 func normalizeTransport(value string) string {
@@ -755,7 +744,7 @@ func validateStartArgs(carrierName, roomID, clientID, keyHex string) error {
 	switch {
 	case carrierName == "":
 		return errCarrierRequired
-	case roomID == "" && carrierName != carrierJazz:
+	case roomID == "":
 		return errRoomIDRequired
 	case clientID == "":
 		return errClientIDRequired
@@ -766,20 +755,11 @@ func validateStartArgs(carrierName, roomID, clientID, keyHex string) error {
 	}
 }
 
-func buildRoomURL(carrierName, roomID string) string {
-	switch carrierName {
-	case "telemost":
-		return "https://telemost.yandex.ru/j/" + roomID
-	case carrierJazz:
-		if roomID == "" {
-			return roomURLAny
-		}
-		return roomID
-	case carrierWBStream:
-		return roomID
-	default:
-		return roomID
-	}
+func buildRoomURL(_ string, roomID string) string {
+	// Keep the same RoomURL value the CLI/YAML path passes into transports.
+	// Auth providers may expand it for service HTTP calls, but transports
+	// such as vp8channel derive peer binding from the raw room value.
+	return roomID
 }
 
 func clampAtLeastOne(value, maxValue int) int {
@@ -790,6 +770,17 @@ func clampAtLeastOne(value, maxValue int) int {
 		return maxValue
 	}
 	return value
+}
+
+func durationFromMillisOrDefault(value int, def time.Duration) time.Duration {
+	if value <= 0 {
+		return def
+	}
+	d := time.Duration(value) * time.Millisecond
+	if d <= 0 {
+		return def
+	}
+	return d
 }
 
 // logBridge adapts LogWriter to io.Writer.

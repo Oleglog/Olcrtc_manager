@@ -82,7 +82,7 @@ func TestProviderEngine(t *testing.T) {
 	if got := (Provider{}).Engine(); got != "jitsi" {
 		t.Fatalf("Engine() = %q, want %q", got, "jitsi")
 	}
-	if got := (Provider{}).DefaultServiceURL(); got != "" {
-		t.Fatalf("DefaultServiceURL() = %q, want empty", got)
+	if got := (Provider{}).DefaultServiceURL(); got != defaultServiceURL {
+		t.Fatalf("DefaultServiceURL() = %q, want %q", got, defaultServiceURL)
 	}
 }

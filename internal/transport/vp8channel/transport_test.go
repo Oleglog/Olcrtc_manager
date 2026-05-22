@@ -111,6 +111,56 @@ func TestVP8KeepaliveDoesNotLookLikeKCP(t *testing.T) {
 	}
 }
 
+func TestBatchSampleCarriesMultipleKCPPackets(t *testing.T) {
+	hdr := testEpochHdr(1)
+	packet := func(payload string) []byte {
+		frame := make([]byte, epochHdrLen+len(payload))
+		copy(frame, hdr[:])
+		copy(frame[epochHdrLen:], payload)
+		return frame
+	}
+
+	tr := &streamTransport{
+		outbound:  make(chan []byte, 4),
+		batchSize: 3,
+	}
+	tr.outbound <- packet("two")
+	tr.outbound <- packet("three")
+	tr.outbound <- packet("four")
+
+	sample := tr.batchSample(packet("one"))
+	if !bytes.Equal(sample[:epochHdrLen], hdr[:]) {
+		t.Fatalf("sample epoch header = %x, want %x", sample[:epochHdrLen], hdr[:])
+	}
+
+	var got []string
+	splitKCPPayload(sample[epochHdrLen:], func(payload []byte) {
+		got = append(got, string(payload))
+	})
+	want := []string{"one", "two", "three"}
+	if len(got) != len(want) {
+		t.Fatalf("split payload count = %d, want %d (%v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("payload[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+	if left := len(tr.outbound); left != 1 {
+		t.Fatalf("outbound left = %d, want 1", left)
+	}
+}
+
+func TestSplitKCPPayloadAcceptsLegacySinglePacket(t *testing.T) {
+	var got [][]byte
+	splitKCPPayload([]byte("single"), func(payload []byte) {
+		got = append(got, append([]byte(nil), payload...))
+	})
+	if len(got) != 1 || string(got[0]) != "single" {
+		t.Fatalf("split legacy payload = %q", got)
+	}
+}
+
 func testEpochHdr(epoch uint32) [epochHdrLen]byte {
 	var hdr [epochHdrLen]byte
 	copy(hdr[:], vp8Keepalive)

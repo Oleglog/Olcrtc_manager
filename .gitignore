@@ -1,5 +1,6 @@
 # Prerequisites
 *.d
+.DS_Store
 
 # Object files
 *.o
@@ -237,15 +238,12 @@ profile.cov
 go.work
 go.work.sum
 
-# env file
+# files
 .env
-
-# Editor/IDE
-# .idea/
-# .vscode/
 build/
 GEMINI.md
 code/package-lock.json
 !cmd/olcrtc/
 !cmd/olcrtc/main_test.go
 !pkg/
+cpu.prof

@@ -3,6 +3,7 @@ package logger
 import (
 	"bytes"
 	"log"
+	"os"
 	"strings"
 	"testing"
 )
@@ -68,5 +69,39 @@ func TestVerboseAndDebugLogging(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("log output %q does not contain %q", got, want)
 		}
+	}
+}
+
+func TestPionLoggerDropsTURNRefreshNoise(t *testing.T) {
+	buf := captureLogs(t)
+
+	turnc := NewPionLoggerFactory().NewLogger("turnc")
+	turnc.Errorf("Fail to refresh permissions: %s", "CreatePermission error response")
+
+	ice := NewPionLoggerFactory().NewLogger("ice")
+	ice.Errorf("Fail to refresh permissions: %s", "CreatePermission error response")
+	ice.Warn("normal warning")
+
+	got := buf.String()
+	if strings.Contains(got, "turnc") || strings.Contains(got, "refresh permissions") {
+		t.Fatalf("unexpected TURN refresh noise in log output: %q", got)
+	}
+	if !strings.Contains(got, "normal warning") {
+		t.Fatalf("expected normal warning to pass through, got %q", got)
+	}
+}
+
+func TestDisableNoisyPionLogsMergesTurncScope(t *testing.T) {
+	t.Setenv("PION_LOG_DISABLE", "ice")
+	t.Setenv("PION_LOG_ERROR", "turnc,ice")
+
+	DisableNoisyPionLogs()
+
+	got := os.Getenv("PION_LOG_DISABLE")
+	if !strings.Contains(got, "ice") || !strings.Contains(got, "turnc") {
+		t.Fatalf("PION_LOG_DISABLE = %q, want ice and turnc", got)
+	}
+	if got := os.Getenv("PION_LOG_ERROR"); got != "ice" {
+		t.Fatalf("PION_LOG_ERROR = %q, want ice", got)
 	}
 }

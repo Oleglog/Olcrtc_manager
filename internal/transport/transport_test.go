@@ -17,6 +17,7 @@ func (s *stubTransport) SetShouldReconnect(func() bool)  {}
 func (s *stubTransport) SetEndedCallback(func(string))   {}
 func (s *stubTransport) WatchConnection(context.Context) {}
 func (s *stubTransport) CanSend() bool                   { return true }
+func (s *stubTransport) Reconnect(string)                {}
 func (s *stubTransport) Features() Features              { return Features{Reliable: true} }
 
 func snapshotTransportRegistry() map[string]Factory {

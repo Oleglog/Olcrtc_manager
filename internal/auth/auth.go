@@ -1,7 +1,7 @@
 // Package auth defines how room credentials are produced for an engine.
 //
 // An auth provider is responsible for any service-specific HTTP / login flow
-// (WB Stream, SaluteJazz, Yandex Telemost, Jitsi, ...) and produces a
+// (WB Stream, Yandex Telemost, Jitsi, ...) and produces a
 // Credentials value that an engine can use to connect. Some auth providers
 // also support creating new rooms; that capability is optional and is
 // expressed via the RoomCreator interface.

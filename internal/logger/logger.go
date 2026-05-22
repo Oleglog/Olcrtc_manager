@@ -4,6 +4,8 @@ package logger
 import (
 	"fmt"
 	"log"
+	"os"
+	"strings"
 	"sync/atomic"
 
 	"github.com/pion/logging"
@@ -11,6 +13,72 @@ import (
 
 // verboseEnabled controls whether verbose and debug logging is enabled.
 var verboseEnabled atomic.Bool //nolint:gochecknoglobals // package-level state intentional
+
+// DisableNoisyPionLogs suppresses Pion scopes that are known to emit
+// high-volume non-actionable background noise.
+func DisableNoisyPionLogs() {
+	mergePionLogDisable("turnc")
+	removePionLogScopes([]string{"turnc"}, "ERROR", "WARN", "INFO", "DEBUG", "TRACE")
+}
+
+func mergePionLogDisable(scopes ...string) {
+	const envKey = "PION_LOG_DISABLE"
+	current := strings.TrimSpace(os.Getenv(envKey))
+	if strings.EqualFold(current, "all") {
+		return
+	}
+	seen := make(map[string]struct{})
+	var merged []string
+	for _, scope := range strings.Split(current, ",") {
+		scope = strings.TrimSpace(strings.ToLower(scope))
+		if scope == "" {
+			continue
+		}
+		seen[scope] = struct{}{}
+		merged = append(merged, scope)
+	}
+	for _, scope := range scopes {
+		scope = strings.TrimSpace(strings.ToLower(scope))
+		if scope == "" {
+			continue
+		}
+		if _, ok := seen[scope]; ok {
+			continue
+		}
+		seen[scope] = struct{}{}
+		merged = append(merged, scope)
+	}
+	_ = os.Setenv(envKey, strings.Join(merged, ","))
+}
+
+func removePionLogScopes(scopes []string, levels ...string) {
+	remove := make(map[string]struct{}, len(scopes))
+	for _, scope := range scopes {
+		scope = strings.TrimSpace(strings.ToLower(scope))
+		if scope != "" {
+			remove[scope] = struct{}{}
+		}
+	}
+	for _, level := range levels {
+		envKey := "PION_LOG_" + level
+		current := strings.TrimSpace(os.Getenv(envKey))
+		if current == "" || strings.EqualFold(current, "all") {
+			continue
+		}
+		var kept []string
+		for _, scope := range strings.Split(current, ",") {
+			scope = strings.TrimSpace(strings.ToLower(scope))
+			if scope == "" {
+				continue
+			}
+			if _, drop := remove[scope]; drop {
+				continue
+			}
+			kept = append(kept, scope)
+		}
+		_ = os.Setenv(envKey, strings.Join(kept, ","))
+	}
+}
 
 // SetVerbose enables or disables verbose/debug logging.
 func SetVerbose(enabled bool) {
@@ -114,7 +182,7 @@ func (l *PionLeveledLogger) Debugf(format string, args ...any) {
 
 // Info logs an info message.
 func (l *PionLeveledLogger) Info(msg string) {
-	if l.scope == "srtp" {
+	if shouldDropPionLog(l.scope, msg) {
 		return
 	}
 	log.Printf("[%s] INFO: %s", l.scope, msg)
@@ -122,28 +190,53 @@ func (l *PionLeveledLogger) Info(msg string) {
 
 // Infof logs a formatted info message.
 func (l *PionLeveledLogger) Infof(format string, args ...any) {
-	if l.scope == "srtp" {
+	msg := fmt.Sprintf(format, args...)
+	if shouldDropPionLog(l.scope, msg) {
 		return
 	}
-	log.Printf("[%s] INFO: %s", l.scope, fmt.Sprintf(format, args...))
+	log.Printf("[%s] INFO: %s", l.scope, msg)
 }
 
 // Warn logs a warning message.
 func (l *PionLeveledLogger) Warn(msg string) {
+	if shouldDropPionLog(l.scope, msg) {
+		return
+	}
 	log.Printf("[%s] WARN: %s", l.scope, msg)
 }
 
 // Warnf logs a formatted warning message.
 func (l *PionLeveledLogger) Warnf(format string, args ...any) {
-	log.Printf("[%s] WARN: %s", l.scope, fmt.Sprintf(format, args...))
+	msg := fmt.Sprintf(format, args...)
+	if shouldDropPionLog(l.scope, msg) {
+		return
+	}
+	log.Printf("[%s] WARN: %s", l.scope, msg)
 }
 
 // Error logs an error message.
 func (l *PionLeveledLogger) Error(msg string) {
+	if shouldDropPionLog(l.scope, msg) {
+		return
+	}
 	log.Printf("[%s] ERROR: %s", l.scope, msg)
 }
 
 // Errorf logs a formatted error message.
 func (l *PionLeveledLogger) Errorf(format string, args ...any) {
-	log.Printf("[%s] ERROR: %s", l.scope, fmt.Sprintf(format, args...))
+	msg := fmt.Sprintf(format, args...)
+	if shouldDropPionLog(l.scope, msg) {
+		return
+	}
+	log.Printf("[%s] ERROR: %s", l.scope, msg)
+}
+
+func shouldDropPionLog(scope, msg string) bool {
+	scope = strings.ToLower(scope)
+	if scope == "srtp" || scope == "turnc" {
+		return true
+	}
+	msg = strings.ToLower(msg)
+	return strings.Contains(msg, "refresh permissions") ||
+		strings.Contains(msg, "createpermission error response")
 }

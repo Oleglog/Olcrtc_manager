@@ -11,7 +11,7 @@
 //	conn, err := sess.Dial(ctx)  // blocks until WebRTC data channel is ready
 //	// conn implements net.Conn — pass it to sing-box / any io.ReadWriter consumer
 //
-// Built-in auth providers (jitsi, telemost, jazz, wbstream):
+// Built-in auth providers (jitsi, telemost, wbstream):
 //
 //	sess, err := olcrtc.New(ctx, olcrtc.Config{
 //	    Auth:   "jitsi",
@@ -34,8 +34,8 @@ import (
 	"net"
 
 	"github.com/openlibrecommunity/olcrtc/internal/auth"
-	"github.com/openlibrecommunity/olcrtc/internal/carrier/builtin"
 	"github.com/openlibrecommunity/olcrtc/internal/engine"
+	enginebuiltin "github.com/openlibrecommunity/olcrtc/internal/engine/builtin"
 )
 
 var (
@@ -52,13 +52,13 @@ var (
 // Config is the input to [New].
 type Config struct {
 	// --- built-in auth mode ---
-	// Auth is the name of a registered auth provider ("jitsi", "telemost", "jazz", "wbstream").
+	// Auth is the name of a registered auth provider ("jitsi", "telemost", "wbstream").
 	// When set, RoomID is forwarded to the provider as the room reference.
 	Auth   string
 	RoomID string
 
 	// --- direct engine mode (Auth == "") ---
-	// Engine selects the SFU protocol ("livekit", "goolom", "salutejazz").
+	// Engine selects the SFU protocol ("livekit", "goolom", "jitsi").
 	// Defaults to "livekit" when Auth is empty.
 	Engine string
 	URL    string
@@ -67,7 +67,7 @@ type Config struct {
 	// --- common ---
 	// Name is the display name used when joining the room.
 	Name string
-	// DNSServer is an optional custom DNS resolver (e.g. "1.1.1.1:53").
+	// DNSServer is an optional custom DNS resolver (e.g. "8.8.8.8:53").
 	DNSServer string
 	// ProxyAddr / ProxyPort configure an outbound SOCKS5 proxy.
 	ProxyAddr string
@@ -77,9 +77,9 @@ type Config struct {
 // Session is the library handle returned by [New].
 // Call [Session.Dial] to connect and obtain a [net.Conn].
 type Session struct {
-	inner    engine.Session
-	pr       *io.PipeReader
-	pw       *io.PipeWriter
+	inner        engine.Session
+	pr           *io.PipeReader
+	pw           *io.PipeWriter
 	authProvider auth.Provider
 	authCfg      auth.Config
 }
@@ -88,7 +88,7 @@ type Session struct {
 // Call once at program start if you want the full set without manual blank
 // imports. Safe to call multiple times.
 func RegisterDefaults() {
-	builtin.Register()
+	enginebuiltin.RegisterDefaults()
 }
 
 // New creates a Session from cfg. The session is not connected yet; call
@@ -240,9 +240,8 @@ func (s *Session) SetShouldReconnect(fn func() bool) {
 }
 
 // CreateRoom creates a new room via the auth provider and returns the room ID.
-// Only works when the session was created with Auth set to a provider that
-// supports room creation (wbstream, jazz). Returns [ErrRoomCreationUnsupported]
-// for providers that don't support it (e.g. telemost).
+// Only works when Auth names a provider that supports room creation. Built-in
+// providers currently return [ErrRoomCreationUnsupported].
 func CreateRoom(ctx context.Context, authName string) (string, error) {
 	p, err := auth.Get(authName)
 	if err != nil {

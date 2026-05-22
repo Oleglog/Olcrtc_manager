@@ -1,0 +1,43 @@
+services:
+  olcrtc-client:
+    build:
+      context: .
+    image: olcrtc/client:local
+    container_name: olcrtc-client
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      OLCRTC_MODE: cnc
+      OLCRTC_CARRIER: "${OLCRTC_CARRIER:?set OLCRTC_CARRIER (jitsi, telemost, wbstream, none)}"
+      OLCRTC_TRANSPORT: "${OLCRTC_TRANSPORT:-datachannel}"
+      OLCRTC_ROOM_ID: "${OLCRTC_ROOM_ID:?set OLCRTC_ROOM_ID to the server room}"
+      OLCRTC_KEY: "${OLCRTC_KEY:?set OLCRTC_KEY to the server encryption key}"
+      OLCRTC_KEY_FILE: "${OLCRTC_KEY_FILE:-/var/lib/olcrtc/key.hex}"
+      OLCRTC_DNS: "${OLCRTC_DNS:-8.8.8.8:53}"
+      OLCRTC_SOCKS_HOST: "${OLCRTC_SOCKS_HOST:-127.0.0.1}"
+      OLCRTC_SOCKS_PORT: "${OLCRTC_SOCKS_PORT:-8808}"
+      OLCRTC_SOCKS_USER: "${OLCRTC_SOCKS_USER:-}"
+      OLCRTC_SOCKS_PASS: "${OLCRTC_SOCKS_PASS:-}"
+      OLCRTC_VIDEO_W: "${OLCRTC_VIDEO_W:-0}"
+      OLCRTC_VIDEO_H: "${OLCRTC_VIDEO_H:-0}"
+      OLCRTC_VIDEO_FPS: "${OLCRTC_VIDEO_FPS:-0}"
+      OLCRTC_VIDEO_BITRATE: "${OLCRTC_VIDEO_BITRATE:-}"
+      OLCRTC_VIDEO_HW: "${OLCRTC_VIDEO_HW:-none}"
+      OLCRTC_VIDEO_CODEC: "${OLCRTC_VIDEO_CODEC:-qrcode}"
+      OLCRTC_VIDEO_QR_SIZE: "${OLCRTC_VIDEO_QR_SIZE:-0}"
+      OLCRTC_VIDEO_QR_RECOVERY: "${OLCRTC_VIDEO_QR_RECOVERY:-low}"
+      OLCRTC_VIDEO_TILE_MODULE: "${OLCRTC_VIDEO_TILE_MODULE:-0}"
+      OLCRTC_VIDEO_TILE_RS: "${OLCRTC_VIDEO_TILE_RS:-0}"
+      OLCRTC_VP8_FPS: "${OLCRTC_VP8_FPS:-0}"
+      OLCRTC_VP8_BATCH: "${OLCRTC_VP8_BATCH:-0}"
+      OLCRTC_SEI_FPS: "${OLCRTC_SEI_FPS:-0}"
+      OLCRTC_SEI_BATCH: "${OLCRTC_SEI_BATCH:-0}"
+      OLCRTC_SEI_FRAG: "${OLCRTC_SEI_FRAG:-0}"
+      OLCRTC_SEI_ACK: "${OLCRTC_SEI_ACK:-0}"
+      OLCRTC_DEBUG: "${OLCRTC_DEBUG:-false}"
+    volumes:
+      - olcrtc-client-state:/var/lib/olcrtc
+    init: true
+
+volumes:
+  olcrtc-client-state:

@@ -25,7 +25,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 FROM alpine:${ALPINE_VERSION} AS runtime
 
-RUN apk add --no-cache ca-certificates tzdata && \
+RUN apk add --no-cache ca-certificates ffmpeg tzdata && \
     addgroup -S olcrtc && \
     mkdir -p /usr/share/olcrtc /var/lib/olcrtc && \
     adduser -S -D -h /var/lib/olcrtc -s /sbin/nologin -G olcrtc olcrtc && \
@@ -43,9 +43,13 @@ WORKDIR /var/lib/olcrtc
 
 ENV OLCRTC_MODE=srv \
     OLCRTC_CARRIER= \
+    OLCRTC_TRANSPORT=datachannel \
     OLCRTC_DATA_DIR=/usr/share/olcrtc \
-    OLCRTC_DNS=1.1.1.1:53 \
-    OLCRTC_KEY_FILE=/var/lib/olcrtc/key.hex
+    OLCRTC_DNS=8.8.8.8:53 \
+    OLCRTC_KEY_FILE=/var/lib/olcrtc/key.hex \
+    OLCRTC_SOCKS_HOST=127.0.0.1 \
+    OLCRTC_SOCKS_PORT=8808 \
+    OLCRTC_FFMPEG=ffmpeg
 
 VOLUME ["/var/lib/olcrtc"]
 

@@ -13,19 +13,20 @@
 //	  │                        │
 //
 // After the exchange the control stream stays open; tunnel traffic flows over
-// additional smux streams opened by the client. The control stream may carry
-// keepalives or future control messages.
+// additional smux streams opened by the client. The control stream then
+// carries ping/pong liveness and future control messages.
 //
 //nolint:tagliatelle // JSON keys are the stable wire protocol schema.
 package handshake
 
 import (
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"time"
+
+	"github.com/openlibrecommunity/olcrtc/internal/framing"
 )
 
 // ProtoVersion identifies the wire-format version. Bumped only on breaking
@@ -84,7 +85,7 @@ var (
 	// ErrUnexpectedMessage is returned when a peer sends the wrong message type.
 	ErrUnexpectedMessage = errors.New("unexpected handshake message")
 	// ErrFrameTooLarge is returned when a peer announces a frame above [MaxMessageSize].
-	ErrFrameTooLarge = errors.New("handshake frame too large")
+	ErrFrameTooLarge = framing.ErrFrameTooLarge
 )
 
 // AuthFunc is invoked by [Server] after parsing CLIENT_HELLO.
@@ -191,36 +192,16 @@ func Server(rw io.ReadWriter, auth AuthFunc) (Hello, string, error) {
 }
 
 func writeFrame(w io.Writer, msg any) error {
-	body, err := json.Marshal(msg)
-	if err != nil {
-		return fmt.Errorf("marshal: %w", err)
-	}
-	if len(body) > MaxMessageSize {
-		return fmt.Errorf("%w: %d > %d", ErrFrameTooLarge, len(body), MaxMessageSize)
-	}
-	var hdr [4]byte
-	binary.BigEndian.PutUint32(hdr[:], uint32(len(body))) //nolint:gosec // len(body) bounded by MaxMessageSize
-	if _, err := w.Write(hdr[:]); err != nil {
-		return fmt.Errorf("write hdr: %w", err)
-	}
-	if _, err := w.Write(body); err != nil {
-		return fmt.Errorf("write body: %w", err)
+	if err := framing.WriteJSON(w, msg, MaxMessageSize); err != nil {
+		return fmt.Errorf("handshake: %w", err)
 	}
 	return nil
 }
 
 func readFrame(r io.Reader) ([]byte, error) {
-	var hdr [4]byte
-	if _, err := io.ReadFull(r, hdr[:]); err != nil {
-		return nil, fmt.Errorf("read hdr: %w", err)
+	body, err := framing.ReadBytes(r, MaxMessageSize)
+	if err != nil {
+		return nil, fmt.Errorf("handshake: %w", err)
 	}
-	n := binary.BigEndian.Uint32(hdr[:])
-	if n > MaxMessageSize {
-		return nil, fmt.Errorf("%w: %d > %d", ErrFrameTooLarge, n, MaxMessageSize)
-	}
-	buf := make([]byte, n)
-	if _, err := io.ReadFull(r, buf); err != nil {
-		return nil, fmt.Errorf("read body: %w", err)
-	}
-	return buf, nil
+	return body, nil
 }

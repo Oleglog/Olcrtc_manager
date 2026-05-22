@@ -79,6 +79,9 @@ func startKCP(out chan<- []byte, onData func([]byte), epochHdr [epochHdrLen]byte
 	sess.SetNoDelay(1, 5, 2, 1)
 	sess.SetWindowSize(kcpSndWnd, kcpRcvWnd)
 	sess.SetMtu(kcpMTU)
+	// Upstream marked SetStreamMode deprecated without providing a replacement;
+	// stream framing is still required for our wire format.
+	sess.SetStreamMode(true) //nolint:staticcheck // SA1019: no replacement upstream.
 	sess.SetACKNoDelay(true)
 	sess.SetWriteDelay(false)
 

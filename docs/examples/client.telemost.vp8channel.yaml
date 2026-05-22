@@ -1,0 +1,38 @@
+# Клиентский конфиг: telemost + vp8channel
+# Запуск: olcrtc docs/examples/client.telemost.vp8channel.yaml
+
+mode: cnc
+
+auth:
+  provider: telemost
+
+# Для telemost: Room ID, который вернул сервис.
+# Должен совпадать с сервером.
+room:
+  id: "REPLACE_WITH_TELEMOST_ROOM_ID"
+
+crypto:
+  # Можно использовать key_file: "./olcrtc.key", чтобы не хранить секрет прямо здесь.
+  key: "REPLACE_ME_WITH_64_HEX_CHARS" # должен совпадать с сервером
+
+net:
+  transport: vp8channel
+  dns: "8.8.8.8:53"
+
+liveness:
+  interval: 10s
+  timeout: 5s
+  failures: 3
+
+socks:
+  host: "127.0.0.1"
+  port: 8808
+  user: "" # необязательная входящая auth
+  pass: ""
+
+vp8:
+  fps: 60
+  batch_size: 64
+
+data: data
+debug: false

@@ -7,31 +7,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openlibrecommunity/olcrtc/internal/carrier"
+	"github.com/openlibrecommunity/olcrtc/internal/engine"
+	enginebuiltin "github.com/openlibrecommunity/olcrtc/internal/engine/builtin"
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
+	"github.com/openlibrecommunity/olcrtc/internal/transport/common"
 	"github.com/pion/webrtc/v4"
 )
 
-var (
-	errBoom     = errors.New("boom")
-	errOpenBoom = errors.New("open boom")
-)
+var errBoom = errors.New("boom")
 
-type fakeVideoSession struct {
-	stream *fakeVideoStream
-	err    error
-}
-
-func (s *fakeVideoSession) Capabilities() carrier.Capabilities {
-	return carrier.Capabilities{VideoTrack: true}
-}
-func (s *fakeVideoSession) OpenVideoTrack() (carrier.VideoTrack, error) {
-	if s.err != nil {
-		return nil, s.err
-	}
-	return s.stream, nil
-}
-
+// fakeVideoStream is the stub implementation of the videoSession interface
+// the seichannel transport consumes after engine.Session adaptation.
 type fakeVideoStream struct {
 	connectErr error
 	closeErr   error
@@ -57,28 +43,65 @@ func (s *fakeVideoStream) SetEndedCallback(cb func(string))  { s.ended = cb }
 func (s *fakeVideoStream) WatchConnection(context.Context)   { s.watched = true }
 func (s *fakeVideoStream) CanSend() bool                     { return s.canSend }
 func (s *fakeVideoStream) AddTrack(webrtc.TrackLocal) error  { s.trackAdded = true; return nil }
+func (s *fakeVideoStream) Reconnect(string)                  {}
 func (s *fakeVideoStream) SetTrackHandler(cb func(*webrtc.TrackRemote, *webrtc.RTPReceiver)) {
 	s.trackCB = cb
 }
 
-type nonVideoSession struct{}
+// fakeEngineSession implements engine.Session and engine.VideoTrackCapable so
+// it can be returned by enginebuiltin.Open in tests. It wraps a fakeVideoStream
+// for the video-track methods the real engine session exposes.
+type fakeEngineSession struct {
+	stream  *fakeVideoStream
+	noVideo bool
+}
 
-func (s *nonVideoSession) Capabilities() carrier.Capabilities { return carrier.Capabilities{} }
+func (s *fakeEngineSession) Capabilities() engine.Capabilities {
+	if s.noVideo {
+		return engine.Capabilities{}
+	}
+	return engine.Capabilities{VideoTrack: true}
+}
+func (s *fakeEngineSession) Connect(ctx context.Context) error { return s.stream.Connect(ctx) }
+func (s *fakeEngineSession) Send([]byte) error                 { return nil }
+func (s *fakeEngineSession) Close() error                      { return s.stream.Close() }
+func (s *fakeEngineSession) SetReconnectCallback(cb func(*webrtc.DataChannel)) {
+	s.stream.SetReconnectCallback(func() {
+		if cb != nil {
+			cb(nil)
+		}
+	})
+}
+func (s *fakeEngineSession) SetShouldReconnect(fn func() bool) { s.stream.SetShouldReconnect(fn) }
+func (s *fakeEngineSession) SetEndedCallback(cb func(string))  { s.stream.SetEndedCallback(cb) }
+func (s *fakeEngineSession) WatchConnection(ctx context.Context) {
+	s.stream.WatchConnection(ctx)
+}
+func (s *fakeEngineSession) CanSend() bool                            { return s.stream.CanSend() }
+func (s *fakeEngineSession) GetSendQueue() chan []byte                { return nil }
+func (s *fakeEngineSession) GetBufferedAmount() uint64                { return 0 }
+func (s *fakeEngineSession) Reconnect(string)                         {}
+func (s *fakeEngineSession) AddVideoTrack(t webrtc.TrackLocal) error  { return s.stream.AddTrack(t) }
+func (s *fakeEngineSession) SetVideoTrackHandler(cb func(*webrtc.TrackRemote, *webrtc.RTPReceiver)) {
+	s.stream.SetTrackHandler(cb)
+}
 
 //nolint:cyclop // table-driven test naturally has many branches
 func TestNewConnectCallbacksAndFeatures(t *testing.T) {
 	stream := &fakeVideoStream{canSend: true}
 	name := "seichannel-unit-new"
-	carrier.Register(name, func(context.Context, carrier.Config) (carrier.Session, error) {
-		return &fakeVideoSession{stream: stream}, nil
+	enginebuiltin.Register(name, func(context.Context, enginebuiltin.Config) (engine.Session, error) {
+		return &fakeEngineSession{stream: stream}, nil
 	})
 
 	trIface, err := New(t.Context(), transport.Config{
-		Carrier:         name,
-		SEIFPS:          40,
-		SEIBatchSize:    3,
-		SEIFragmentSize: 512,
-		SEIAckTimeoutMS: 1500,
+		Carrier: name,
+		Options: Options{
+			FPS:          40,
+			BatchSize:    3,
+			FragmentSize: 512,
+			AckTimeoutMS: 1500,
+		},
 	})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
@@ -124,25 +147,20 @@ func TestNewConnectCallbacksAndFeatures(t *testing.T) {
 }
 
 func TestNewErrorPaths(t *testing.T) {
-	carrier.Register("seichannel-create-fails", func(context.Context, carrier.Config) (carrier.Session, error) {
+	enginebuiltin.Register("seichannel-create-fails", func(context.Context, enginebuiltin.Config) (engine.Session, error) {
 		return nil, errBoom
 	})
-	if _, err := New(context.Background(), transport.Config{Carrier: "seichannel-create-fails"}); err == nil || err.Error() != "create carrier transport: boom" { //nolint:lll // long test description
+	_, err := New(context.Background(), transport.Config{Carrier: "seichannel-create-fails"})
+	if err == nil || err.Error() != "open engine session: boom" {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	carrier.Register("seichannel-no-video", func(context.Context, carrier.Config) (carrier.Session, error) {
-		return &nonVideoSession{}, nil
+	enginebuiltin.Register("seichannel-no-video", func(context.Context, enginebuiltin.Config) (engine.Session, error) {
+		return &fakeEngineSession{stream: &fakeVideoStream{}, noVideo: true}, nil
 	})
-	if _, err := New(context.Background(), transport.Config{Carrier: "seichannel-no-video"}); !errors.Is(err, ErrVideoTrackUnsupported) { //nolint:lll // long test description
+	_, err = New(context.Background(), transport.Config{Carrier: "seichannel-no-video"})
+	if !errors.Is(err, ErrVideoTrackUnsupported) {
 		t.Fatalf("New() error = %v, want %v", err, ErrVideoTrackUnsupported)
-	}
-
-	carrier.Register("seichannel-open-fails", func(context.Context, carrier.Config) (carrier.Session, error) {
-		return &fakeVideoSession{err: errOpenBoom}, nil
-	})
-	if _, err := New(context.Background(), transport.Config{Carrier: "seichannel-open-fails"}); err == nil || err.Error() != "open video track: open boom" { //nolint:lll // long test description
-		t.Fatalf("New() error = %v", err)
 	}
 }
 
@@ -153,7 +171,7 @@ func TestSendAckAndClosePaths(t *testing.T) {
 		outboundAck: make(chan []byte, 8),
 		closeCh:     make(chan struct{}),
 		writerDone:  make(chan struct{}),
-		ackWaiters:  make(map[uint32]chan uint32),
+		acks:        common.NewAckRegistry(),
 	}
 
 	done := make(chan error, 1)

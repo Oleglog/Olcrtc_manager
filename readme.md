@@ -16,7 +16,7 @@
 >   не работает — руму нужно создать вручную на <https://stream.wb.ru> и
 >   указать её ID в админке (поле `Room ID` в форме настройки инстанса) или
 >   при установке. Подробности см. в `server-install/README.md`.
-> - Чтобы быстро запустить сервер без ручных шагов — используйте `jazz`
+> - Чтобы быстро запустить сервер без ручных шагов — используйте `jitsi`
 >   (server-side auto-gen всё ещё работает) или `telemost` (для telemost
 >   инсталлятор сам генерирует ID вида `olcrtc-XXXXXXXX`).
 
@@ -25,7 +25,7 @@
 olcRTC — across the sea.
 
 Tunnels TCP traffic over WebRTC through whitelisted Russian conferencing
-services (Yandex Telemost, SaluteJazz, Wildberries Stream) so it cannot be
+services (Yandex Telemost, Jitsi, Wildberries Stream) so it cannot be
 blocked without breaking the upstream service.
 
 This fork ([Oleglog/Olcrtc_manager](https://github.com/Oleglog/Olcrtc_manager))
@@ -57,6 +57,10 @@ cd Olcrtc_manager
 sudo bash server-install/olcrtc-setup.sh
 ```
 
+[More info](docs/about.md)
+
+[Client URI format](docs/uri.md)
+
 The script is **self-contained** — it downloads the binary, installs the
 systemd service, and prints **Carrier**, **Transport**, **Room ID** and
 **Encryption key** to enter into the Android app.
@@ -67,8 +71,8 @@ See the full server documentation: **[server-install/README.md](server-install/R
 
 ## Carrier & transport matrix
 
-| Transport | telemost | jazz | wbstream |
-|-----------|:--------:|:----:|:--------:|
+| Transport | telemost | wbstream | jitsi |
+|-----------|:--------:|:--------:|:-----:|
 | datachannel | ✗ | ✓ | ✓ |
 | vp8channel | ✓ | ✓ | ✓ |
 | seichannel | ✗ | ✓ | ✓ |
@@ -76,7 +80,7 @@ See the full server documentation: **[server-install/README.md](server-install/R
 
 Speed (descending): **datachannel** (~6 MB/s) > **vp8channel** > **seichannel** > **videochannel** (~200 KB/s)
 
-Default carrier: **wbstream**. Default transport: **datachannel**.
+Default carrier: **jitsi**. Default transport: **datachannel**.
 
 ## Server management
 
@@ -142,7 +146,7 @@ mage clean
 
 ## SOCKS5 proxy for signalling
 
-If your VPS IP is blocked by wbstream / jazz / telemost, route signalling
+If your VPS IP is blocked by wbstream / jitsi / telemost, route signalling
 through a residential SOCKS5 proxy:
 
 ```bash

@@ -1,0 +1,48 @@
+# Failover-конфиг
+# Используй одинаковый порядок профилей на обеих сторонах.
+
+mode: srv
+
+crypto:
+  key_file: "./olcrtc.key"
+
+net:
+  dns: "8.8.8.8:53"
+
+liveness:
+  interval: 10s
+  timeout: 5s
+  failures: 3
+
+# Необязательный плановый rebuild для каждого активного профиля.
+# lifecycle:
+#   max_session_duration: 6h
+
+# Необязательный лимит/pacing для зашифрованных wire-сообщений.
+# traffic:
+#   max_payload_size: 4096
+#   min_delay: 5ms
+#   max_delay: 30ms
+
+data: data
+
+profiles:
+  - name: wb-vp8
+    auth:
+      provider: wbstream
+    room:
+      id: "REPLACE_WITH_WB_ROOM_ID"
+    net:
+      transport: vp8channel
+
+  - name: jitsi-datachannel
+    auth:
+      provider: jitsi
+    room:
+      id: "https://meet.example.org/REPLACE_WITH_ROOM_NAME"
+    net:
+      transport: datachannel
+
+failover:
+  retry_delay: 2s
+  max_cycles: 0

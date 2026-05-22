@@ -1,0 +1,40 @@
+# Клиентский конфиг: wbstream + seichannel
+# Запуск: olcrtc docs/examples/client.wbstream.seichannel.yaml
+
+mode: cnc
+
+auth:
+  provider: wbstream
+
+# Для wbstream: Room ID, который вернул сервис.
+# Должен совпадать с сервером.
+room:
+  id: "REPLACE_WITH_WB_ROOM_ID"
+
+crypto:
+  # Можно использовать key_file: "./olcrtc.key", чтобы не хранить секрет прямо здесь.
+  key: "REPLACE_ME_WITH_64_HEX_CHARS" # должен совпадать с сервером
+
+net:
+  transport: seichannel
+  dns: "8.8.8.8:53"
+
+liveness:
+  interval: 10s
+  timeout: 5s
+  failures: 3
+
+socks:
+  host: "127.0.0.1"
+  port: 8808
+  user: "" # необязательная входящая auth
+  pass: ""
+
+sei:
+  fps: 60
+  batch_size: 64
+  fragment_size: 900
+  ack_timeout_ms: 2000
+
+data: data
+debug: false

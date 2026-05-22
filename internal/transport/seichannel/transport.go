@@ -3,9 +3,7 @@ package seichannel
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/binary"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"hash/crc32"
@@ -13,8 +11,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/openlibrecommunity/olcrtc/internal/carrier"
+	"github.com/openlibrecommunity/olcrtc/internal/engine"
+	enginebuiltin "github.com/openlibrecommunity/olcrtc/internal/engine/builtin"
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
+	"github.com/openlibrecommunity/olcrtc/internal/transport/common"
 	"github.com/pion/rtp/codecs"
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
@@ -69,15 +69,23 @@ type transportFrame struct {
 	payload   []byte
 }
 
-type inboundMessage struct {
-	totalLen uint32
-	crc      uint32
-	frags    [][]byte
-	remain   int
+// videoSession is the subset of engine.Session + engine.VideoTrackCapable the
+// seichannel transport relies on.
+type videoSession interface {
+	Connect(ctx context.Context) error
+	Close() error
+	SetReconnectCallback(cb func())
+	SetShouldReconnect(fn func() bool)
+	SetEndedCallback(cb func(string))
+	WatchConnection(ctx context.Context)
+	CanSend() bool
+	Reconnect(reason string)
+	AddTrack(track webrtc.TrackLocal) error
+	SetTrackHandler(cb func(*webrtc.TrackRemote, *webrtc.RTPReceiver))
 }
 
 type streamTransport struct {
-	stream        carrier.VideoTrack
+	stream        videoSession
 	track         *webrtc.TrackLocalStaticSample
 	onData        func([]byte)
 	outbound      chan []byte
@@ -90,11 +98,8 @@ type streamTransport struct {
 	peerReady     atomic.Bool
 	sendMu        sync.Mutex
 	startWriter   sync.Once
-	ackMu         sync.Mutex
-	ackWaiters    map[uint32]chan uint32
-	recvMu        sync.Mutex
-	inbound       map[uint32]*inboundMessage
-	delivered     map[uint32]uint32
+	acks          *common.AckRegistry
+	reassembler   *common.Reassembler
 	fragmentSize  int
 	ackTimeout    time.Duration
 	frameInterval time.Duration
@@ -103,7 +108,12 @@ type streamTransport struct {
 
 // New creates a seichannel transport backed by a carrier.
 func New(ctx context.Context, cfg transport.Config) (transport.Transport, error) {
-	session, err := carrier.New(ctx, cfg.Carrier, carrier.Config{
+	opts, err := optionsFrom(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	session, err := enginebuiltin.Open(ctx, cfg.Carrier, enginebuiltin.Config{
 		RoomURL:   cfg.RoomURL,
 		Name:      cfg.Name,
 		OnData:    nil,
@@ -115,18 +125,15 @@ func New(ctx context.Context, cfg transport.Config) (transport.Transport, error)
 		Token:     cfg.Token,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("create carrier transport: %w", err)
+		return nil, fmt.Errorf("open engine session: %w", err)
 	}
 
-	videoCapable, ok := session.(carrier.VideoTrackCapable)
-	if !ok {
+	vt, ok := session.(engine.VideoTrackCapable)
+	if !ok || !session.Capabilities().VideoTrack {
+		_ = session.Close()
 		return nil, ErrVideoTrackUnsupported
 	}
-
-	stream, err := videoCapable.OpenVideoTrack()
-	if err != nil {
-		return nil, fmt.Errorf("open video track: %w", err)
-	}
+	stream := &engineVideoSession{session: session, vt: vt}
 
 	// Stream/track IDs must be unique per peer — Jitsi rejects session-accept
 	// when msid collides with another participant in the conference.
@@ -137,30 +144,14 @@ func New(ctx context.Context, cfg transport.Config) (transport.Transport, error)
 			Channels:    0,
 			SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f",
 		},
-		"seichannel-"+randomID(),
-		"olcrtc-"+randomID(),
+		"seichannel-"+common.RandomID(),
+		"olcrtc-"+common.RandomID(),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create local video track: %w", err)
 	}
 
-	fps := cfg.SEIFPS
-	if fps <= 0 {
-		fps = defaultFPS
-	}
-	batchSize := cfg.SEIBatchSize
-	if batchSize <= 0 {
-		batchSize = defaultBatchSize
-	}
-	fragmentSize := cfg.SEIFragmentSize
-	if fragmentSize <= 0 {
-		fragmentSize = defaultFragmentSize
-	}
-	ackTimeout := defaultAckTimeout
-	if cfg.SEIAckTimeoutMS > 0 {
-		ackTimeout = time.Duration(cfg.SEIAckTimeoutMS) * time.Millisecond
-	}
-
+	opts = opts.withDefaults()
 	tr := &streamTransport{
 		stream:        stream,
 		track:         track,
@@ -169,17 +160,15 @@ func New(ctx context.Context, cfg transport.Config) (transport.Transport, error)
 		outboundAck:   make(chan []byte, 64),
 		closeCh:       make(chan struct{}),
 		writerDone:    make(chan struct{}),
-		ackWaiters:    make(map[uint32]chan uint32),
-		inbound:       make(map[uint32]*inboundMessage),
-		delivered:     make(map[uint32]uint32),
-		fragmentSize:  fragmentSize,
-		ackTimeout:    ackTimeout,
-		frameInterval: time.Second / time.Duration(fps),
-		batchSize:     batchSize,
+		acks:          common.NewAckRegistry(),
+		reassembler:   common.NewReassembler(256),
+		fragmentSize:  opts.FragmentSize,
+		ackTimeout:    time.Duration(opts.AckTimeoutMS) * time.Millisecond,
+		frameInterval: time.Second / time.Duration(opts.FPS),
+		batchSize:     opts.BatchSize,
 	}
 
-	err = stream.AddTrack(track)
-	if err != nil {
+	if err := stream.AddTrack(track); err != nil {
 		return nil, fmt.Errorf("attach local video track: %w", err)
 	}
 	stream.SetTrackHandler(tr.handleRemoteTrack)
@@ -215,17 +204,9 @@ func (p *streamTransport) Send(data []byte) error {
 
 	seq := p.nextSeq.Add(1)
 	crc := crc32.ChecksumIEEE(data)
-	fragments := fragmentPayload(data, p.effectiveFragmentSize())
-	waiter := make(chan uint32, 1)
-
-	p.ackMu.Lock()
-	p.ackWaiters[seq] = waiter
-	p.ackMu.Unlock()
-	defer func() {
-		p.ackMu.Lock()
-		delete(p.ackWaiters, seq)
-		p.ackMu.Unlock()
-	}()
+	fragments := common.FragmentPayload(data, p.effectiveFragmentSize())
+	waiter := p.acks.Register(seq)
+	defer p.acks.Unregister(seq)
 
 	for range maxSendAttempts {
 		for idx, fragment := range fragments {
@@ -269,6 +250,11 @@ func (p *streamTransport) Close() error {
 // SetReconnectCallback registers reconnect handling.
 func (p *streamTransport) SetReconnectCallback(cb func()) {
 	p.stream.SetReconnectCallback(cb)
+}
+
+// Reconnect forwards to the underlying engine session.
+func (p *streamTransport) Reconnect(reason string) {
+	p.stream.Reconnect(reason)
 }
 
 // SetShouldReconnect configures reconnect policy.
@@ -457,72 +443,26 @@ func (p *streamTransport) handleSample(sample []byte) {
 	}
 }
 
-func (p *streamTransport) upsertInbound(frame transportFrame) (*inboundMessage, bool) {
-	msg, ok := p.inbound[frame.seq]
-	if !ok || msg.crc != frame.crc || msg.totalLen != frame.totalLen || len(msg.frags) != int(frame.fragTotal) {
-		msg = &inboundMessage{
-			totalLen: frame.totalLen,
-			crc:      frame.crc,
-			frags:    make([][]byte, frame.fragTotal),
-			remain:   int(frame.fragTotal),
-		}
-		p.inbound[frame.seq] = msg
-	}
-	if int(frame.fragIdx) >= len(msg.frags) {
-		return nil, false
-	}
-	if msg.frags[frame.fragIdx] == nil {
-		chunk := make([]byte, len(frame.payload))
-		copy(chunk, frame.payload)
-		msg.frags[frame.fragIdx] = chunk
-		msg.remain--
-	}
-	return msg, msg.remain == 0
-}
-
-func (p *streamTransport) assembleMessage(msg *inboundMessage) []byte {
-	data := make([]byte, 0, msg.totalLen)
-	for _, frag := range msg.frags {
-		data = append(data, frag...)
-	}
-	if uint32(len(data)) > msg.totalLen { //nolint:gosec // G115: bounded conversion verified by surrounding logic
-		data = data[:msg.totalLen]
-	}
-	return data
-}
-
 func (p *streamTransport) handleInboundFrame(frame transportFrame) {
-	p.recvMu.Lock()
-	if crc, ok := p.delivered[frame.seq]; ok && crc == frame.crc {
-		p.recvMu.Unlock()
+	result, data := p.reassembler.Push(common.Fragment{
+		Seq:       frame.seq,
+		CRC:       frame.crc,
+		TotalLen:  frame.totalLen,
+		FragIdx:   frame.fragIdx,
+		FragTotal: frame.fragTotal,
+		Payload:   frame.payload,
+	})
+	switch result {
+	case common.ResultDuplicate:
 		p.sendAck(frame.seq, frame.crc)
-		return
+	case common.ResultDelivered:
+		if p.onData != nil {
+			p.onData(data)
+		}
+		p.sendAck(frame.seq, frame.crc)
+	case common.ResultPartial, common.ResultIgnore:
+		// fragment stored or discarded; no peer response needed yet.
 	}
-
-	msg, complete := p.upsertInbound(frame)
-	if msg == nil || !complete {
-		p.recvMu.Unlock()
-		return
-	}
-
-	delete(p.inbound, frame.seq)
-	data := p.assembleMessage(msg)
-
-	if crc32.ChecksumIEEE(data) != msg.crc {
-		p.recvMu.Unlock()
-		return
-	}
-
-	if len(p.delivered) > 256 {
-		p.delivered = make(map[uint32]uint32)
-	}
-	p.delivered[frame.seq] = msg.crc
-	p.recvMu.Unlock()
-
-	if p.onData != nil {
-		p.onData(data)
-	}
-	p.sendAck(frame.seq, frame.crc)
 }
 
 func (p *streamTransport) sendAck(seq, crc uint32) {
@@ -530,35 +470,7 @@ func (p *streamTransport) sendAck(seq, crc uint32) {
 }
 
 func (p *streamTransport) resolveAck(seq, crc uint32) {
-	p.ackMu.Lock()
-	waiter := p.ackWaiters[seq]
-	p.ackMu.Unlock()
-
-	if waiter == nil {
-		return
-	}
-
-	select {
-	case waiter <- crc:
-	default:
-	}
-}
-
-func fragmentPayload(data []byte, maxSize int) [][]byte {
-	if len(data) == 0 {
-		return [][]byte{{}}
-	}
-
-	out := make([][]byte, 0, (len(data)+maxSize-1)/maxSize)
-	for start := 0; start < len(data); start += maxSize {
-		end := min(start+maxSize, len(data))
-
-		chunk := make([]byte, end-start)
-		copy(chunk, data[start:end])
-		out = append(out, chunk)
-	}
-
-	return out
+	p.acks.Resolve(seq, crc)
 }
 
 func encodeDataFrame(seq, crc uint32, totalLen, fragIdx, fragTotal int, payload []byte) []byte {
@@ -631,13 +543,3 @@ func decodeTransportFrame(data []byte) (transportFrame, error) {
 	}
 }
 
-// randomID returns 8 random hex characters for use as a per-peer suffix on
-// track and stream IDs. Required for Jitsi: msid collisions between
-// participants cause Jicofo to reject session-accept.
-func randomID() string {
-	var b [4]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return fmt.Sprintf("%08x", time.Now().UnixNano())
-	}
-	return hex.EncodeToString(b[:])
-}

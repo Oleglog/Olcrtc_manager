@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"hash/crc32"
 	"testing"
+
+	"github.com/openlibrecommunity/olcrtc/internal/transport/common"
 )
 
 func TestInboundAssemblyAndAck(t *testing.T) {
@@ -11,8 +13,7 @@ func TestInboundAssemblyAndAck(t *testing.T) {
 	tr := &streamTransport{
 		onData:      func(data []byte) { got = append([]byte(nil), data...) },
 		outboundAck: make(chan []byte, 4),
-		inbound:     make(map[uint32]*inboundMessage),
-		delivered:   make(map[uint32]uint32),
+		reassembler: common.NewReassembler(256),
 	}
 
 	payload := []byte("hello world")
@@ -67,23 +68,10 @@ func TestInboundAssemblyAndAck(t *testing.T) {
 	}
 }
 
-func TestInboundRejectsBadFragmentsAndCRC(t *testing.T) {
+func TestInboundRejectsBadCRC(t *testing.T) {
 	tr := &streamTransport{
 		outboundAck: make(chan []byte, 2),
-		inbound:     make(map[uint32]*inboundMessage),
-		delivered:   make(map[uint32]uint32),
-	}
-
-	msg, complete := tr.upsertInbound(transportFrame{
-		seq:       1,
-		crc:       1,
-		totalLen:  3,
-		fragIdx:   3,
-		fragTotal: 1,
-		payload:   []byte("bad"),
-	})
-	if msg != nil || complete {
-		t.Fatalf("upsertInbound(out of range) = (%v, %v), want nil false", msg, complete)
+		reassembler: common.NewReassembler(256),
 	}
 
 	called := false
@@ -98,14 +86,5 @@ func TestInboundRejectsBadFragmentsAndCRC(t *testing.T) {
 	})
 	if called {
 		t.Fatal("handleInboundFrame() delivered payload with bad crc")
-	}
-
-	msg = &inboundMessage{
-		totalLen: 3,
-		crc:      crc32.ChecksumIEEE([]byte("abcdef")),
-		frags:    [][]byte{[]byte("abc"), []byte("def")},
-	}
-	if got := tr.assembleMessage(msg); string(got) != "abc" {
-		t.Fatalf("assembleMessage() = %q, want abc", got)
 	}
 }

@@ -239,6 +239,35 @@ func TestDeliverBridgeMessageMagicAndPeerLatch(t *testing.T) {
 	}
 }
 
+func TestDeliverBridgeMessageWithPeerDataDoesNotLatchSinglePeer(t *testing.T) {
+	sess, err := New(context.Background(), engine.Config{
+		URL:   testHost,
+		Extra: map[string]string{credentialKeyRoom: testRoom},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer func() { _ = sess.Close() }()
+
+	js, ok := sess.(*Session)
+	if !ok {
+		t.Fatal("sess is not *Session")
+	}
+	got := make(map[string]string)
+	js.onPeerData = func(peerID string, b []byte) {
+		got[peerID] = string(b)
+	}
+
+	frameA := makeBridgeFrameForEpoch(t, 0x1111, 0, []byte("alpha"))
+	frameB := makeBridgeFrameForEpoch(t, 0x2222, 0, []byte("beta"))
+	js.deliverBridgeMessage(makeBridgeMessageFrom("peerA", map[string]any{rawFieldKey: frameA}), true)
+	js.deliverBridgeMessage(makeBridgeMessageFrom("peerB", map[string]any{rawFieldKey: frameB}), true)
+
+	if got["peerA"] != "alpha" || got["peerB"] != "beta" {
+		t.Fatalf("peer data = %#v, want both peers delivered", got)
+	}
+}
+
 func TestDeliverBridgeMessageDropsStalePeerEpoch(t *testing.T) {
 	sess, err := New(context.Background(), engine.Config{
 		URL:   testHost,
