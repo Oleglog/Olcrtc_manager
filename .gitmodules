@@ -1,3 +1,6 @@
 [submodule "internal/transport/videochannel/gr"]
 	path = internal/transport/videochannel/gr
 	url = https://github.com/zarazaex69/gr.git
+[submodule "temp-files/Exclave_FORK"]
+	path = temp-files/Exclave_FORK
+	url = https://github.com/Oleglog/Exclave_FORK
