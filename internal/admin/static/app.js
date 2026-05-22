@@ -88,8 +88,7 @@ function fmtStatusPill(st) {
   return { cls: 'status-pill-inactive', label: st || 'inactive' };
 }
 
-// Carrier alias used by salutejazz auth provider.
-function isJazzCarrier(c) { return c === 'jazz' || c === 'salutejazz'; }
+
 
 // ── Toast ────────────────────────────────────────────────────────────────────
 function ensureToastContainer() {
@@ -414,12 +413,6 @@ function renderInstanceCard(inst) {
   transportBadge.innerHTML = icon('wifi', 12) + '<span>' + (inst.transport || '-') + '</span>';
   badges.appendChild(carrierBadge);
   badges.appendChild(transportBadge);
-  if (isJazzCarrier(inst.carrier)) {
-    const passBadge = el('span', 'badge ' + (inst.has_password ? 'badge-emerald' : 'badge-amber'));
-    passBadge.innerHTML = (inst.has_password ? icon('lock', 12) : icon('unlock', 12)) +
-      '<span>' + (inst.has_password ? 'password set' : 'no password') + '</span>';
-    badges.appendChild(passBadge);
-  }
   if (inst.carrier === 'wbstream' && (!inst.room_id || inst.room_id === 'any')) {
     const noRoomBadge = el('span', 'badge badge-amber');
     noRoomBadge.innerHTML = icon('alert-triangle', 12) + '<span>Room ID required</span>';
@@ -448,11 +441,7 @@ function renderInstanceCard(inst) {
   uriBtn.innerHTML = icon('copy') + '<span>URI</span>';
   uriBtn.onclick = () => {
     navigator.clipboard.writeText(inst.uri);
-    if (isJazzCarrier(inst.carrier) && inst.has_password) {
-      showToast('URI скопирован. Пароль комнаты в URI не входит — добавьте его в клиенте вручную.');
-    } else {
-      showToast('URI скопирован');
-    }
+    showToast('URI скопирован');
   };
   const qrBtn = el('button', 'btn btn-secondary btn-sm');
   qrBtn.setAttribute('aria-label', 'Показать QR-код');
@@ -727,14 +716,6 @@ function closeModal(overlay) { if (overlay && overlay.parentNode) overlay.remove
 function showQRModal(uri, inst) {
   const div = el('div', '');
   div.innerHTML = '<h3 class="text-lg font-semibold mb-3 inline-flex items-center gap-2">' + icon('qr-code', 18) + '<span>QR-код</span></h3>';
-  if (inst && isJazzCarrier(inst.carrier) && inst.has_password) {
-    const notice = el('div', 'p-2 mb-3 text-xs rounded border border-amber-500/50 bg-amber-500/10 text-amber-200');
-    notice.innerHTML =
-      '<strong>Внимание для jazz/salutejazz:</strong> пароль комнаты намеренно не входит в URI/QR. ' +
-      'После импорта откройте настройки профиля в клиенте и введите пароль вручную в поле <em>Room password</em>, ' +
-      'иначе клиент не сможет подключиться к комнате.';
-    div.appendChild(notice);
-  }
   if (inst && inst.carrier === 'wbstream' && (!inst.room_id || inst.room_id === 'any')) {
     const notice = el('div', 'p-2 mb-3 text-xs rounded border border-amber-500/50 bg-amber-500/10 text-amber-200');
     notice.innerHTML =
@@ -795,21 +776,10 @@ function showConfigModal(inst) {
   connectionSec.appendChild(connTitle);
   const connGrid = el('div', 'grid grid-cols-1 md:grid-cols-2 gap-3');
 
-  const carrierField = makeSelectField('Carrier', icon('tag', 14), inst.carrier || 'wbstream', ['wbstream', 'jazz', 'telemost']);
+  const carrierField = makeSelectField('Carrier', icon('tag', 14), inst.carrier || 'jitsi', ['jitsi', 'telemost', 'wbstream']);
   const transportField = makeSelectField('Transport', icon('wifi', 14), inst.transport || 'datachannel', ['datachannel', 'vp8channel', 'seichannel']);
   const nameField = makeInputField('Имя', icon('tag', 14), inst.name || '', { placeholder: 'имя инстанса' });
   const roomIDField = makeInputField('Room ID', icon('tag', 14), inst.room_id || '', { placeholder: 'для wbstream — создать на stream.wb.ru' });
-  // Room password — только для jazz/salutejazz, с toggle visibility и отдельным реквестом за значением
-  const roomPasswordWrap = makePasswordField('Room password', icon('lock', 14), inst.has_password, async () => {
-    try {
-      const res = await api('/instances/' + inst.id + '/room-password');
-      return res.room_password || '';
-    } catch (e) {
-      showToast('Не удалось получить password: ' + e.message, 'error');
-      return '';
-    }
-  });
-  // Client ID — read-only с кнопкой rotate
   const clientIDWrap = makeReadonlyWithRotate('Client ID', icon('shield', 14), inst.client_id || '(не задан)', async (rotateBtn) => {
     const ok = await showConfirm({
       title: 'Ротация Client ID?',
@@ -852,7 +822,7 @@ function showConfigModal(inst) {
   roomRotateBtn.onclick = async () => {
     const ok = await showConfirm({
       title: 'Пересоздать Room ID?',
-      message: 'Сервер создаст новую комнату при следующем подключении. Для jazz пароль также будет очищен.',
+      message: 'Сервер создаст новую комнату при следующем подключении.',
       danger: true,
     });
     if (!ok) return;
@@ -870,7 +840,6 @@ function showConfigModal(inst) {
   connGrid.appendChild(transportField.field);
   connGrid.appendChild(nameField.field);
   connGrid.appendChild(roomIDField.field);
-  connGrid.appendChild(roomPasswordWrap.field);
   connGrid.appendChild(clientIDWrap.field);
   connectionSec.appendChild(connGrid);
 
@@ -886,7 +855,7 @@ function showConfigModal(inst) {
   netTitle.innerHTML = icon('wifi', 12) + '<span>Network</span>';
   networkSec.appendChild(netTitle);
   const netGrid = el('div', 'grid grid-cols-1 md:grid-cols-2 gap-3');
-  const dnsField = makeInputField('DNS', icon('wifi', 14), inst.dns || '', { placeholder: '1.1.1.1:53' });
+  const dnsField = makeInputField('DNS', icon('wifi', 14), inst.dns || '', { placeholder: '8.8.8.8:53' });
   const socksField = makeInputField('SOCKS proxy', icon('shield', 14), inst.socks_proxy || '', { placeholder: 'socks5://user:pass@host:port' });
   const warpField = makeInputField('WARP proxy', icon('shield', 14), inst.warp_proxy || '', { placeholder: '127.0.0.1:40000' });
   netGrid.appendChild(dnsField.field);
@@ -965,7 +934,6 @@ function showConfigModal(inst) {
     vp8Block.classList.toggle('hidden', t !== 'vp8channel');
     seiBlock.classList.toggle('hidden', t !== 'seichannel');
     wbHint.classList.toggle('hidden', c !== 'wbstream');
-    roomPasswordWrap.field.classList.toggle('hidden', !isJazzCarrier(c));
     roomRotateBtn.disabled = (c === 'wbstream');
     roomRotateBtn.title = (c === 'wbstream') ? 'WB Stream отключил автосоздание румы' : '';
   }
@@ -992,10 +960,6 @@ function showConfigModal(inst) {
       showToast('Для wbstream нужно указать Room ID', 'error');
       return;
     }
-    if (isJazzCarrier(carrier) && !room && roomPasswordWrap.getValue()) {
-      showToast('Room ID требуется при заданном Room password', 'error');
-      return;
-    }
     const body = {
       carrier,
       transport: transportField.input.value,
@@ -1006,12 +970,6 @@ function showConfigModal(inst) {
       warp_proxy: warpField.input.value,
       debug: debugCb.checked,
     };
-    if (isJazzCarrier(carrier)) {
-      const rp = roomPasswordWrap.getValue();
-      // Only include room_password if user actually edited it; otherwise the
-      // backend keeps the existing value untouched.
-      if (rp !== null) body.room_password = rp;
-    }
     if (!vp8Block.classList.contains('hidden')) {
       if (vp8FpsInp.value) body.vp8_fps = parseInt(vp8FpsInp.value, 10);
       if (vp8BatchInp.value) body.vp8_batch = parseInt(vp8BatchInp.value, 10);
@@ -1069,62 +1027,6 @@ function makeSelectField(label, iconHTML, value, options) {
   labelEl.setAttribute('for', inputID);
   field.appendChild(input);
   return { field, input };
-}
-
-// makePasswordField returns a field for OLCRTC_ROOM_PASSWORD with a
-// "show" toggle that fetches the current value lazily. The actual
-// password is never embedded in the inventory JSON; the show toggle
-// makes a separate authenticated request via fetchCurrent().
-//
-// getValue() returns:
-//   null    if user did not interact with the field (caller should not
-//           include room_password in the PUT body — keeps existing value)
-//   string  if user typed/cleared the field (caller should include it)
-function makePasswordField(label, iconHTML, hasPasswordInitially, fetchCurrent) {
-  const { field, labelEl } = makeFieldShell(label, iconHTML);
-  const row = el('div', 'field-row');
-  const input = el('input', '');
-  input.type = 'password';
-  input.placeholder = hasPasswordInitially ? '••••••••' : 'без пароля';
-  input.autocomplete = 'new-password';
-  let dirty = false;
-  let revealed = false;
-  input.addEventListener('input', () => { dirty = true; });
-
-  const toggleBtn = el('button', 'btn btn-secondary btn-icon');
-  toggleBtn.type = 'button';
-  toggleBtn.setAttribute('aria-label', 'Показать пароль');
-  toggleBtn.title = 'Показать';
-  toggleBtn.innerHTML = icon('eye', 16);
-  toggleBtn.onclick = async () => {
-    if (revealed) {
-      input.type = 'password';
-      toggleBtn.innerHTML = icon('eye', 16);
-      revealed = false;
-      return;
-    }
-    if (!dirty && !input.value && hasPasswordInitially) {
-      // Fetch current value lazily.
-      await withLoading(toggleBtn, async () => {
-        const v = await fetchCurrent();
-        input.value = v;
-        // Mark NOT dirty so an unmodified reveal does not write back the
-        // same value; if user edits, dirty flips to true automatically.
-        dirty = false;
-      });
-    }
-    input.type = 'text';
-    toggleBtn.innerHTML = icon('eye-off', 16);
-    revealed = true;
-  };
-  row.appendChild(input);
-  row.appendChild(toggleBtn);
-  field.appendChild(row);
-  return {
-    field,
-    input,
-    getValue: () => dirty ? input.value : null,
-  };
 }
 
 function makeReadonlyWithRotate(label, iconHTML, value, onRotate) {

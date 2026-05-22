@@ -12,9 +12,9 @@
 set -euo pipefail
 
 INSTALLER_VERSION="1.5.4"
-CARRIER_DEFAULT="wbstream"
+CARRIER_DEFAULT="jitsi"
 TRANSPORT_DEFAULT="datachannel"
-DNS_DEFAULT="1.1.1.1:53"
+DNS_DEFAULT="8.8.8.8:53"
 
 CONFIG_DIR=/etc/olcrtc
 STATE_DIR=/var/lib/olcrtc
@@ -219,12 +219,12 @@ usage() {
 Usage: sudo ./olcrtc-setup.sh [options]
 
 Options:
-    --carrier <wbstream|telemost|jazz>   Carrier (default: $CARRIER_DEFAULT)
+    --carrier <jitsi|telemost|wbstream>   Carrier (default: $CARRIER_DEFAULT)
     --transport <datachannel|vp8channel|seichannel>  Transport (default: $TRANSPORT_DEFAULT)
     --name <string>                      Connection name
     --id <room_id>                       Room ID. Для wbstream — обязательно (создать
                                          руму на stream.wb.ru); для telemost — опционально.
-    --regenerate                         Regenerate Room ID (только jazz/telemost)
+    --regenerate                         Regenerate Room ID (jitsi/telemost)
     --regenerate-key                     Regenerate ключ (Room ID не трогается)
     --update                             Update binaries
     --uninstall                          Full uninstall
@@ -351,7 +351,7 @@ echo "  [4/7] Настройка:"
 echo ""
 echo "        Доступные carrier:"
 echo "          wbstream  — Wildberries Stream (руму нужно создать вручную на stream.wb.ru)"
-echo "          jazz      — SaluteJazz (автосоздание румы)"
+echo "          jitsi     — Jitsi Meet (автосоздание румы)"
 echo "          telemost  — Yandex Telemost"
 if [ -z "$CARRIER" ]; then
     tty_read -rp "        Carrier [wbstream]: " CARRIER
@@ -363,7 +363,7 @@ echo ""
 echo "        Доступные transport:"
 echo "          datachannel  — самый быстрый (~6 МБ/с)"
 echo "          vp8channel   — универсальный, работает со всеми"
-echo "          seichannel   — для wbstream/jazz"
+echo "          seichannel   — для wbstream/jitsi"
 if [ -z "$TRANSPORT" ]; then
     tty_read -rp "        Transport [datachannel]: " TRANSPORT
     TRANSPORT="${TRANSPORT:-datachannel}"
@@ -420,7 +420,7 @@ fi
 # For SaluteJazz the auth provider expects RoomURL "<roomID>:<password>".
 room_id="$OLCRTC_ROOM_ID"
 case "$carrier" in
-    jazz|salutejazz)
+    jazz|salutejazz|jitsi)
         if [ -n "${OLCRTC_ROOM_PASSWORD:-}" ] && [[ "$room_id" != *:* ]] && \
            [ "$room_id" != "any" ] && [ "$room_id" != "dummy" ]; then
             room_id="${room_id}:${OLCRTC_ROOM_PASSWORD}"
@@ -430,7 +430,7 @@ esac
 
 transport="${OLCRTC_TRANSPORT:-datachannel}"
 link="${OLCRTC_LINK:-direct}"
-dns="${OLCRTC_DNS:-1.1.1.1:53}"
+    dns="${OLCRTC_DNS:-8.8.8.8:53}"
 debug="false"
 if [ -n "${OLCRTC_DEBUG:-}" ] && [ "$OLCRTC_DEBUG" != "0" ] && [ "$OLCRTC_DEBUG" != "false" ]; then
     debug="true"
@@ -578,7 +578,7 @@ KEY="$(cat "$KEY_FILE")"
 # Room ID.
 # wbstream: room must be created manually at https://stream.wb.ru — the public
 # room-creation API was removed by WB. We prompt the user for it (or accept --id).
-# jazz: still supports auto-generation server-side (ROOM_ID=any).
+# jitsi: still supports auto-generation server-side (ROOM_ID=any).
 # telemost: generate a random olcrtc-XXXX id, or accept --id.
 ROOM_ID=""
 if [ "$DO_REGENERATE" -eq 0 ] && [ -f "$ENV_FILE" ]; then
@@ -607,7 +607,7 @@ case "$CARRIER" in
         fi
         ;;
     *)
-        # jazz и прочие carrier-ы, поддерживающие server-side auto-gen.
+        # jitsi и прочие carrier-ы, поддерживающие server-side auto-gen.
         if [ -z "$ROOM_ID" ]; then
             ROOM_ID="any"
         fi
@@ -791,7 +791,7 @@ systemctl enable --quiet olcrtc-admin.service 2>/dev/null || true
 systemctl restart olcrtc-server.service
 
 # Wait for room ID if auto. WB Stream auto-gen was removed by WB; only carriers
-# that still support server-side auto-gen (jazz) reach this branch.
+# that still support server-side auto-gen (jitsi) reach this branch.
 if [ "$ROOM_ID" = "any" ]; then
     echo "  [*] Waiting for carrier to create room..."
     DETECTED=""

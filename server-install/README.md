@@ -9,7 +9,7 @@
 >   не работает. При выборе `wbstream` инсталлятор и админка теперь требуют
 >   указать **Room ID вручную** — создайте руму на <https://stream.wb.ru> и
 >   скопируйте её ID из URL.
-> - Чтобы быстро запустить сервер без ручных шагов — используйте `jazz`
+> - Чтобы быстро запустить сервер без ручных шагов — используйте `jitsi`
 >   (server-side auto-gen всё ещё работает) или `telemost` (для telemost
 >   инсталлятор сам генерирует ID вида `olcrtc-XXXXXXXX`).
 > - **Upstream breaking refactor**: в ветке
@@ -38,21 +38,21 @@ What the installer does:
 - provisions the Room ID:
     - **wbstream** — prompts you for a Room ID created manually at
       <https://stream.wb.ru> (WB Stream removed the public room-creation API),
-    - **jazz** — asks the carrier to auto-create a room on first start and
+    - **jitsi** — asks the carrier to auto-create a room on first start and
       captures the room ID from `journalctl`,
     - **telemost** — generates a random `olcrtc-XXXXXXXX` Room ID locally;
 - pins the resulting Room ID into the service environment so the same room
   is reused across restarts,
 - supports an optional outbound SOCKS5 proxy (NO_AUTH or RFC 1929
   USER/PASSWORD), useful when the VPS IP is blocked by
-  wbstream / jazz / telemost, and an optional `-debug` flag,
+  wbstream / jitsi / telemost, and an optional `-debug` flag,
 - prints the credentials you need to fill into the Android app.
 
 Default carrier is **`wbstream`**. Default transport is **`datachannel`**.
 
 ### Carrier & transport matrix
 
-| Transport | telemost | jazz | wbstream |
+| Transport | telemost | jitsi | wbstream |
 |-----------|:--------:|:----:|:--------:|
 | datachannel | ✗ | ✓ | ✓ |
 | vp8channel | ✓ | ✓ | ✓ |
@@ -111,7 +111,7 @@ Android app at the end:
   Transport:       datachannel (~6 МБ/с)
   Room ID:         01HZX...
   Key (hex):       7b3c1f...
-  DNS:             1.1.1.1:53
+  DNS:             8.8.8.8:53
   Public IP:       a.b.c.d
 ...
 ```
@@ -129,7 +129,7 @@ Or pass CLI flags during initial install:
 
 ```bash
 sudo bash olcrtc-setup.sh --carrier telemost --transport vp8channel
-sudo bash olcrtc-setup.sh --carrier jazz --transport datachannel
+sudo bash olcrtc-setup.sh --carrier jitsi --transport datachannel
 sudo bash olcrtc-setup.sh --carrier wbstream                       # default transport = datachannel
 ```
 
@@ -154,7 +154,7 @@ sudo bash olcrtc-setup.sh
 
 | Menu item | Equivalent CLI flag |
 |-----------|---------------------|
-| 3) Сменить carrier | `--carrier jazz` |
+| 3) Сменить carrier | `--carrier jitsi` |
 | 4) Сменить транспорт | `--transport vp8channel` |
 | 5) Пересоздать room ID | `--regenerate` |
 | 6) Ротация ключа + room ID | `--regenerate-key` |
@@ -168,7 +168,7 @@ CLI flags also work for non-interactive / scripted usage:
 ```bash
 sudo bash olcrtc-setup.sh --regenerate                      # keep key, get a new room ID
 sudo bash olcrtc-setup.sh --regenerate-key                  # rotate everything (key + room)
-sudo bash olcrtc-setup.sh --carrier jazz                    # change carrier
+sudo bash olcrtc-setup.sh --carrier jitsi                    # change carrier
 sudo bash olcrtc-setup.sh --transport vp8channel            # change transport
 sudo bash olcrtc-setup.sh --socks-proxy host:port           # route outbound through SOCKS5 (NO_AUTH)
 sudo bash olcrtc-setup.sh --socks-proxy user:pass@h:port    # route outbound through SOCKS5 (USER/PASSWORD)
@@ -182,12 +182,12 @@ the Android app profile with the new key.
 
 ## Outbound SOCKS5 proxy (when your VPS IP is blocked)
 
-Wildberries Stream and SaluteJazz block many datacenter IPs and require a
+Wildberries Stream and Jitsi Meet block many datacenter IPs and require a
 residential / Russian IP to register a guest session. Yandex Telemost is
 more permissive but can still throttle or rotate sessions on suspicious IPs.
 
 If your VPS gets `i/o timeout` connecting to `stream.wb.ru` (or similar),
-or is blocked by wbstream / jazz, rent a residential SOCKS5 proxy. Both
+or is blocked by wbstream / jitsi, rent a residential SOCKS5 proxy. Both
 `NO_AUTH` (IP-whitelisted) and `RFC 1929 USER/PASSWORD` are supported —
 use whichever your provider gives you:
 
@@ -213,8 +213,8 @@ What goes through the proxy and what does not:
 
 | Traffic | Routing |
 | --- | --- |
-| Carrier HTTP API calls (wbstream / jazz / telemost guest registration, room creation, polling) | through the SOCKS5 proxy |
-| Carrier WebSocket signalling (jazz / telemost) | through the SOCKS5 proxy |
+| Carrier HTTP API calls (wbstream / jitsi / telemost guest registration, room creation, polling) | through the SOCKS5 proxy |
+| Carrier WebSocket signalling (jitsi / telemost) | through the SOCKS5 proxy |
 | Client TCP traffic tunnelled from the Android device (browser, Telegram, anything else) | **direct from the VPS, NOT through the proxy** |
 | WebRTC media (UDP between VPS and Android) | direct, peer-to-peer (SOCKS5 cannot tunnel UDP via CONNECT) |
 
@@ -556,13 +556,13 @@ sudo userdel olcrtc 2>/dev/null || true
 
 ## How it picks the room ID
 
-For `wbstream` and `jazz`, the room is allocated server-side by the
+For `wbstream` and `jitsi`, the room is allocated server-side by the
 respective provider when the olcrtc binary calls their REST API on startup.
 The first run uses `-id any`, which makes the upstream API allocate a fresh
 room and log a line of the form:
 
     WB Stream room created: 01HZX...
-    Jazz room created: ...
+    Jitsi room created: ...
 
 The installer scrapes that line out of `journalctl`, persists the value to
 `/etc/olcrtc/env`, and restarts the service so subsequent restarts pin the
@@ -605,7 +605,7 @@ For `telemost`, no API call is needed — the user-supplied ID is the room.
 curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/refactor-universal-carrier-fork/server-install/olcrtc-setup.sh | sudo bash
 ```
 
-С residential SOCKS5-прокси (если IP VPS заблокирован у wbstream / jazz / telemost):
+С residential SOCKS5-прокси (если IP VPS заблокирован у wbstream / jitsi / telemost):
 
 ```bash
 sudo bash olcrtc-setup.sh --socks-proxy USER:PASS@HOST:PORT
@@ -618,7 +618,7 @@ sudo bash olcrtc-setup.sh --socks-proxy USER:PASS@HOST:PORT
 3. Сгенерируется 256-битный ключ шифрования в `/etc/olcrtc/key.hex`
 4. Запишется конфиг в `/etc/olcrtc/env`
 5. Зарегистрируется hardened `systemd`-юнит `olcrtc-server.service`
-6. Wildberries Stream / SaluteJazz / Telemost создадут комнату при первом старте
+6. Wildberries Stream / Jitsi Meet / Telemost создадут комнату при первом старте
 7. Инсталлер выведет на экран **Provider**, **Room ID** и **Encryption key** — эти три значения нужно ввести в Android-приложение
 
 ### Сменить carrier / транспорт
@@ -627,7 +627,7 @@ sudo bash olcrtc-setup.sh --socks-proxy USER:PASS@HOST:PORT
 
 ```bash
 sudo bash olcrtc-setup.sh --carrier wbstream                          # по умолчанию
-sudo bash olcrtc-setup.sh --carrier jazz --transport datachannel      # SaluteJazz + быстрый транспорт
+sudo bash olcrtc-setup.sh --carrier jitsi --transport datachannel      # Jitsi Meet + быстрый транспорт
 sudo bash olcrtc-setup.sh --carrier telemost --transport vp8channel   # Yandex Telemost
 ```
 
@@ -646,7 +646,7 @@ sudo bash olcrtc-setup.sh   # открывается интерактивное 
 ```bash
 sudo bash olcrtc-setup.sh --regenerate                # сменить комнату (ключ остаётся)
 sudo bash olcrtc-setup.sh --regenerate-key            # сменить и ключ, и комнату
-sudo bash olcrtc-setup.sh --carrier jazz              # сменить carrier
+sudo bash olcrtc-setup.sh --carrier jitsi              # сменить carrier
 sudo bash olcrtc-setup.sh --transport vp8channel      # сменить транспорт
 sudo bash olcrtc-setup.sh --socks-proxy host:port     # включить SOCKS5 (NO_AUTH)
 sudo bash olcrtc-setup.sh --socks-proxy u:p@h:port    # включить SOCKS5 (USER/PASSWORD)

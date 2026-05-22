@@ -114,7 +114,7 @@ chmod +x /usr/local/bin/wireproxy
 cat > /etc/olcrtc/wireproxy.conf << 'EOF'
 [Interface]
 PrivateKey = <PrivateKey из wgcf-profile.conf>
-DNS = 1.1.1.1
+DNS = 8.8.8.8
 Address = 172.16.0.2/32
 MTU = 1280
 

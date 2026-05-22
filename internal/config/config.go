@@ -33,25 +33,27 @@ var (
 
 // File is the on-disk YAML schema.
 type File struct {
-	Mode      string    `yaml:"mode"`
-	Auth      Auth      `yaml:"auth"`
-	Room      Room      `yaml:"room"`
-	Crypto    Crypto    `yaml:"crypto"`
-	Net       Net       `yaml:"net"`
-	SOCKS     SOCKS     `yaml:"socks"`
-	Engine    Engine    `yaml:"engine"`
-	Video     Video     `yaml:"video"`
-	VP8       VP8       `yaml:"vp8"`
-	SEI       SEI       `yaml:"sei"`
-	Liveness  Liveness  `yaml:"liveness"`
-	Lifecycle Lifecycle `yaml:"lifecycle"`
-	Traffic   Traffic   `yaml:"traffic"`
-	Gen       Gen       `yaml:"gen"`
-	Profiles  []Profile `yaml:"profiles"`
-	Failover  Failover  `yaml:"failover"`
-	Data      string    `yaml:"data"`
-	Debug     bool      `yaml:"debug"`
-	FFmpeg    string    `yaml:"ffmpeg"`
+	Mode        string       `yaml:"mode"`
+	Auth        Auth         `yaml:"auth"`
+	Room        Room         `yaml:"room"`
+	Crypto      Crypto       `yaml:"crypto"`
+	Net         Net          `yaml:"net"`
+	SOCKS       SOCKS        `yaml:"socks"`
+	Engine      Engine       `yaml:"engine"`
+	Video       Video        `yaml:"video"`
+	VP8         VP8          `yaml:"vp8"`
+	SEI         SEI          `yaml:"sei"`
+	Liveness    Liveness     `yaml:"liveness"`
+	Lifecycle   Lifecycle    `yaml:"lifecycle"`
+	Traffic     Traffic      `yaml:"traffic"`
+	Gen         Gen          `yaml:"gen"`
+	Profiles    []Profile    `yaml:"profiles"`
+	Failover    Failover     `yaml:"failover"`
+	Warp        Warp         `yaml:"warp"`
+	Subscription Subscription `yaml:"subscription"`
+	Data        string       `yaml:"data"`
+	Debug       bool         `yaml:"debug"`
+	FFmpeg      string       `yaml:"ffmpeg"`
 }
 
 // Profile is a failover entry that overrides top-level runtime fields.
@@ -167,6 +169,18 @@ type Traffic struct {
 // Gen controls room-generation mode.
 type Gen struct {
 	Amount int `yaml:"amount"`
+}
+
+type Warp struct {
+	ProxyAddr string `yaml:"proxy_addr"`
+	ProxyPort int    `yaml:"proxy_port"`
+}
+
+type Subscription struct {
+	Enabled  bool   `yaml:"enabled"`
+	Port      int    `yaml:"port"`
+	DBPath    string `yaml:"db_path"`
+	APIToken  string `yaml:"api_token"`
 }
 
 // Load parses a YAML file from disk.
@@ -286,6 +300,12 @@ func Apply(dst session.Config, f File) session.Config {
 	dst.TrafficMinDelay = pickString(dst.TrafficMinDelay, f.Traffic.MinDelay)
 	dst.TrafficMaxDelay = pickString(dst.TrafficMaxDelay, f.Traffic.MaxDelay)
 	dst.Amount = pickInt(dst.Amount, f.Gen.Amount)
+	dst.WarpProxyAddr = pickString(dst.WarpProxyAddr, f.Warp.ProxyAddr)
+	dst.WarpProxyPort = pickInt(dst.WarpProxyPort, f.Warp.ProxyPort)
+	dst.SubEnabled = dst.SubEnabled || f.Subscription.Enabled
+	dst.SubPort = pickInt(dst.SubPort, f.Subscription.Port)
+	dst.SubDBPath = pickString(dst.SubDBPath, f.Subscription.DBPath)
+	dst.SubAPIToken = pickString(dst.SubAPIToken, f.Subscription.APIToken)
 	return dst
 }
 

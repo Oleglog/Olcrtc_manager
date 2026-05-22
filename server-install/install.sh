@@ -18,8 +18,8 @@
 set -euo pipefail
 
 INSTALLER_VERSION="0.1.3"
-PROVIDER_DEFAULT="wb_stream"
-DNS_DEFAULT="1.1.1.1:53"
+PROVIDER_DEFAULT="jitsi"
+DNS_DEFAULT="8.8.8.8:53"
 
 REGENERATE_ROOM=0
 REGENERATE_KEY=0
@@ -32,7 +32,7 @@ usage() {
 Usage: sudo ./install.sh [options]
 
 Options:
-    --provider <wb_stream|telemost|jazz>
+    --provider <jitsi|telemost|wbstream>
                           Pick a different provider (default: $PROVIDER_DEFAULT).
                           Can also be set via env: OLCRTC_PROVIDER.
     --regenerate          Drop the saved room ID and create a new one.
@@ -41,7 +41,7 @@ Options:
     --socks-proxy <[user:pass@]host:port>
                           Route the server's PROVIDER signalling (HTTP +
                           WebSocket) through a SOCKS5 proxy. Useful when the
-                          VPS IP is blocked by wb_stream / jazz / telemost —
+                           VPS IP is blocked by wbstream / jitsi / telemost —
                           point this at a residential (e.g. RU) SOCKS5 proxy.
                           Both NO_AUTH and RFC 1929 USER/PASSWORD are
                           supported. Tunnelled client TCP traffic always
@@ -89,7 +89,7 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 case "$PROVIDER" in
-    telemost|jazz|wb_stream) ;;
+    telemost|jitsi|jazz|wbstream|wb_stream) ;;
     *) echo "[!] Unsupported provider: $PROVIDER" >&2; exit 1 ;;
 esac
 
@@ -216,7 +216,7 @@ else
     DEBUG_FLAG="$SET_DEBUG"
 fi
 
-# Decide initial room ID. Use "any" for wb_stream/jazz to trigger
+# Decide initial room ID. Use "any" for jitsi to trigger
 # server-side auto-generation on first start.
 if [ -n "$EXISTING_ROOM" ] && [ "$EXISTING_ROOM" != "any" ]; then
     ROOM_ID="$EXISTING_ROOM"

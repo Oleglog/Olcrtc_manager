@@ -4,9 +4,8 @@
 
 Матрица фиксирует ожидаемое поведение для всех пар `carrier × transport`,
 поддерживаемых форком `Olcrtc_manager-refactor-universal-carrier-fork`.
-Прогон требует доступа к реальным сервисам (Yandex Telemost, SaluteJazz,
-WB Stream) и реальной комнаты SaluteJazz с известным паролем — поэтому
-выполняется в продовом окружении, не в CI.
+Прогон требует доступа к реальным сервисам (Yandex Telemost, Jitsi Meet,
+WB Stream) — поэтому выполняется в продовом окружении, не в CI.
 
 ## Подготовка
 
@@ -24,13 +23,12 @@ WB Stream) и реальной комнаты SaluteJazz с известным �
 2. В `/etc/olcrtc/env` заведите реальные значения:
 
    ```
-   OLCRTC_CARRIER=<jazz|telemost|wbstream>
+   OLCRTC_CARRIER=<jitsi|telemost|wbstream>
    OLCRTC_TRANSPORT=<datachannel|seichannel|vp8channel|videochannel>
    OLCRTC_ROOM_ID=...
-   OLCRTC_ROOM_PASSWORD=...   # только для jazz, иначе пусто
    OLCRTC_KEY=<64-hex>
    OLCRTC_CLIENT_ID=<uuid>
-   OLCRTC_DNS=1.1.1.1:53
+   OLCRTC_DNS=8.8.8.8:53
    ```
 
 3. Для каждой комбинации перезапустите сервис:
@@ -45,7 +43,7 @@ WB Stream) и реальной комнаты SaluteJazz с известным �
 - В логе видно `handshake completed` (или эквивалент: для tunnel-сервера
   это `link up`, `serving on tunnel session`).
 - `transport ready` (открылся SOCKS5-листенер на стороне клиента).
-- `curl --socks5 127.0.0.1:<socks_port> https://1.1.1.1` возвращает 200/204.
+- `curl --socks5 127.0.0.1:<socks_port> https://8.8.8.8` возвращает 200/204.
 - `Mobile.WaitReady` отдаёт ready < 30 секунд.
 
 При провале — фиксируется `FAIL: <reason>` и заводится подзадача в S9.
@@ -55,7 +53,7 @@ WB Stream) и реальной комнаты SaluteJazz с известным �
 | carrier  | datachannel | seichannel | vp8channel | videochannel |
 |----------|-------------|------------|------------|--------------|
 | telemost | TBD         | TBD        | TBD        | TBD          |
-| jazz     | TBD         | TBD        | TBD        | TBD          |
+| jitsi    | TBD         | TBD        | TBD        | TBD          |
 | wbstream | TBD         | TBD        | TBD        | TBD          |
 
 `TBD` означает «требует прогона в проде». Ниже — ожидаемое поведение по
@@ -68,15 +66,11 @@ WB Stream) и реальной комнаты SaluteJazz с известным �
 `MediaServerURL` берётся из `info.ClientConfig.MediaServerURL`. Telemost
 не поддерживает создание комнат программно, ID должен существовать.
 
-### `carrier=jazz`
+### `carrier=jitsi`
 
-`RoomURL` имеет формат `<roomID>:<password>` или одно из значений
-`""`/`any`/`dummy` (создание новой комнаты). Без `:` сервер отдаёт
-`auth.ErrRoomIDRequired: expected <roomID>:<password>` — это покрыто
-unit-тестом `TestIssueRoomWithoutPassword` в
-`internal/auth/salutejazz/salutejazz_test.go` и нет необходимости
-дублировать его в smoke-сценарии. Пара `(jazz, vp8channel)` дополнительно
-проверяет, что binding token VP8-канала совпадает на сервере и клиенте.
+`RoomURL` — Jitsi room ID или `any` (автосоздание комнаты). Engine — `jitsi`,
+поддерживает datachannel и video-транспорты. Пара `(jitsi, vp8channel)` 
+дополнительно проверяет, что binding token VP8-канала совпадает на сервере и клиенте.
 
 ### `carrier=wbstream`
 
@@ -91,8 +85,7 @@ unit-тестом `TestIssueRoomWithoutPassword` в
 - `curl http://127.0.0.1:<admin_port>/api/system/ports` — должен
   отдавать JSON со списком занятых портов.
 - `curl http://127.0.0.1:<admin_port>/api/instances` — список инстансов;
-  для каждого jazz-инстанса должен присутствовать `has_password: true|false`
-  и непустой `client_id`.
+  для каждого инстанса должен присутствовать непустой `client_id`.
 - WARP / SOCKS5 (опционально, если `OLCRTC_WARP_PROXY` задан): проверить,
   что admin-API отвечает после рестарта инстанса.
 
