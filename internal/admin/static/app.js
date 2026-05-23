@@ -3,22 +3,19 @@
 'use strict';
 
 const API = '/api';
-let token = localStorage.getItem('olcrtc_token') || '';
+let creds = JSON.parse(localStorage.getItem('olcrtc_creds') || 'null'); // {username, password}
 
 // ── Network helper ───────────────────────────────────────────────────────────
 async function api(path, opts = {}) {
   const url = API + path;
-  const res = await fetch(url, {
-    headers: {
-      'Authorization': 'Bearer ' + token,
-      'Content-Type': 'application/json',
-      ...opts.headers
-    },
-    ...opts
-  });
+  const headers = { 'Content-Type': 'application/json', ...opts.headers };
+  if (creds) {
+    headers['Authorization'] = 'Basic ' + btoa(creds.username + ':' + creds.password);
+  }
+  const res = await fetch(url, { headers, ...opts });
   if (res.status === 401) {
-    localStorage.removeItem('olcrtc_token');
-    token = '';
+    localStorage.removeItem('olcrtc_creds');
+    creds = null;
     route('/login');
     throw new Error('Unauthorized');
   }
@@ -180,7 +177,7 @@ function render() {
   const path = location.pathname;
   const app = document.getElementById('app');
   app.innerHTML = '';
-  if (!token && path !== '/login') {
+  if (!creds && path !== '/login') {
     route('/login');
     return;
   }
@@ -201,15 +198,20 @@ function renderLogin(app) {
   const title = el('h1', 'text-2xl font-bold text-center mb-2');
   title.textContent = 'olcRTC Admin';
   const subtitle = el('p', 'text-center text-gray-400 text-sm mb-6');
-  subtitle.textContent = 'Введите токен доступа';
+  subtitle.textContent = 'Введите логин и пароль';
   card.appendChild(title);
   card.appendChild(subtitle);
 
-  const inp = el('input', '');
-  inp.type = 'password';
-  inp.placeholder = 'Токен';
-  inp.setAttribute('aria-label', 'Токен доступа');
-  inp.className = 'mb-3';
+  const userInp = el('input', 'mb-3');
+  userInp.type = 'text';
+  userInp.placeholder = 'Логин';
+  userInp.value = 'admin';
+  userInp.setAttribute('aria-label', 'Логин');
+
+  const passInp = el('input', 'mb-3');
+  passInp.type = 'password';
+  passInp.placeholder = 'Пароль';
+  passInp.setAttribute('aria-label', 'Пароль');
 
   const btn = el('button', 'btn btn-primary w-full');
   btn.textContent = 'Войти';
@@ -220,35 +222,37 @@ function renderLogin(app) {
     err.classList.add('hidden');
     await withLoading(btn, async () => {
       try {
+        const u = userInp.value;
+        const p = passInp.value;
         const res = await fetch(API + '/auth/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token: inp.value })
+          body: JSON.stringify({ username: u, password: p })
         });
         const data = await res.json();
         if (data.ok) {
-          token = inp.value;
-          localStorage.setItem('olcrtc_token', token);
+          creds = { username: u, password: p };
+          localStorage.setItem('olcrtc_creds', JSON.stringify(creds));
           route('/');
         } else {
           throw new Error('invalid');
         }
       } catch (e) {
-        err.textContent = 'Неверный токен';
+        err.textContent = 'Неверный логин или пароль';
         err.classList.remove('hidden');
       }
     });
   }
   btn.onclick = submit;
-  inp.onkeydown = (e) => { if (e.key === 'Enter') submit(); };
+  passInp.onkeydown = (e) => { if (e.key === 'Enter') submit(); };
 
-  card.appendChild(inp);
+  card.appendChild(userInp);
+  card.appendChild(passInp);
   card.appendChild(btn);
   card.appendChild(err);
-  card.appendChild(el('p', 'text-gray-500 text-xs text-center mt-4', 'Токен хранится в /etc/olcrtc/admin.env'));
   box.appendChild(card);
   app.appendChild(box);
-  setTimeout(() => inp.focus(), 0);
+  setTimeout(() => passInp.focus(), 0);
 }
 
 // ── Dashboard ────────────────────────────────────────────────────────────────
@@ -268,7 +272,7 @@ async function renderDashboard(app) {
   const logoutBtn = el('button', 'btn btn-secondary btn-sm');
   logoutBtn.setAttribute('aria-label', 'Выход');
   logoutBtn.innerHTML = icon('log-out') + '<span class="hidden sm:inline">Выход</span>';
-  logoutBtn.onclick = () => { token = ''; localStorage.removeItem('olcrtc_token'); route('/login'); };
+  logoutBtn.onclick = () => { creds = null; localStorage.removeItem('olcrtc_creds'); route('/login'); };
   nav.appendChild(settingsBtn);
   nav.appendChild(logoutBtn);
   header.appendChild(nav);
@@ -312,15 +316,7 @@ async function renderDashboard(app) {
   const addInstBtn = el('button', 'btn btn-primary btn-sm');
   addInstBtn.setAttribute('aria-label', 'Создать инстанс');
   addInstBtn.innerHTML = icon('plus') + '<span>Создать инстанс</span>';
-  addInstBtn.onclick = async () => {
-    await withLoading(addInstBtn, async () => {
-      try {
-        await api('/instances', { method: 'POST' });
-        showToast('Инстанс создан');
-        render();
-      } catch (e) { showToast('Не удалось создать инстанс: ' + e.message, 'error'); }
-    });
-  };
+  addInstBtn.onclick = () => showCreateInstanceModal();
   instHeader.appendChild(addInstBtn);
   instSection.appendChild(instHeader);
 
@@ -639,19 +635,29 @@ async function renderSettings(app) {
   // Security
   const secBlock = el('div', '');
   secBlock.innerHTML = '<h3 class="font-semibold mb-2 inline-flex items-center gap-2">' + icon('key', 16) + '<span>Безопасность</span></h3>';
-  const changeTokenBtn = el('button', 'btn btn-secondary');
-  changeTokenBtn.textContent = 'Сменить токен';
-  changeTokenBtn.onclick = async () => {
-    const ok = await showConfirm({ title: 'Сменить токен?', message: 'Старый токен перестанет работать. Сохраните новый сразу — он показывается только один раз.', danger: true, confirmText: 'Сменить' });
-    if (!ok) return;
-    try {
-      const res = await api('/auth/change-token', { method: 'POST', body: JSON.stringify({}) });
-      token = res.token;
-      localStorage.setItem('olcrtc_token', token);
-      showTokenModal(res.token);
-    } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
+  const secGrid = el('div', 'grid grid-cols-1 md:grid-cols-2 gap-3 mb-3');
+  const userField = makeInputField('Логин', icon('tag', 14), creds ? creds.username : 'admin', {});
+  const passField = makeInputField('Пароль', icon('lock', 14), creds ? creds.password : '', { placeholder: 'Новый пароль' });
+  passField.input.type = 'password';
+  secGrid.appendChild(userField.field);
+  secGrid.appendChild(passField.field);
+  secBlock.appendChild(secGrid);
+  const changeCredsBtn = el('button', 'btn btn-secondary');
+  changeCredsBtn.textContent = 'Сменить логин/пароль';
+  changeCredsBtn.onclick = async () => {
+    const u = userField.input.value.trim();
+    const p = passField.input.value.trim();
+    if (!u || !p) { showToast('Логин и пароль обязательны', 'error'); return; }
+    await withLoading(changeCredsBtn, async () => {
+      try {
+        await api('/auth/change-credentials', { method: 'POST', body: JSON.stringify({ username: u, password: p }) });
+        creds = { username: u, password: p };
+        localStorage.setItem('olcrtc_creds', JSON.stringify(creds));
+        showToast('Логин/пароль обновлены');
+      } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
+    });
   };
-  secBlock.appendChild(changeTokenBtn);
+  secBlock.appendChild(changeCredsBtn);
   card.appendChild(secBlock);
 
   // Logs
@@ -788,6 +794,102 @@ function showQRModal(uri, inst) {
   }, 50);
 }
 
+function showCreateInstanceModal() {
+  const div = el('div', '');
+  const titleRow = el('div', 'flex items-center gap-2 mb-4');
+  titleRow.innerHTML = '<span class="text-emerald-400">' + icon('plus', 18) + '</span><h3 class="text-lg font-semibold">Создать инстанс</h3>';
+  div.appendChild(titleRow);
+
+  const connectionSec = el('div', 'section mb-3');
+  const connTitle = el('div', 'section-title flex items-center gap-1.5');
+  connTitle.innerHTML = icon('wifi', 12) + '<span>Connection</span>';
+  connectionSec.appendChild(connTitle);
+  const connGrid = el('div', 'grid grid-cols-1 md:grid-cols-2 gap-3');
+
+  const carrierField = makeSelectField('Carrier', icon('tag', 14), 'jitsi', ['jitsi', 'telemost', 'wbstream']);
+  const transportField = makeSelectField('Transport', icon('wifi', 14), 'vp8channel', ['vp8channel', 'datachannel', 'seichannel', 'videochannel']);
+  const nameField = makeInputField('Имя', icon('tag', 14), 'jitsi_olcrtc', { placeholder: 'имя инстанса' });
+  const roomIDField = makeInputField('Room ID', icon('tag', 14), '', { placeholder: 'для wbstream — создать на stream.wb.ru' });
+
+  connGrid.appendChild(carrierField.field);
+  connGrid.appendChild(transportField.field);
+  connGrid.appendChild(nameField.field);
+  connGrid.appendChild(roomIDField.field);
+  connectionSec.appendChild(connGrid);
+
+  const dcWarn = el('div', 'p-2 mb-3 text-xs rounded border border-red-500/50 bg-red-500/10 text-red-200 hidden');
+  dcWarn.innerHTML = '<strong>Внимание:</strong> DataChannel может не работать с данным carrier. Рекомендуется <b>vp8channel</b>.';
+  connectionSec.appendChild(dcWarn);
+
+  const wbHint = el('div', 'mb-3 text-xs text-amber-300 bg-amber-900/30 border border-amber-700/40 p-3 rounded-lg hidden');
+  wbHint.innerHTML = '<b>WB Stream больше не создаёт румы автоматически.</b> Создайте руму на <a href="https://stream.wb.ru" target="_blank" rel="noopener" class="underline">stream.wb.ru</a> и вставьте её ID в поле <b>Room ID</b>.';
+  connectionSec.appendChild(wbHint);
+
+  div.appendChild(connectionSec);
+
+  // VP8 params
+  const vp8Block = el('div', 'border border-gray-700 rounded-lg p-3 mb-3');
+  vp8Block.innerHTML = '<div class="text-xs text-gray-400 mb-2">VP8 параметры</div>';
+  const vp8Grid = el('div', 'grid grid-cols-2 gap-2');
+  const vp8FpsInp = el('input', ''); vp8FpsInp.placeholder = 'FPS (120)'; vp8FpsInp.value = '120';
+  const vp8BatchInp = el('input', ''); vp8BatchInp.placeholder = 'Batch (64)'; vp8BatchInp.value = '64';
+  vp8Grid.appendChild(vp8FpsInp);
+  vp8Grid.appendChild(vp8BatchInp);
+  vp8Block.appendChild(vp8Grid);
+  div.appendChild(vp8Block);
+
+  function updateVisibility() {
+    const t = transportField.input.value;
+    const c = carrierField.input.value;
+    vp8Block.classList.toggle('hidden', t !== 'vp8channel');
+    dcWarn.classList.toggle('hidden', t !== 'datachannel');
+    wbHint.classList.toggle('hidden', c !== 'wbstream');
+    // Auto-rename
+    const carriers = { jitsi: 'jitsi', telemost: 'telemost', wbstream: 'wbstream' };
+    const cp = carriers[c] || c;
+    nameField.input.value = cp + '_olcrtc' + (t && t !== 'vp8channel' ? '_' + t : '');
+  }
+  carrierField.input.addEventListener('change', updateVisibility);
+  transportField.input.addEventListener('change', updateVisibility);
+
+  // Footer
+  const btnRow = el('div', 'flex gap-2 justify-end mt-2');
+  const cancelBtn = el('button', 'btn btn-secondary');
+  cancelBtn.textContent = 'Отмена';
+  const createBtn = el('button', 'btn btn-primary');
+  createBtn.textContent = 'Создать инстанс';
+  btnRow.appendChild(cancelBtn);
+  btnRow.appendChild(createBtn);
+  div.appendChild(btnRow);
+
+  const overlay = showModal(div);
+  cancelBtn.onclick = () => closeModal(overlay);
+  createBtn.onclick = async () => {
+    const carrier = carrierField.input.value;
+    const room = roomIDField.input.value.trim();
+    if (carrier === 'wbstream' && !room) {
+      showToast('Для wbstream нужно указать Room ID', 'error');
+      return;
+    }
+    const body = {
+      carrier,
+      transport: transportField.input.value,
+      name: nameField.input.value,
+      room_id: room,
+      vp8_fps: parseInt(vp8FpsInp.value, 10) || 120,
+      vp8_batch: parseInt(vp8BatchInp.value, 10) || 64,
+    };
+    await withLoading(createBtn, async () => {
+      try {
+        await api('/instances', { method: 'POST', body: JSON.stringify(body) });
+        showToast('Инстанс создан');
+        closeModal(overlay);
+        render();
+      } catch (e) { showToast('Не удалось создать инстанс: ' + e.message, 'error'); }
+    });
+  };
+}
+
 // ── Instance config modal ────────────────────────────────────────────────────
 function showConfigModal(inst) {
   const div = el('div', '');
@@ -918,8 +1020,8 @@ function showConfigModal(inst) {
   const vp8Block = el('div', 'border border-gray-700 rounded-lg p-3 mb-3 hidden');
   vp8Block.innerHTML = '<div class="text-xs text-gray-400 mb-2">VP8 параметры</div>';
   const vp8Grid = el('div', 'grid grid-cols-2 gap-2');
-  const vp8FpsInp = el('input', ''); vp8FpsInp.placeholder = 'FPS (30)';
-  const vp8BatchInp = el('input', ''); vp8BatchInp.placeholder = 'Batch (2)';
+  const vp8FpsInp = el('input', ''); vp8FpsInp.placeholder = 'FPS (120)'; vp8FpsInp.value = inst.vp8_fps || '120';
+  const vp8BatchInp = el('input', ''); vp8BatchInp.placeholder = 'Batch (64)'; vp8BatchInp.value = inst.vp8_batch || '64';
   vp8Grid.appendChild(vp8FpsInp);
   vp8Grid.appendChild(vp8BatchInp);
   vp8Block.appendChild(vp8Grid);
@@ -955,20 +1057,37 @@ function showConfigModal(inst) {
 
   // Conditional visibility
   function getTransportOptions(carrier) {
-    if (carrier === 'telemost') return ['vp8channel', 'seichannel', 'videochannel'];
-    if (carrier === 'wbstream') return ['vp8channel', 'seichannel', 'videochannel', 'datachannel'];
+    // datachannel is available but shown with warning for telemost/wbstream
     return ['vp8channel', 'datachannel', 'seichannel', 'videochannel'];
   }
   function updateTransportOptions() {
     const c = carrierField.input.value;
-    const opts = getTransportOptions(c);
-    const sel = transportField.input;
-    const cur = sel.value;
-    sel.innerHTML = '';
-    opts.forEach(o => { const opt = document.createElement('option'); opt.value = o; opt.textContent = o; sel.appendChild(opt); });
-    if (opts.includes(cur)) { sel.value = cur; } else { sel.value = opts[0]; }
-    sel.dispatchEvent(new Event('change'));
+    // Auto-rename instance when carrier changes
+    const curName = nameField.input.value;
+    const carriers = { jitsi: 'jitsi', telemost: 'telemost', wbstream: 'wbstream' };
+    const carrierPrefix = carriers[c] || c;
+    // If current name matches a known carrier pattern, update it
+    if (/^(jitsi|telemost|wbstream)_olcrtc/.test(curName) || curName === '') {
+      const t = transportField.input.value;
+      nameField.input.value = carrierPrefix + '_olcrtc' + (t && t !== 'vp8channel' ? '_' + t : '');
+    }
+    updateVisibility();
   }
+  function updateNameFromTransport() {
+    const c = carrierField.input.value;
+    const t = transportField.input.value;
+    const carriers = { jitsi: 'jitsi', telemost: 'telemost', wbstream: 'wbstream' };
+    const carrierPrefix = carriers[c] || c;
+    const curName = nameField.input.value;
+    if (/^(jitsi|telemost|wbstream)_olcrtc/.test(curName) || curName === '') {
+      nameField.input.value = carrierPrefix + '_olcrtc' + (t && t !== 'vp8channel' ? '_' + t : '');
+    }
+    updateVisibility();
+  }
+  // datachannel warning
+  const dcWarn = el('div', 'p-2 mb-3 text-xs rounded border border-red-500/50 bg-red-500/10 text-red-200 hidden');
+  dcWarn.innerHTML = '<strong>Внимание:</strong> DataChannel может не работать с данным carrier. Рекомендуется <b>vp8channel</b>.';
+  div.appendChild(dcWarn);
   function updateVisibility() {
     const t = transportField.input.value;
     const c = carrierField.input.value;
@@ -977,9 +1096,10 @@ function showConfigModal(inst) {
     wbHint.classList.toggle('hidden', c !== 'wbstream');
     roomRotateBtn.disabled = (c === 'wbstream');
     roomRotateBtn.title = (c === 'wbstream') ? 'WB Stream отключил автосоздание румы' : '';
+    dcWarn.classList.toggle('hidden', t !== 'datachannel');
   }
-  carrierField.input.addEventListener('change', () => { updateTransportOptions(); updateVisibility(); });
-  transportField.input.addEventListener('change', updateVisibility);
+  carrierField.input.addEventListener('change', () => { updateTransportOptions(); });
+  transportField.input.addEventListener('change', () => { updateNameFromTransport(); });
   updateVisibility();
 
   // Footer actions

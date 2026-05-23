@@ -20,7 +20,8 @@ var staticFS embed.FS
 // Config holds server configuration.
 type Config struct {
 	Port      int
-	Token     string
+	Username  string
+	Password  string
 	Domain    string
 	SubPort   int
 	TLSDir    string
@@ -47,7 +48,6 @@ func NewServer(cfg Config) *Server {
 		lastBadIPs: make(map[string]time.Time),
 	}
 
-	// Subscription reverse proxy.
 	target := fmt.Sprintf("http://127.0.0.1:%d", cfg.SubPort)
 	u, _ := url.Parse(target)
 	s.subProxy = httputil.NewSingleHostReverseProxy(u)
@@ -57,13 +57,11 @@ func NewServer(cfg Config) *Server {
 }
 
 func (s *Server) setupRoutes() {
-	// Static SPA.
 	s.mux.HandleFunc("/", s.handleStatic)
 	s.mux.HandleFunc("/login", s.handleStatic)
 
-	// API routes.
 	s.mux.HandleFunc("/api/auth/login", s.withCORS(s.handleLogin))
-	s.mux.HandleFunc("/api/auth/change-token", s.withAuth(s.withCORS(s.handleChangeToken)))
+	s.mux.HandleFunc("/api/auth/change-credentials", s.withAuth(s.withCORS(s.handleChangeCredentials)))
 
 	s.mux.HandleFunc("/api/instances", s.withAuth(s.withCORS(s.handleInstancesList)))
 	s.mux.HandleFunc("/api/instances/", s.withAuth(s.withCORS(s.handleInstances)))
@@ -76,7 +74,6 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/system/domain", s.withAuth(s.withCORS(s.handleSystemDomain)))
 	s.mux.HandleFunc("/api/system/ports", s.withAuth(s.withCORS(s.handleSystemPorts)))
 
-	// Public subscription endpoint via admin UI.
 	s.mux.HandleFunc("/sub/", s.handlePublicSub)
 }
 
@@ -154,19 +151,18 @@ func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		host, _, _ := net.SplitHostPort(r.RemoteAddr)
 
-		auth := r.Header.Get("Authorization")
-		expected := "Bearer " + s.cfg.Token
-		if auth != expected {
+		username, password, ok := r.BasicAuth()
+		if !ok || username != s.cfg.Username || password != s.cfg.Password {
 			if s.isRateLimited(host) {
 				http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
 				return
 			}
 			s.recordBadAttempt(host)
+			w.Header().Set("WWW-Authenticate", `Basic realm="olcrtc admin"`)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
 
-		// Successful auth: clear any previous bad attempts for this IP.
 		s.clearBadAttempt(host)
 		next(w, r)
 	}

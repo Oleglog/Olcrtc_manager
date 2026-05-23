@@ -13,7 +13,7 @@ set -euo pipefail
 
 INSTALLER_VERSION="1.6.2"
 CARRIER_DEFAULT="jitsi"
-TRANSPORT_DEFAULT="datachannel"
+TRANSPORT_DEFAULT="vp8channel"
 DNS_DEFAULT="8.8.8.8:53"
 
 CONFIG_DIR=/etc/olcrtc
@@ -270,7 +270,8 @@ if [ "$DO_UNINSTALL" -eq 1 ]; then do_uninstall; exit 0; fi
 if [ "$DO_UPDATE" -eq 1 ]; then do_update; exit 0; fi
 if [ "$DO_SHOW_TOKEN" -eq 1 ]; then
     if [ -f "$ADMIN_ENV" ]; then
-        grep "^OLCRTC_ADMIN_TOKEN=" "$ADMIN_ENV" | cut -d= -f2-
+        echo "Логин: $(grep '^OLCRTC_ADMIN_USER=' "$ADMIN_ENV" | cut -d= -f2-)"
+        echo "Пароль: $(grep '^OLCRTC_ADMIN_PASS=' "$ADMIN_ENV" | cut -d= -f2-)"
     else
         echo "[!] Admin env not found" >&2; exit 1
     fi
@@ -361,12 +362,12 @@ CARRIER="$(normalize_carrier "$CARRIER")"
 
 echo ""
 echo "        Доступные transport:"
-echo "          datachannel  — самый быстрый (~6 МБ/с)"
-echo "          vp8channel   — универсальный, работает со всеми"
+echo "          vp8channel   — универсальный, работает со всеми (рекомендуется)"
+echo "          datachannel  — быстрый (~6 МБ/с), но может не работать с telemost/wbstream"
 echo "          seichannel   — для wbstream/jitsi"
 if [ -z "$TRANSPORT" ]; then
-    tty_read -rp "        Transport [datachannel]: " TRANSPORT
-    TRANSPORT="${TRANSPORT:-datachannel}"
+    tty_read -rp "        Transport [vp8channel]: " TRANSPORT
+    TRANSPORT="${TRANSPORT:-vp8channel}"
 fi
 
 echo ""
@@ -428,7 +429,7 @@ case "$carrier" in
         ;;
 esac
 
-transport="${OLCRTC_TRANSPORT:-datachannel}"
+transport="${OLCRTC_TRANSPORT:-vp8channel}"
 link="${OLCRTC_LINK:-direct}"
     dns="${OLCRTC_DNS:-8.8.8.8:53}"
 debug="false"
@@ -513,8 +514,8 @@ subscription:
 EOF
 
 if [ "$transport" = "vp8channel" ]; then
-    vp8_fps="${OLCRTC_VP8_FPS:-60}"
-    vp8_batch="${OLCRTC_VP8_BATCH:-8}"
+    vp8_fps="${OLCRTC_VP8_FPS:-120}"
+    vp8_batch="${OLCRTC_VP8_BATCH:-64}"
     cat >> "$CONFIG_FILE" <<EOF
 vp8:
   fps: ${vp8_fps}
@@ -668,11 +669,13 @@ else
         fi
     done
 fi
-ADMIN_TOKEN="$(openssl rand -hex 32)"
+ADMIN_USER="admin"
+ADMIN_PASS="admin"
 OLCRTC_ADMIN_DOMAIN=""
 cat > "$ADMIN_ENV" <<EOF
 OLCRTC_ADMIN_PORT=${ADMIN_PORT}
-OLCRTC_ADMIN_TOKEN=${ADMIN_TOKEN}
+OLCRTC_ADMIN_USER=${ADMIN_USER}
+OLCRTC_ADMIN_PASS=${ADMIN_PASS}
 OLCRTC_ADMIN_DOMAIN=
 OLCRTC_SUB_PORT=$SUB_PORT
 EOF
@@ -772,7 +775,6 @@ Type=simple
 EnvironmentFile=/etc/olcrtc/admin.env
 ExecStart=/usr/local/bin/olcrtc-admin \
     -port ${OLCRTC_ADMIN_PORT} \
-    -token ${OLCRTC_ADMIN_TOKEN} \
     -domain "${OLCRTC_ADMIN_DOMAIN}" \
     -sub-port ${OLCRTC_SUB_PORT} \
     -tls-dir /var/lib/olcrtc/admin-tls
@@ -819,7 +821,8 @@ echo "  Установка завершена!"
 echo "  ═══════════════════════════════════════════"
 echo ""
 echo "  Admin UI:  https://${PUBLIC_IP}:${ADMIN_PORT}"
-echo "  Токен:     ${ADMIN_TOKEN}"
+echo "  Логин:     ${ADMIN_USER}"
+echo "  Пароль:    ${ADMIN_PASS}"
 echo ""
 echo "  ⚠  Сертификат самоподписанный."
 echo "     В браузере нажмите 'Дополнительно' → 'Перейти'."

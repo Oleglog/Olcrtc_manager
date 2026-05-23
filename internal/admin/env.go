@@ -9,10 +9,23 @@ import (
 	"strings"
 )
 
-// ReadAdminToken reads the admin token from admin.env.
-func ReadAdminToken(configDir string) (string, error) {
+// ReadAdminCredentials reads username and password from admin.env.
+func ReadAdminCredentials(configDir string) (username, password string, err error) {
 	f := filepath.Join(configDir, "admin.env")
-	return readEnvValue(f, "OLCRTC_ADMIN_TOKEN")
+	vals := ReadInstanceEnv(f)
+	if u, ok := vals["OLCRTC_ADMIN_USER"]; ok {
+		username = u
+	} else {
+		username = "admin"
+	}
+	if p, ok := vals["OLCRTC_ADMIN_PASS"]; ok {
+		password = p
+	} else if t, ok := vals["OLCRTC_ADMIN_TOKEN"]; ok {
+		password = t
+	} else {
+		password = "admin"
+	}
+	return username, password, nil
 }
 
 // ReadAdminPort reads the admin port from admin.env.
@@ -26,7 +39,7 @@ func ReadAdminPort(configDir string) (int, error) {
 }
 
 // WriteAdminEnv writes the admin environment file.
-func WriteAdminEnv(configDir string, port int, token, domain string, subPort int) error {
+func WriteAdminEnv(configDir string, port int, username, password, domain string, subPort int) error {
 	f := filepath.Join(configDir, "admin.env")
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		return err
@@ -34,7 +47,8 @@ func WriteAdminEnv(configDir string, port int, token, domain string, subPort int
 
 	lines := []string{
 		fmt.Sprintf("OLCRTC_ADMIN_PORT=%d", port),
-		fmt.Sprintf("OLCRTC_ADMIN_TOKEN=%s", token),
+		fmt.Sprintf("OLCRTC_ADMIN_USER=%s", username),
+		fmt.Sprintf("OLCRTC_ADMIN_PASS=%s", password),
 		fmt.Sprintf("OLCRTC_ADMIN_DOMAIN=%s", domain),
 		fmt.Sprintf("OLCRTC_SUB_PORT=%d", subPort),
 	}

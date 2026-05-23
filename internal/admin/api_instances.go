@@ -177,13 +177,11 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
 	envPath := InstanceEnvPath(s.cfg.ConfigDir, newID)
 	keyPath := InstanceKeyPath(s.cfg.ConfigDir, newID)
 
-	// Ensure directory exists.
 	if err := os.MkdirAll(filepath.Dir(keyPath), 0755); err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 
-	// Generate key.
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -194,19 +192,55 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Copy defaults from main instance.
-	mainEnv := InstanceEnvPath(s.cfg.ConfigDir, 0)
-	vals := ReadInstanceEnv(mainEnv)
+	// Parse optional body for initial config.
+	carrier := "jitsi"
+	transport := "vp8channel"
+	name := ""
+	roomID := ""
+	vp8FPS := 120
+	vp8Batch := 64
+	if r.Body != nil {
+		var req struct {
+			Carrier   string `json:"carrier"`
+			Transport string `json:"transport"`
+			Name      string `json:"name"`
+			RoomID    string `json:"room_id"`
+			VP8FPS    int    `json:"vp8_fps"`
+			VP8Batch  int    `json:"vp8_batch"`
+		}
+		if err := readJSON(r, &req); err == nil {
+			if req.Carrier != "" {
+				carrier = req.Carrier
+			}
+			if req.Transport != "" {
+				transport = req.Transport
+			}
+			if req.Name != "" {
+				name = req.Name
+			}
+			roomID = req.RoomID
+			if req.VP8FPS > 0 {
+				vp8FPS = req.VP8FPS
+			}
+			if req.VP8Batch > 0 {
+				vp8Batch = req.VP8Batch
+			}
+		}
+	}
+
+	if name == "" {
+		name = fmt.Sprintf("%s_olcrtc_%d", carrier, newID+1)
+	}
+
+	vals := make(map[string]string)
+	vals["OLCRTC_CARRIER"] = carrier
+	vals["OLCRTC_TRANSPORT"] = transport
 	vals["OLCRTC_KEY"] = hex.EncodeToString(key)
-	vals["OLCRTC_NAME"] = fmt.Sprintf("%s_olcrtc_%d", vals["OLCRTC_CARRIER"], newID+1)
-	// Each instance gets its own client identifier so the VP8 binding
-	// token differs between instances. Inherited OLCRTC_CLIENT_ID is
-	// dropped explicitly — sharing it across instances would let
-	// frames from one tunnel pass the foreign-token check on another.
+	vals["OLCRTC_NAME"] = name
+	vals["OLCRTC_ROOM_ID"] = strings.TrimSpace(roomID)
 	vals["OLCRTC_CLIENT_ID"] = uuid.NewString()
-	// Room password is per-room, not per-template. Don't propagate it from
-	// the main instance — operators would otherwise be surprised when a
-	// new instance silently joins the wrong room.
+	vals["OLCRTC_VP8_FPS"] = strconv.Itoa(vp8FPS)
+	vals["OLCRTC_VP8_BATCH"] = strconv.Itoa(vp8Batch)
 	delete(vals, "OLCRTC_ROOM_PASSWORD")
 	if err := WriteInstanceEnv(envPath, vals); err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -451,7 +485,7 @@ func (s *Server) buildInstance(id int) Instance {
 	}
 	transport := vals["OLCRTC_TRANSPORT"]
 	if transport == "" {
-		transport = "vp8channel"
+		transport = "datachannel"
 	}
 	name := vals["OLCRTC_NAME"]
 	if name == "" {
@@ -516,7 +550,7 @@ func (s *Server) buildURIWith(vals map[string]string, clientID string) string {
 	vp8Batch := vals["OLCRTC_VP8_BATCH"]
 
 	uri := fmt.Sprintf("olcrtc://%s@room/%s?key=%s", carrier, room, key)
-	if transport != "" {
+	if transport != "" && transport != "datachannel" {
 		uri += "&transport=" + url.QueryEscape(transport)
 		if transport == "vp8channel" {
 			if vp8Fps != "" {

@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"flag"
 	"fmt"
 	"log"
@@ -20,43 +18,36 @@ import (
 func main() {
 	var (
 		port      = flag.Int("port", 0, "HTTPS port (0 = auto)")
-		token     = flag.String("token", "", "Bearer token for API auth")
 		domain    = flag.String("domain", "", "Domain for Let's Encrypt (empty = self-signed)")
 		subPort   = flag.Int("sub-port", 2096, "Subscription API port for proxying")
 		tlsDir    = flag.String("tls-dir", "/var/lib/olcrtc/admin-tls", "TLS certificates directory")
 		acmeEmail = flag.String("acme-email", "", "Email for Let's Encrypt account")
 		configDir = flag.String("config-dir", "/etc/olcrtc", "Directory with instance env files")
-		showToken = flag.Bool("show-token", false, "Show token from admin.env and exit")
+		showCreds = flag.Bool("show-credentials", false, "Show admin login credentials and exit")
 	)
 	flag.Parse()
 
-	// Strip quotes from domain (systemd may pass quoted empty string).
 	*domain = strings.Trim(*domain, `"' `)
 
-	if *showToken {
-		tok, err := admin.ReadAdminToken(*configDir)
+	if *showCreds {
+		u, p, err := admin.ReadAdminCredentials(*configDir)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "Token not found:", err)
+			fmt.Fprintln(os.Stderr, "Credentials not found:", err)
 			os.Exit(1)
 		}
-		fmt.Println(tok)
+		fmt.Printf("Username: %s\nPassword: %s\n", u, p)
 		os.Exit(0)
 	}
 
-	// Ensure token is available.
-	if *token == "" {
-		tok, err := admin.ReadAdminToken(*configDir)
-		if err != nil {
-			// Generate a new token and write admin.env.
-			tok = generateToken()
-			if err := admin.WriteAdminEnv(*configDir, 0, tok, *domain, *subPort); err != nil {
-				log.Fatalf("Failed to write admin.env: %v", err)
-			}
+	username, password, err := admin.ReadAdminCredentials(*configDir)
+	if err != nil || username == "" || password == "" {
+		username = "admin"
+		password = "admin"
+		if err := admin.WriteAdminEnv(*configDir, 0, username, password, *domain, *subPort); err != nil {
+			log.Fatalf("Failed to write admin.env: %v", err)
 		}
-		*token = tok
 	}
 
-	// Auto-pick port if not specified.
 	if *port == 0 {
 		savedPort, _ := admin.ReadAdminPort(*configDir)
 		if savedPort > 0 {
@@ -67,7 +58,7 @@ func main() {
 				log.Fatalf("Failed to find free port: %v", err)
 			}
 			*port = p
-			if err := admin.WriteAdminEnv(*configDir, *port, *token, *domain, *subPort); err != nil {
+			if err := admin.WriteAdminEnv(*configDir, *port, username, password, *domain, *subPort); err != nil {
 				log.Fatalf("Failed to save admin.env: %v", err)
 			}
 		}
@@ -77,7 +68,8 @@ func main() {
 
 	srv := admin.NewServer(admin.Config{
 		Port:      *port,
-		Token:     *token,
+		Username:  username,
+		Password:  password,
 		Domain:    *domain,
 		SubPort:   *subPort,
 		TLSDir:    *tlsDir,
@@ -89,18 +81,10 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	log.Printf("olcrtc-admin starting on https://%s:%d", publicIP, *port)
+	log.Printf("olcrtc-admin starting on https://%s:%d (user: %s)", publicIP, *port, username)
 	if err := srv.Start(ctx); err != nil {
 		log.Printf("Server error: %v", err)
 	}
-}
-
-func generateToken() string {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		panic(err)
-	}
-	return hex.EncodeToString(b)
 }
 
 func getPublicIP() string {
@@ -111,7 +95,6 @@ func getPublicIP() string {
 			return ip
 		}
 	}
-	// Fallback: try to get local non-loopback IP.
 	addrs, err := net.InterfaceAddrs()
 	if err == nil {
 		for _, a := range addrs {
