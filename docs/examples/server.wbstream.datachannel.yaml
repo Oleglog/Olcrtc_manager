@@ -1,5 +1,8 @@
 # Серверный конфиг: wbstream + datachannel
-# Запуск: olcrtc docs/examples/server.wbstream.datachannel.yaml
+# ВНИМАНИЕ: WB Stream DataChannel работает только с canPublishData=true
+# (модераторские/permission права). В обычном guest flow DC не маршрутизируется.
+# Рекомендуется vp8channel. Для wbstream используйте
+# server.wbstream.vp8channel.yaml
 
 mode: srv
 

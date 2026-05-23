@@ -1,5 +1,7 @@
 # Клиентский конфиг: telemost + datachannel
-# Запуск: olcrtc docs/examples/client.telemost.datachannel.yaml
+# ВНИМАНИЕ: Goolom SFU (telemost) НЕ поддерживает стандартный WebRTC
+# DataChannel. Используйте vp8channel. Этот конфиг оставлен для справки.
+# Для telemost используйте client.telemost.vp8channel.yaml
 
 mode: cnc
 

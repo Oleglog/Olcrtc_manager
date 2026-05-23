@@ -1,5 +1,6 @@
 # Клиентский конфиг: wbstream + datachannel
-# Запуск: olcrtc docs/examples/client.wbstream.datachannel.yaml
+# ВНИМАНИЕ: WB Stream DataChannel работает только с canPublishData=true
+# (модераторские права). Рекомендуется vp8channel.
 
 mode: cnc
 

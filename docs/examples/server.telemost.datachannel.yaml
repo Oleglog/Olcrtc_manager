@@ -1,5 +1,9 @@
 # Серверный конфиг: telemost + datachannel
-# Запуск: olcrtc docs/examples/server.telemost.datachannel.yaml
+# ВНИМАНИЕ: Goolom SFU (telemost) НЕ поддерживает стандартный WebRTC
+# DataChannel. dataChannelSharing=TO_RTP означает что данные идут через
+# RTP (это и есть vp8channel). Используйте vp8channel вместо datachannel.
+# Этот конфиг оставлен для справки; для telemost используйте
+# server.telemost.vp8channel.yaml
 
 mode: srv
 
