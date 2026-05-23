@@ -451,7 +451,7 @@ func (s *Server) buildInstance(id int) Instance {
 	}
 	transport := vals["OLCRTC_TRANSPORT"]
 	if transport == "" {
-		transport = "datachannel"
+		transport = "vp8channel"
 	}
 	name := vals["OLCRTC_NAME"]
 	if name == "" {
@@ -516,7 +516,7 @@ func (s *Server) buildURIWith(vals map[string]string, clientID string) string {
 	vp8Batch := vals["OLCRTC_VP8_BATCH"]
 
 	uri := fmt.Sprintf("olcrtc://%s@room/%s?key=%s", carrier, room, key)
-	if transport != "" && transport != "datachannel" {
+	if transport != "" {
 		uri += "&transport=" + url.QueryEscape(transport)
 		if transport == "vp8channel" {
 			if vp8Fps != "" {

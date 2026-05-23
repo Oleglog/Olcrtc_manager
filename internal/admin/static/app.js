@@ -723,6 +723,15 @@ function showQRModal(uri, inst) {
       'WB Stream больше не создаёт румы автоматически — задайте Room ID в «Настройках» инстанса перед тем, как делиться QR.';
     div.appendChild(notice);
   }
+  if (inst && inst.transport === 'datachannel' && (inst.carrier === 'telemost' || inst.carrier === 'wbstream')) {
+    const dcWarn = el('div', 'p-2 mb-3 text-xs rounded border border-red-500/50 bg-red-500/10 text-red-200');
+    dcWarn.innerHTML =
+      '<strong>Несовместимый транспорт:</strong> DataChannel не работает с ' + inst.carrier + '. ' +
+      'Goolom SFU не маршрутизирует стандартный DC (dataChannelSharing=TO_RTP). ' +
+      (inst.carrier === 'wbstream' ? 'WB Stream DC требует canPublishData=true (модератор).' : '') +
+      ' Смените транспорт на <b>vp8channel</b> в настройках инстанса.';
+    div.appendChild(dcWarn);
+  }
   const qrWrap = el('div', 'qr-wrap flex justify-center mb-3 mx-auto');
   const qrDiv = el('div', '');
   qrWrap.appendChild(qrDiv);
@@ -746,20 +755,37 @@ function showQRModal(uri, inst) {
   closeBtn.onclick = () => closeModal(overlay);
 
   setTimeout(() => {
-    new QRCode(qrDiv, { text: uri, width: 280, height: 280, colorDark: '#000000', colorLight: '#ffffff', correctLevel: QRCode.CorrectLevel.H });
+    if (!uri || uri.length > 2500) {
+      qrDiv.innerHTML = '<div class="text-red-400 text-xs p-2">URI слишком длинный для QR-кода (' + (uri ? uri.length : 0) + ' символов)</div>';
+      return;
+    }
+    try {
+      new QRCode(qrDiv, { text: uri, width: 280, height: 280, colorDark: '#000000', colorLight: '#ffffff', correctLevel: QRCode.CorrectLevel.M });
+    } catch (e) {
+      qrDiv.innerHTML = '<div class="text-red-400 text-xs p-2">Ошибка генерации QR: ' + e.message + '</div>';
+      return;
+    }
     downloadBtn.onclick = () => {
       const canvas = qrDiv.querySelector('canvas');
-      if (!canvas) { showToast('Не удалось получить QR canvas', 'error'); return; }
-      canvas.toBlob((blob) => {
-        if (!blob) { showToast('Не удалось сгенерировать PNG', 'error'); return; }
-        const url = URL.createObjectURL(blob);
+      const img = qrDiv.querySelector('img');
+      if (canvas) {
+        canvas.toBlob((blob) => {
+          if (!blob) { showToast('Не удалось сгенерировать PNG', 'error'); return; }
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url; a.download = 'olcrtc-qr.png'; a.click();
+          URL.revokeObjectURL(url);
+          showToast('PNG сохранён');
+        }, 'image/png');
+      } else if (img) {
         const a = document.createElement('a');
-        a.href = url; a.download = 'olcrtc-qr.png'; a.click();
-        URL.revokeObjectURL(url);
+        a.href = img.src; a.download = 'olcrtc-qr.png'; a.click();
         showToast('PNG сохранён');
-      }, 'image/png');
+      } else {
+        showToast('Не удалось получить QR', 'error');
+      }
     };
-  }, 0);
+  }, 50);
 }
 
 // ── Instance config modal ────────────────────────────────────────────────────
@@ -777,7 +803,7 @@ function showConfigModal(inst) {
   const connGrid = el('div', 'grid grid-cols-1 md:grid-cols-2 gap-3');
 
   const carrierField = makeSelectField('Carrier', icon('tag', 14), inst.carrier || 'jitsi', ['jitsi', 'telemost', 'wbstream']);
-  const transportField = makeSelectField('Transport', icon('wifi', 14), inst.transport || 'datachannel', ['datachannel', 'vp8channel', 'seichannel']);
+  const transportField = makeSelectField('Transport', icon('wifi', 14), inst.transport || 'vp8channel', getTransportOptions(inst.carrier || 'jitsi'));
   const nameField = makeInputField('Имя', icon('tag', 14), inst.name || '', { placeholder: 'имя инстанса' });
   const roomIDField = makeInputField('Room ID', icon('tag', 14), inst.room_id || '', { placeholder: 'для wbstream — создать на stream.wb.ru' });
   const clientIDWrap = makeReadonlyWithRotate('Client ID', icon('shield', 14), inst.client_id || '(не задан)', async (rotateBtn) => {
@@ -928,6 +954,21 @@ function showConfigModal(inst) {
   div.appendChild(wbHint);
 
   // Conditional visibility
+  function getTransportOptions(carrier) {
+    if (carrier === 'telemost') return ['vp8channel', 'seichannel', 'videochannel'];
+    if (carrier === 'wbstream') return ['vp8channel', 'seichannel', 'videochannel', 'datachannel'];
+    return ['vp8channel', 'datachannel', 'seichannel', 'videochannel'];
+  }
+  function updateTransportOptions() {
+    const c = carrierField.input.value;
+    const opts = getTransportOptions(c);
+    const sel = transportField.input;
+    const cur = sel.value;
+    sel.innerHTML = '';
+    opts.forEach(o => { const opt = document.createElement('option'); opt.value = o; opt.textContent = o; sel.appendChild(opt); });
+    if (opts.includes(cur)) { sel.value = cur; } else { sel.value = opts[0]; }
+    sel.dispatchEvent(new Event('change'));
+  }
   function updateVisibility() {
     const t = transportField.input.value;
     const c = carrierField.input.value;
@@ -937,7 +978,7 @@ function showConfigModal(inst) {
     roomRotateBtn.disabled = (c === 'wbstream');
     roomRotateBtn.title = (c === 'wbstream') ? 'WB Stream отключил автосоздание румы' : '';
   }
-  carrierField.input.addEventListener('change', updateVisibility);
+  carrierField.input.addEventListener('change', () => { updateTransportOptions(); updateVisibility(); });
   transportField.input.addEventListener('change', updateVisibility);
   updateVisibility();
 
