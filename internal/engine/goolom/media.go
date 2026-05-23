@@ -306,8 +306,9 @@ func (s *Session) applyServerHelloConfig(serverHello map[string]any) {
 		return
 	}
 	cfg := webrtc.Configuration{
-		ICEServers:   iceServers,
-		SDPSemantics: webrtc.SDPSemanticsUnifiedPlan,
+		ICEServers:        iceServers,
+		SDPSemantics:      webrtc.SDPSemanticsUnifiedPlan,
+		ICETransportPolicy: webrtc.ICETransportPolicyRelay,
 	}
 	if s.pcSub != nil {
 		_ = s.pcSub.SetConfiguration(cfg)

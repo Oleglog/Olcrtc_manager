@@ -19,8 +19,11 @@ func (s *Session) Connect(ctx context.Context) error {
 	s.resetMediaState()
 
 	config := webrtc.Configuration{
-		ICEServers:   []webrtc.ICEServer{{URLs: []string{"stun:stun.rtc.yandex.net:3478"}}},
-		SDPSemantics: webrtc.SDPSemanticsUnifiedPlan,
+		ICEServers: []webrtc.ICEServer{
+			{URLs: []string{"stun:stun.rtc.yandex.net:3478"}},
+		},
+		SDPSemantics:      webrtc.SDPSemanticsUnifiedPlan,
+		ICETransportPolicy: webrtc.ICETransportPolicyRelay,
 	}
 
 	if err := s.setupPeerConnections(config); err != nil {
