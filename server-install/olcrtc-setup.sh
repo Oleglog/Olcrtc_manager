@@ -513,9 +513,9 @@ subscription:
   api_token: "${sub_token}"
 EOF
 
+vp8_fps="${OLCRTC_VP8_FPS:-120}"
+vp8_batch="${OLCRTC_VP8_BATCH:-64}"
 if [ "$transport" = "vp8channel" ]; then
-    vp8_fps="${OLCRTC_VP8_FPS:-120}"
-    vp8_batch="${OLCRTC_VP8_BATCH:-64}"
     cat >> "$CONFIG_FILE" <<EOF
 vp8:
   fps: ${vp8_fps}
@@ -651,6 +651,8 @@ OLCRTC_KEY=$KEY
 OLCRTC_CLIENT_ID=$CLIENT_ID
 OLCRTC_DNS=$DNS_DEFAULT
 OLCRTC_NAME=$SET_NAME
+OLCRTC_VP8_FPS=${vp8_fps:-120}
+OLCRTC_VP8_BATCH=${vp8_batch:-64}
 OLCRTC_SUB_ENABLED=$SUB_ENABLED_VAL
 OLCRTC_SUB_PORT=$SUB_PORT
 EOF
