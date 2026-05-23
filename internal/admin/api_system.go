@@ -165,7 +165,7 @@ func (s *Server) bindDomain(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.cfg.Domain = req.Domain
-	if err := WriteAdminEnv(s.cfg.ConfigDir, s.cfg.Port, s.cfg.Token, req.Domain, s.cfg.SubPort); err != nil {
+	if err := WriteAdminEnv(s.cfg.ConfigDir, s.cfg.Port, s.cfg.Username, s.cfg.Password, req.Domain, s.cfg.SubPort); err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -180,7 +180,7 @@ func (s *Server) bindDomain(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) unbindDomain(w http.ResponseWriter, r *http.Request) {
 	s.cfg.Domain = ""
-	if err := WriteAdminEnv(s.cfg.ConfigDir, s.cfg.Port, s.cfg.Token, "", s.cfg.SubPort); err != nil {
+	if err := WriteAdminEnv(s.cfg.ConfigDir, s.cfg.Port, s.cfg.Username, s.cfg.Password, "", s.cfg.SubPort); err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
