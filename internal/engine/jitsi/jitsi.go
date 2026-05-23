@@ -21,6 +21,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -38,11 +39,10 @@ import (
 
 const (
 	defaultSendQueueSize = 5000
-	// bridgeMaxMessageSize is the practical upper bound on a single colibri-ws
-	// payload. JVB enforces a max-message-size around 16 KiB; payloads above
-	// that cause the bridge to drop the websocket. The default datachannel
-	// transport in olcrtc already uses 12 KiB chunks, well under this limit.
-	bridgeMaxMessageSize = 16 * 1024
+	// bridgeMaxMessageSize is the stable payload size from the upstream
+	// zarazaex69/j benchmark. 8 KiB is the sweet spot for colibri-ws: ~135 Mbit/s
+	// on meet.cryptopro.ru, while 16 KiB fluctuates and 64 KiB closes the bridge.
+	bridgeMaxMessageSize = 8 * 1024
 	bridgeOpenTimeout    = 30 * time.Second
 	defaultNick          = "olcrtc"
 	credentialKeyRoom    = "room"
@@ -309,6 +309,9 @@ func (s *Session) joinAndOpenBridge(ctx context.Context) (*j.Session, error) {
 		if err != nil {
 			_ = jSess.Close()
 			return nil, fmt.Errorf("open bridge: %w", err)
+		}
+		if br := jSess.Bridge(); br != nil {
+			br.EnableRawMode()
 		}
 		// Re-latch peer on every bridge open: after a reconnect the partner's
 		// MUC nick may have changed.
@@ -801,6 +804,19 @@ func (s *Session) recvLoop() {
 	if jSess == nil || (s.onData == nil && s.onPeerData == nil) || !s.bridgeReady.Load() {
 		return
 	}
+	if br := jSess.Bridge(); br != nil {
+		rawFrames := br.RawFrames()
+		for {
+			select {
+			case <-s.done:
+				return
+			case frame, ok := <-rawFrames:
+				if !s.deliverRawBridgeFrame(frame, ok) {
+					return
+				}
+			}
+		}
+	}
 	msgs := jSess.BridgeMessages()
 	if msgs == nil {
 		return
@@ -842,6 +858,41 @@ func (s *Session) deliverBridgeMessage(msg j.BridgeMessage, ok bool) bool {
 		return true
 	}
 	if len(data) == 0 {
+		return true
+	}
+	s.onData(data)
+	return true
+}
+
+type bridgeRawFrame struct {
+	Class string `json:"colibriClass"`
+	From  string `json:"from"`
+	Raw   string `json:"raw"`
+}
+
+func (s *Session) deliverRawBridgeFrame(frame []byte, ok bool) bool {
+	if !ok {
+		if !s.closed.Load() {
+			s.requestReconnect("jitsi bridge closed")
+		}
+		return false
+	}
+	var msg bridgeRawFrame
+	if err := json.Unmarshal(frame, &msg); err != nil || msg.Class != "EndpointMessage" || msg.Raw == "" {
+		return true
+	}
+	payload, err := base64.StdEncoding.DecodeString(msg.Raw)
+	if err != nil || len(payload) < len(bridgeMagic) || !bytes.Equal(payload[:len(bridgeMagic)], bridgeMagic[:]) {
+		return true
+	}
+	if s.onPeerData != nil && msg.From != "" {
+		return s.deliverPeerBridgePayload(msg.From, payload)
+	}
+	if !s.peerLatchAccepts(msg.From) {
+		return true
+	}
+	data, ok := s.acceptEpochFrame(payload)
+	if !ok || len(data) == 0 {
 		return true
 	}
 	s.onData(data)

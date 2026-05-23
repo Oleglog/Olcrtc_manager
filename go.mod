@@ -15,7 +15,7 @@ require (
 	github.com/xtaci/kcp-go/v5 v5.6.72
 	github.com/xtaci/smux v1.5.57
 	github.com/zarazaex69/gr v0.0.0-20260430043628-45b595f4fef0
-	github.com/zarazaex69/j v0.0.0-20260518222913-cb593e3bc582
+	github.com/zarazaex69/j v0.0.0-20260523204249-4015c3c4de75
 	golang.org/x/crypto v0.50.0
 	golang.org/x/mobile v0.0.0-20260410095206-2cfb76559b7b
 	golang.org/x/sys v0.43.0

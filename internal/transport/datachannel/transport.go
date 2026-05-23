@@ -12,7 +12,7 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
-const defaultMaxPayloadSize = 12 * 1024
+const defaultMaxPayloadSize = 8*1024 - 12
 
 // ErrByteStreamUnsupported is returned when a carrier engine cannot expose a byte stream.
 var ErrByteStreamUnsupported = errors.New("engine does not support byte stream")
