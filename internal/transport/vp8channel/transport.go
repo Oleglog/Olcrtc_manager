@@ -688,7 +688,11 @@ func (p *streamTransport) handleIncomingFrame(frame []byte) {
 	// Single-peer mode: latch on first epoch seen, ignore all others.
 	if !p.peerConfirmed.Load() {
 		p.handleFirstPeer(peerEpoch)
-	} else if peerEpoch != p.peerEpoch.Load() {
+	} else if prev := p.peerEpoch.Load(); prev != peerEpoch {
+		// In a multi-participant room, other clients also publish VP8
+		// tracks. Their epochs differ from our latched peer (the server).
+		// Simply ignore frames that don't match our peer — they belong to
+		// other participants we don't communicate with.
 		return
 	}
 
