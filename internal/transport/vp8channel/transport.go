@@ -108,18 +108,18 @@ type streamTransport struct {
 	epochMu      sync.RWMutex
 	localEpoch   uint32
 	peerEpoch    atomic.Uint32
-	hadPeer      atomic.Bool
 
-	kcp         *kcpRuntime
-	kcpMu       sync.RWMutex
-	reconnectMu sync.Mutex
-	reconnectFn func()
+	kcp           *kcpRuntime
+	kcpMu         sync.RWMutex
+	reconnectMu   sync.Mutex
+	reconnectFn   func()
+	peerConfirmed atomic.Bool
 
 	// Multi-peer support: when onPeerData is set, each remote epoch gets
 	// its own KCP runtime and data is routed via onPeerData(peerID, ...).
-	peersMu  sync.RWMutex
-	peers    map[uint32]*kcpRuntime // epoch → KCP runtime
-	peerOut  map[uint32]chan []byte // epoch → outbound queue
+	peersMu sync.RWMutex
+	peers   map[uint32]*kcpRuntime // epoch → KCP runtime
+	peerOut map[uint32]chan []byte // epoch → outbound queue
 }
 
 // New creates a vp8channel transport backed by a carrier engine.
@@ -178,7 +178,6 @@ func New(ctx context.Context, cfg transport.Config) (transport.Transport, error)
 	tr := &streamTransport{
 		stream:        stream,
 		track:         track,
-		onData:        cfg.OnData,
 		onPeerData:    cfg.OnPeerData,
 		outbound:      make(chan []byte, outboundQueueSize),
 		closeCh:       make(chan struct{}),
@@ -189,6 +188,22 @@ func New(ctx context.Context, cfg transport.Config) (transport.Transport, error)
 		localEpoch:    randomEpoch(),
 		peers:         make(map[uint32]*kcpRuntime),
 		peerOut:       make(map[uint32]chan []byte),
+	}
+
+	// In single-peer mode, confirm the peer epoch on first successful KCP
+	// delivery. This ensures we latch on the server (which completes
+	// handshake) rather than another client whose frames arrive first.
+	if cfg.OnData != nil && cfg.OnPeerData == nil {
+		inner := cfg.OnData
+		tr.onData = func(data []byte) {
+			if !tr.peerConfirmed.Swap(true) {
+				epoch := tr.peerEpoch.Load()
+				logger.Infof("vp8channel: peer confirmed epoch=0x%08x", epoch)
+			}
+			inner(data)
+		}
+	} else {
+		tr.onData = cfg.OnData
 	}
 
 	if err := stream.AddTrack(track); err != nil {
@@ -644,31 +659,23 @@ func (p *streamTransport) readVP8Track(track *webrtc.TrackRemote) {
 }
 
 func (p *streamTransport) handleFirstPeer(peerEpoch uint32) {
-	p.peerEpoch.Store(peerEpoch)
-	logger.Infof("vp8channel: peer first seen epoch=0x%08x", peerEpoch)
+	logger.Infof("vp8channel: peer candidate epoch=0x%08x", peerEpoch)
 }
 
-// handleIncomingFrame parses the epoch header and either delivers the KCP
-// payload to the local session or triggers a reset when the peer's epoch
-// changes (peer process restart).
+// handleIncomingFrame parses the epoch header and delivers KCP payload.
+// In single-peer mode (client), frames from all epochs are delivered to
+// KCP until the peer is confirmed (peerConfirmed=true). Once confirmed,
+// only frames from the confirmed epoch are accepted.
 func (p *streamTransport) handleIncomingFrame(frame []byte) {
 	frameToken, peerEpoch, ok := parseEpochHeader(frame)
 	if !ok {
-		logger.Debugf("vp8channel: frame header checksum mismatch")
 		return
 	}
 	if frameToken != p.bindingToken {
-		logger.Debugf("vp8channel: frame token mismatch got=0x%08x want=0x%08x (foreign client or noise)",
-			frameToken, p.bindingToken)
 		return
 	}
 	kcpPayload := frame[epochHdrLen:]
-	// Some carriers/SFUs reflect our own published VP8 track back to us as a
-	// remote track. Those frames carry our local epoch, not the peer's. If we
-	// treat them as peer traffic, epoch tracking toggles between "self" and
-	// "peer" and both sides loop forever resetting smux/KCP.
 	if peerEpoch == p.localEpochValue() {
-		logger.Debugf("vp8channel: self-echo detected epoch=0x%08x (SFU reflects our own track)", peerEpoch)
 		return
 	}
 
@@ -678,15 +685,16 @@ func (p *streamTransport) handleIncomingFrame(frame []byte) {
 		return
 	}
 
-	if !p.hadPeer.Swap(true) {
-		p.handleFirstPeer(peerEpoch)
-	} else if prev := p.peerEpoch.Load(); prev != peerEpoch {
-		// In a multi-participant room, other clients also publish VP8
-		// tracks. Their epochs differ from our latched peer (the server).
-		// Simply ignore frames that don't match our peer — they belong to
-		// other participants we don't communicate with.
-		logger.Debugf("vp8channel: ignoring frame from unknown epoch=0x%08x (latched=0x%08x)", peerEpoch, prev)
-		return
+	// Single-peer mode: before peer is confirmed, accept frames from any
+	// epoch (the server's epoch is unknown until handshake completes).
+	// After confirmation, reject frames from other epochs.
+	if p.peerConfirmed.Load() {
+		if peerEpoch != p.peerEpoch.Load() {
+			return
+		}
+	} else {
+		// Track the latest candidate epoch for logging.
+		p.peerEpoch.Store(peerEpoch)
 	}
 
 	if len(kcpPayload) == 0 {

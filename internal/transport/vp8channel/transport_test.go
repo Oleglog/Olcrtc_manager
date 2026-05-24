@@ -189,7 +189,7 @@ func TestHandleIncomingFrameIgnoresLoopedBackLocalEpoch(t *testing.T) {
 
 	tr.handleIncomingFrame(frame)
 
-	if tr.hadPeer.Load() {
+	if tr.peerConfirmed.Load() {
 		t.Fatal("self-echo frame must not mark peer as seen")
 	}
 	if got := tr.peerEpoch.Load(); got != 0 {
@@ -220,7 +220,7 @@ func TestHandleIncomingFrameIgnoresForeignBindingToken(t *testing.T) {
 
 	tr.handleIncomingFrame(frame)
 
-	if tr.hadPeer.Load() {
+	if tr.peerConfirmed.Load() {
 		t.Fatal("foreign frame must not mark peer as seen")
 	}
 	if got := tr.peerEpoch.Load(); got != 0 {
