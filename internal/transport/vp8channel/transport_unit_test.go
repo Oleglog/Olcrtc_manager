@@ -355,10 +355,10 @@ func TestHandleIncomingFrameEpochFilteringAndReconnect(t *testing.T) {
 		t.Fatal("filtered frames changed peer state")
 	}
 
-	// Keepalive (nil payload) stores candidate epoch but does not confirm.
+	// Keepalive (nil payload) latches peer immediately.
 	tr.handleIncomingFrame(mkFrame(tr.bindingToken, 1, nil))
-	if tr.peerConfirmed.Load() {
-		t.Fatal("keepalive should not confirm peer")
+	if !tr.peerConfirmed.Load() {
+		t.Fatal("first frame should confirm peer")
 	}
 	if tr.peerEpoch.Load() != 1 {
 		t.Fatalf("peer epoch not stored: got %d want 1", tr.peerEpoch.Load())
@@ -378,11 +378,8 @@ func TestHandleIncomingFrameEpochFilteringAndReconnect(t *testing.T) {
 		t.Fatalf("stream reconnect did not reset/callback: reconnected=%v kcp=%v", reconnected, tr.kcp)
 	}
 	reconnected = false
-	// Confirm the peer so subsequent frames from other epochs are rejected.
-	tr.peerConfirmed.Store(true)
-	tr.peerEpoch.Store(1)
-	// In single-peer mode, frames from a different epoch are ignored (other
-	// participants in the room). The client does NOT reconnect.
+	// Peer is already confirmed from the first frame above.
+	// In single-peer mode, frames from a different epoch are ignored.
 	tr.handleIncomingFrame(mkFrame(tr.bindingToken, 2, []byte("other-participant")))
 	if reconnected {
 		t.Fatal("epoch change from another participant should not trigger reconnect")

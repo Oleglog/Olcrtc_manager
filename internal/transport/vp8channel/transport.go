@@ -178,6 +178,7 @@ func New(ctx context.Context, cfg transport.Config) (transport.Transport, error)
 	tr := &streamTransport{
 		stream:        stream,
 		track:         track,
+		onData:        cfg.OnData,
 		onPeerData:    cfg.OnPeerData,
 		outbound:      make(chan []byte, outboundQueueSize),
 		closeCh:       make(chan struct{}),
@@ -659,13 +660,12 @@ func (p *streamTransport) readVP8Track(track *webrtc.TrackRemote) {
 }
 
 func (p *streamTransport) handleFirstPeer(peerEpoch uint32) {
-	logger.Infof("vp8channel: peer candidate epoch=0x%08x", peerEpoch)
+	p.peerEpoch.Store(peerEpoch)
+	p.peerConfirmed.Store(true)
+	logger.Infof("vp8channel: peer latched epoch=0x%08x", peerEpoch)
 }
 
 // handleIncomingFrame parses the epoch header and delivers KCP payload.
-// In single-peer mode (client), frames from all epochs are delivered to
-// KCP until the peer is confirmed (peerConfirmed=true). Once confirmed,
-// only frames from the confirmed epoch are accepted.
 func (p *streamTransport) handleIncomingFrame(frame []byte) {
 	frameToken, peerEpoch, ok := parseEpochHeader(frame)
 	if !ok {
@@ -685,16 +685,11 @@ func (p *streamTransport) handleIncomingFrame(frame []byte) {
 		return
 	}
 
-	// Single-peer mode: before peer is confirmed, accept frames from any
-	// epoch (the server's epoch is unknown until handshake completes).
-	// After confirmation, reject frames from other epochs.
-	if p.peerConfirmed.Load() {
-		if peerEpoch != p.peerEpoch.Load() {
-			return
-		}
-	} else {
-		// Track the latest candidate epoch for logging.
-		p.peerEpoch.Store(peerEpoch)
+	// Single-peer mode: latch on first epoch seen, ignore all others.
+	if !p.peerConfirmed.Load() {
+		p.handleFirstPeer(peerEpoch)
+	} else if peerEpoch != p.peerEpoch.Load() {
+		return
 	}
 
 	if len(kcpPayload) == 0 {
