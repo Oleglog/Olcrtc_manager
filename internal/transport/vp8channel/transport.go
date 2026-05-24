@@ -681,19 +681,11 @@ func (p *streamTransport) handleIncomingFrame(frame []byte) {
 	if !p.hadPeer.Swap(true) {
 		p.handleFirstPeer(peerEpoch)
 	} else if prev := p.peerEpoch.Load(); prev != peerEpoch {
-		// Peer restarted its KCP session. Reset ours so the conv state
-		// machines re-converge. CAS guards against double-reset when
-		// fragmented frames straddle the epoch boundary.
-		if p.peerEpoch.CompareAndSwap(prev, peerEpoch) {
-			p.resetKCP()
-			p.reconnectMu.Lock()
-			fn := p.reconnectFn
-			p.reconnectMu.Unlock()
-			if fn != nil {
-				fn()
-			}
-		}
-		// Drop this packet: it predates our fresh KCP session.
+		// In a multi-participant room, other clients also publish VP8
+		// tracks. Their epochs differ from our latched peer (the server).
+		// Simply ignore frames that don't match our peer — they belong to
+		// other participants we don't communicate with.
+		logger.Debugf("vp8channel: ignoring frame from unknown epoch=0x%08x (latched=0x%08x)", peerEpoch, prev)
 		return
 	}
 
