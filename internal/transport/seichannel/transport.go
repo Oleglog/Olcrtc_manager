@@ -209,15 +209,23 @@ func (p *streamTransport) Send(data []byte) error {
 	waiter := p.acks.Register(seq)
 	defer p.acks.Unregister(seq)
 
-	for range maxSendAttempts {
-		for idx, fragment := range fragments {
-			frame := encodeDataFrame(seq, crc, len(data), idx, len(fragments), fragment)
-			if err := p.enqueueFrame(frame, false); err != nil {
-				return err
+	ackTimeout := p.perAttemptAckTimeout(len(fragments))
+
+	for attempt := range maxSendAttempts {
+		// Only enqueue fragments on the first attempt. Retries just wait
+		// longer — the fragments from the previous attempt are still in
+		// the outbound channel being drained by writerLoop. Re-enqueuing
+		// causes dead-fragment backlog that eventually clogs the channel.
+		if attempt == 0 {
+			for idx, fragment := range fragments {
+				frame := encodeDataFrame(seq, crc, len(data), idx, len(fragments), fragment)
+				if err := p.enqueueFrame(frame, false); err != nil {
+					return err
+				}
 			}
 		}
 
-		timer := time.NewTimer(p.effectiveAckTimeout())
+		timer := time.NewTimer(ackTimeout)
 		select {
 		case ackCRC := <-waiter:
 			timer.Stop()
@@ -232,6 +240,27 @@ func (p *streamTransport) Send(data []byte) error {
 	}
 
 	return ErrAckTimeout
+}
+
+// perAttemptAckTimeout computes a per-attempt timeout that accounts for the
+// time writerLoop needs to drain all fragments through the FPS-paced ticker.
+func (p *streamTransport) perAttemptAckTimeout(fragments int) time.Duration {
+	frameInterval := p.effectiveFrameInterval()
+	batchSize := p.effectiveBatchSize()
+	// Drain time: how long writerLoop needs to send all fragments.
+	drainTicks := (fragments + batchSize - 1) / batchSize
+	drainTime := time.Duration(drainTicks) * frameInterval
+	// Allow 3× drain time for scheduling jitter + peer reassembly + ack RTT.
+	estimated := drainTime * 3
+	floor := p.effectiveAckTimeout()
+	if estimated < floor {
+		return floor
+	}
+	const maxAckTimeout = 30 * time.Second
+	if estimated > maxAckTimeout {
+		return maxAckTimeout
+	}
+	return estimated
 }
 
 // Close terminates the transport.
