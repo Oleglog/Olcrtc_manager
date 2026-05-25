@@ -436,6 +436,8 @@ func (p *streamTransport) drainOutbound() {
 // this before rebuilding smux so replacement handshakes are not parsed behind
 // stale bytes from streams that were active when the old session died.
 func (p *streamTransport) ResetPeer() {
+	p.peerConfirmed.Store(false)
+	p.peerEpoch.Store(0)
 	p.restartKCP(p.rotateEpochHeader())
 }
 
@@ -570,6 +572,8 @@ func appendBatchPacket(dst, packet []byte) []byte {
 }
 
 func (p *streamTransport) resetKCP() {
+	p.peerConfirmed.Store(false)
+	p.peerEpoch.Store(0)
 	p.restartKCP(p.epochHeader())
 }
 

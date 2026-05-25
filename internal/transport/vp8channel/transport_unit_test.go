@@ -378,13 +378,16 @@ func TestHandleIncomingFrameEpochFilteringAndReconnect(t *testing.T) {
 		t.Fatalf("stream reconnect did not reset/callback: reconnected=%v kcp=%v", reconnected, tr.kcp)
 	}
 	reconnected = false
-	// Peer is already confirmed from the first frame above.
-	// In single-peer mode, frames from a different epoch are ignored.
-	tr.handleIncomingFrame(mkFrame(tr.bindingToken, 2, []byte("other-participant")))
-	if reconnected {
-		t.Fatal("epoch change from another participant should not trigger reconnect")
+	// After reconnect, peerConfirmed is reset so the next frame re-latches
+	// the peer epoch. This allows the server to restart with a new epoch.
+	if tr.peerConfirmed.Load() {
+		t.Fatal("reconnect should reset peerConfirmed")
 	}
-	if tr.peerEpoch.Load() != 1 {
-		t.Fatalf("peer epoch changed unexpectedly: got %d want 1", tr.peerEpoch.Load())
+	tr.handleIncomingFrame(mkFrame(tr.bindingToken, 2, []byte("new-peer-after-reconnect")))
+	if !tr.peerConfirmed.Load() {
+		t.Fatal("frame after reconnect should re-latch peer")
+	}
+	if tr.peerEpoch.Load() != 2 {
+		t.Fatalf("peer epoch not re-latched: got %d want 2", tr.peerEpoch.Load())
 	}
 }
