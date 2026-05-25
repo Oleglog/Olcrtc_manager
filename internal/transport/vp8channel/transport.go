@@ -166,6 +166,22 @@ func New(ctx context.Context, cfg transport.Config) (transport.Transport, error)
 		return nil, fmt.Errorf("create local video track: %w", err)
 	}
 
+	tr := newStreamTransport(stream, track, cfg, opts)
+
+	if err := stream.AddTrack(track); err != nil {
+		return nil, fmt.Errorf("attach local video track: %w", err)
+	}
+	stream.SetTrackHandler(tr.handleRemoteTrack)
+
+	return tr, nil
+}
+
+func newStreamTransport(
+	stream *engineVideoSession,
+	track *webrtc.TrackLocalStaticSample,
+	cfg transport.Config,
+	opts Options,
+) *streamTransport {
 	fps := opts.FPS
 	batchSize := opts.BatchSize
 	if fps <= 0 {
@@ -207,12 +223,7 @@ func New(ctx context.Context, cfg transport.Config) (transport.Transport, error)
 		tr.onData = cfg.OnData
 	}
 
-	if err := stream.AddTrack(track); err != nil {
-		return nil, fmt.Errorf("attach local video track: %w", err)
-	}
-	stream.SetTrackHandler(tr.handleRemoteTrack)
-
-	return tr, nil
+	return tr
 }
 
 func (p *streamTransport) Connect(ctx context.Context) error {
@@ -763,7 +774,7 @@ func (p *streamTransport) getOrCreatePeerKCP(epoch uint32) *kcpRuntime {
 
 // peerWriterPump drains a peer's outbound KCP queue and writes frames to the
 // shared video track. Stops when the channel is closed or transport shuts down.
-func (p *streamTransport) peerWriterPump(epoch uint32, out chan []byte) {
+func (p *streamTransport) peerWriterPump(_ uint32, out chan []byte) {
 	for {
 		select {
 		case <-p.closeCh:
@@ -787,9 +798,9 @@ func formatPeerID(epoch uint32) string {
 func parsePeerID(peerID string) (uint32, error) {
 	v, err := strconv.ParseUint(peerID, 16, 32)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("parse peer ID %q: %w", peerID, err)
 	}
-	return uint32(v), nil //nolint:gosec // G115: bounded by ParseUint bitSize=32
+	return uint32(v), nil
 }
 
 func deliverKCPPayload(rt *kcpRuntime, payload []byte) {
