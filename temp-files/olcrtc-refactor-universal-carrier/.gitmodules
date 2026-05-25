@@ -1,3 +1,0 @@
-[submodule "internal/transport/videochannel/gr"]
-	path = internal/transport/videochannel/gr
-	url = https://github.com/zarazaex69/gr.git
