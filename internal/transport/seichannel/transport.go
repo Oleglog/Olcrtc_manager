@@ -25,9 +25,9 @@ const (
 	defaultMaxPayloadSize        = 7 * 1024
 	defaultFragmentSize          = 900
 	defaultAckTimeout            = 3 * time.Second
-	defaultFrameInterval         = 50 * time.Millisecond
-	defaultFPS                   = 20
-	defaultBatchSize             = 1
+	defaultFrameInterval         = 16 * time.Millisecond
+	defaultFPS                   = 60
+	defaultBatchSize             = 64
 	defaultConnectTimeout        = 30 * time.Second
 	maxSendAttempts              = 4
 	sampleBuilderMaxLate         = 128
