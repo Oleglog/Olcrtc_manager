@@ -37,10 +37,10 @@ const (
 	// inboundQueue is the buffered capacity of the Push -> Read pipeline.
 	// It absorbs short Read stalls without applying back-pressure to the
 	// transport callback. Frames are typically smux-sized (well under
-	// 16 KiB), so 256 amounts to a few MiB of in-flight data, which is
+	// 16 KiB), so 512 amounts to several MiB of in-flight data, which is
 	// enough for sustained throughput on every transport we have without
 	// unbounded growth on a stuck reader.
-	inboundQueue = 256
+	inboundQueue = 512
 
 	// pooledFrameCap is the capacity each pooled plaintext buffer is born
 	// with. It is sized to fit the largest smux frame any of our
