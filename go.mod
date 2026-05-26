@@ -101,3 +101,5 @@ require (
 	modernc.org/memory v1.11.0 // indirect
 	rsc.io/qr v0.2.0 // indirect
 )
+
+replace github.com/zarazaex69/j => github.com/Oleglog/j v0.0.0-20260526160225-47ba45c4e3c8
