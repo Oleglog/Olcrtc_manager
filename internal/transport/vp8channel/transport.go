@@ -574,7 +574,7 @@ func appendBatchPacket(dst, packet []byte) []byte {
 func (p *streamTransport) resetKCP() {
 	p.peerConfirmed.Store(false)
 	p.peerEpoch.Store(0)
-	p.restartKCP(p.epochHeader())
+	p.restartKCP(p.rotateEpochHeader())
 }
 
 func (p *streamTransport) restartKCP(epochHdr [epochHdrLen]byte) {
