@@ -38,11 +38,20 @@ import (
 )
 
 const (
-	defaultSendQueueSize = 5000
-	// bridgeMaxMessageSize is the stable payload size from the upstream
-	// zarazaex69/j benchmark. 8 KiB is the sweet spot for colibri-ws: ~135 Mbit/s
-	// on meet.cryptopro.ru, while 16 KiB fluctuates and 64 KiB closes the bridge.
-	bridgeMaxMessageSize = 8 * 1024
+	defaultSendQueueSize = 10000
+	// bridgeMaxMessageSize is the maximum payload for a single colibri-ws
+	// EndpointMessage. The upstream j benchmark shows 8 KiB is stable at
+	// ~135 Mbit/s, while 16 KiB fluctuates. 12 KiB is a conservative
+	// compromise that increases effective throughput by ~50% per message
+	// compared to 8 KiB while staying well below the 16 KiB instability
+	// threshold. Revert to 8*1024 if JVB closes the bridge.
+	bridgeMaxMessageSize = 12 * 1024
+	// sendBatchCap is the maximum number of frames collected in a single
+	// sendLoop drain pass before flushing them to the bridge. A larger batch
+	// reduces per-frame overhead (JSON serialisation, base64, WS write syscall)
+	// by allowing the bridge writeLoop to pipe them back-to-back without
+	// yielding to the Go scheduler between individual messages.
+	sendBatchCap = 64
 	bridgeOpenTimeout    = 30 * time.Second
 	defaultNick          = "olcrtc"
 	credentialKeyRoom    = "room"
@@ -733,6 +742,12 @@ func (s *Session) enqueuePeerBridgeFrame(peerID string, framed []byte) error {
 
 func (s *Session) sendLoop() {
 	defer s.wg.Done()
+	// Pre-allocate a reusable batch slice. Each drain pass appends pending
+	// frames here, flushes them, then resets the slice for the next round.
+	// Cap is fixed so the slice never needs to grow on the hot path.
+	batch := make([][]byte, 0, sendBatchCap)
+	peerBatch := make([]bridgeOutbound, 0, sendBatchCap)
+
 	for {
 		select {
 		case <-s.done:
@@ -741,12 +756,53 @@ func (s *Session) sendLoop() {
 			if !ok {
 				return
 			}
-			s.sendBridgeFrame("", data)
+			batch = append(batch[:0], data)
+			// Drain any additional frames that are already queued. This
+			// converts what would be N separate WS writes (each with its
+			// own JSON serialisation + base64 + syscall) into a single
+			// burst of writes that the bridge writeLoop can pipe through
+			// the TCP socket back-to-back, minimising inter-frame gaps.
+		drain:
+			for {
+				select {
+				case more, ok := <-s.sendQueue:
+					if !ok {
+						break drain
+					}
+					batch = append(batch, more)
+					if len(batch) >= cap(batch) {
+						break drain
+					}
+				default:
+					break drain
+				}
+			}
+			for _, frame := range batch {
+				s.sendBridgeFrame("", frame)
+			}
 		case frame, ok := <-s.peerSendQueue:
 			if !ok {
 				return
 			}
-			s.sendBridgeFrame(frame.to, frame.data)
+			peerBatch = append(peerBatch[:0], frame)
+		peerDrain:
+			for {
+				select {
+				case more, ok := <-s.peerSendQueue:
+					if !ok {
+						break peerDrain
+					}
+					peerBatch = append(peerBatch, more)
+					if len(peerBatch) >= cap(peerBatch) {
+						break peerDrain
+					}
+				default:
+					break peerDrain
+				}
+			}
+			for _, pf := range peerBatch {
+				s.sendBridgeFrame(pf.to, pf.data)
+			}
 		}
 	}
 }
