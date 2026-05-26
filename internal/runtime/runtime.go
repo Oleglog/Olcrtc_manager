@@ -70,8 +70,8 @@ func SmuxConfig(maxWirePayload int) *smux.Config {
 			cfg.MaxFrameSize = maxFrameSize
 		}
 	}
-	cfg.MaxReceiveBuffer = 16 * 1024 * 1024
-	cfg.MaxStreamBuffer = 1024 * 1024
+	cfg.MaxReceiveBuffer = 64 * 1024 * 1024
+	cfg.MaxStreamBuffer = 4 * 1024 * 1024
 	cfg.KeepAliveInterval = 10 * time.Second
 	cfg.KeepAliveTimeout = 30 * time.Second
 	return cfg
