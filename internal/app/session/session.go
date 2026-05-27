@@ -17,7 +17,6 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 	"github.com/openlibrecommunity/olcrtc/internal/names"
 	"github.com/openlibrecommunity/olcrtc/internal/runtime"
-	"github.com/openlibrecommunity/olcrtc/internal/protect"
 	"github.com/openlibrecommunity/olcrtc/internal/server"
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
 	"github.com/openlibrecommunity/olcrtc/internal/transport/datachannel"
@@ -659,34 +658,14 @@ func startSubscriptionServer(ctx context.Context, cfg Config) error {
 }
 
 func configureDefaultResolver(dnsServer string) {
-	if dnsServer != "" {
-		protect.HTTPDNSServer = dnsServer
+	if dnsServer == "" {
+		return
 	}
-	// Replace net.DefaultResolver with a protected resolver that dials
-	// through controlFunc (bypasses VPN on Android) and races all
-	// configured DNS servers in parallel. This ensures that any code
-	// using net.DefaultResolver (including the Go stdlib's HTTP stack)
-	// does not leak DNS queries through the TUN interface.
 	net.DefaultResolver = &net.Resolver{
 		PreferGo: true,
 		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
-			// Pick a server from the protect list and dial it protected.
-			servers := protect.DNSServerList()
-			if len(servers) == 0 {
-				return nil, fmt.Errorf("no DNS servers configured")
-			}
-			d := protect.NewDialer()
-			d.Timeout = 3 * time.Second
-			// Try servers in order; first success wins.
-			var lastErr error
-			for _, srv := range servers {
-				conn, err := d.DialContext(ctx, network, srv)
-				if err == nil {
-					return conn, nil
-				}
-				lastErr = err
-			}
-			return nil, lastErr
+			d := net.Dialer{Timeout: 3 * time.Second}
+			return d.DialContext(ctx, network, dnsServer)
 		},
 	}
 }
