@@ -33,6 +33,7 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/engine"
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 	pioninterceptor "github.com/pion/interceptor"
+	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v4"
 	"github.com/zarazaex69/j"
 )
@@ -87,9 +88,10 @@ var (
 
 // Session is the Jitsi engine handle.
 type Session struct {
-	host string
-	room string
-	name string
+	host     string
+	room     string
+	name     string
+	insecure bool
 
 	onData          func([]byte)
 	onPeerData      func(peerID string, data []byte)
@@ -167,11 +169,19 @@ func New(_ context.Context, cfg engine.Config) (engine.Session, error) {
 		name = defaultNick
 	}
 
+	var insecure bool
+	if cfg.Extra != nil {
+		if v, ok := cfg.Extra["insecure"]; ok {
+			insecure = v == "true" || v == "1" || v == "yes"
+		}
+	}
+
 	runCtx, cancel := context.WithCancel(context.Background())
 	s := &Session{
 		host:          host,
 		room:          room,
 		name:          name,
+		insecure:      insecure,
 		onData:        cfg.OnData,
 		onPeerData:    cfg.OnPeerData,
 		sendQueue:     make(chan []byte, defaultSendQueueSize),
@@ -301,43 +311,73 @@ func (s *Session) Connect(ctx context.Context) error {
 func (s *Session) joinAndOpenBridge(ctx context.Context) (*j.Session, error) {
 	logger.Infof("jitsi: joining %s/%s as %s …", s.host, s.room, s.name)
 	jSess, err := j.Join(ctx, j.Config{
-		Host:  s.host,
-		Room:  s.room,
-		Nick:  s.name,
-		Debug: logger.IsVerbose(),
+		Host:     s.host,
+		Room:     s.room,
+		Nick:     s.name,
+		Debug:    logger.IsVerbose(),
+		Insecure: s.insecure,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("jitsi join: %w", err)
 	}
 	logger.Infof("jitsi: joined %s/%s; colibri-ws=%s", s.host, s.room, jSess.ColibriWS)
 
-	if s.onData != nil || s.onPeerData != nil {
-		bctx, bcancel := context.WithTimeout(ctx, bridgeOpenTimeout)
-		err := jSess.OpenBridge(bctx)
-		bcancel()
-		if err != nil {
+	needBridge := s.onData != nil || s.onPeerData != nil
+	sctpBridge := needBridge && jSess.ColibriWS == ""
+
+	if needBridge && !sctpBridge {
+		if err := s.openBridgeWS(ctx, jSess); err != nil {
 			_ = jSess.Close()
-			return nil, fmt.Errorf("open bridge: %w", err)
+			return nil, err
 		}
-		if br := jSess.Bridge(); br != nil {
-			br.EnableRawMode()
-		}
-		// Re-latch peer on every bridge open: after a reconnect the partner's
-		// MUC nick may have changed.
-		s.peerEndpoint.Store(nil)
-		s.peerVideoSSRC.Store(0)
-		s.bridgeReady.Store(true)
-		logger.Infof("jitsi: bridge open (endpoints=%v)", jSess.Endpoints())
 	}
 
 	if s.shouldNegotiatePC() {
-		if err := s.negotiatePC(ctx, jSess); err != nil {
+		if err := s.negotiatePC(ctx, jSess, sctpBridge); err != nil {
+			_ = jSess.Close()
+			return nil, err
+		}
+	}
+
+	if sctpBridge {
+		if err := s.openBridgeSCTP(ctx, jSess); err != nil {
 			_ = jSess.Close()
 			return nil, err
 		}
 	}
 
 	return jSess, nil
+}
+
+func (s *Session) openBridgeWS(ctx context.Context, jSess *j.Session) error {
+	bctx, bcancel := context.WithTimeout(ctx, bridgeOpenTimeout)
+	err := jSess.OpenBridge(bctx)
+	bcancel()
+	if err != nil {
+		return fmt.Errorf("open bridge: %w", err)
+	}
+	if br := jSess.Bridge(); br != nil {
+		br.EnableRawMode()
+	}
+	s.peerEndpoint.Store(nil)
+	s.peerVideoSSRC.Store(0)
+	s.bridgeReady.Store(true)
+	logger.Infof("jitsi: bridge open colibri-ws (endpoints=%v)", jSess.Endpoints())
+	return nil
+}
+
+func (s *Session) openBridgeSCTP(ctx context.Context, jSess *j.Session) error {
+	bctx, bcancel := context.WithTimeout(ctx, bridgeOpenTimeout)
+	err := jSess.WaitBridgeSCTP(bctx)
+	bcancel()
+	if err != nil {
+		return fmt.Errorf("open bridge sctp: %w", err)
+	}
+	s.peerEndpoint.Store(nil)
+	s.peerVideoSSRC.Store(0)
+	s.bridgeReady.Store(true)
+	logger.Infof("jitsi: bridge open sctp (endpoints=%v)", jSess.Endpoints())
+	return nil
 }
 
 func (s *Session) shouldNegotiatePC() bool {
@@ -382,7 +422,7 @@ func (s *Session) videoTrackHandler() func(*webrtc.TrackRemote, *webrtc.RTPRecei
 // would obscure the wire order rather than clarify it.
 //
 //nolint:cyclop // sequential Jingle negotiation steps; refactoring would hide ordering
-func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session) error {
+func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session, sctpBridge bool) error {
 	settings := webrtc.SettingEngine{}
 	settings.LoggerFactory = logger.NewPionLoggerFactory()
 
@@ -492,6 +532,15 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session) error {
 	s.wg.Add(1)
 	go s.trickleDrainLoop(pc, neg, jSess.LowLevel().Stanzas())
 
+	// If colibri-ws is unavailable, create the SCTP DataChannel on the
+	// PeerConnection BEFORE Accept so it gets included in the SDP answer.
+	if sctpBridge {
+		if err := jSess.PrepareBridgeSCTP(pc); err != nil {
+			_ = pc.Close()
+			return fmt.Errorf("prepare bridge sctp: %w", err)
+		}
+	}
+
 	if err := neg.Accept(ctx); err != nil {
 		_ = pc.Close()
 		return fmt.Errorf("session-accept: %w", err)
@@ -517,7 +566,46 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session) error {
 	s.pcMu.Lock()
 	s.pc = pc
 	s.pcMu.Unlock()
+
+	// Start an RTCP keepalive. JVB tracks endpoint liveness via
+	// lastIncomingActivityInstant = max(lastRtpReceived, lastIceConsent).
+	// In a TURN-relay-only path, ICE consent updates can fail to reach
+	// JVB's lastIceActivityInstant tracker. Periodic RTCP RR packets
+	// guarantee lastRtpReceived is fresh and the endpoint is not expired
+	// after the default 1-minute inactivity timeout, which causes JVB to
+	// shut down the DTLS session and emit close_notify.
+	s.wg.Add(1)
+	go s.rtcpKeepalive(pc)
+
 	return nil
+}
+
+// rtcpKeepalive sends an empty RTCP Receiver Report every 5 seconds so JVB
+// updates its lastRtpPacketReceivedInstant tracker for our endpoint. JVB's
+// shouldExpire() check fires every minute and tears down the DTLS session
+// (causing the observed CloseNotify alert) when no activity has been seen in
+// more than the configured inactivityTimeout (default 1 minute). Even an
+// empty RR keeps the timestamp fresh — JVB does not require the report to
+// reference any specific SSRC.
+func (s *Session) rtcpKeepalive(pc *webrtc.PeerConnection) {
+	defer s.wg.Done()
+	const interval = 5 * time.Second
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	pkts := []rtcp.Packet{&rtcp.ReceiverReport{}}
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-ticker.C:
+			if err := pc.WriteRTCP(pkts); err != nil {
+				if s.closed.Load() {
+					return
+				}
+				logger.Debugf("jitsi: rtcp keepalive write: %v", err)
+			}
+		}
+	}
 }
 
 // negotiator is the subset of *peer.Negotiator we need. Defined as an

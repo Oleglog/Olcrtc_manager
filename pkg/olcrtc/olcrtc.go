@@ -72,6 +72,10 @@ type Config struct {
 	// ProxyAddr / ProxyPort configure an outbound SOCKS5 proxy.
 	ProxyAddr string
 	ProxyPort int
+	// Insecure disables TLS for the signaling connection (ws:// instead of wss://).
+	// Only meaningful for auth providers that support plain-WebSocket servers
+	// (e.g. self-hosted Jitsi without TLS).
+	Insecure bool
 }
 
 // Session is the library handle returned by [New].
@@ -112,6 +116,7 @@ func newWithAuth(ctx context.Context, cfg Config) (*Session, error) {
 		DNSServer: cfg.DNSServer,
 		ProxyAddr: cfg.ProxyAddr,
 		ProxyPort: cfg.ProxyPort,
+		Insecure:  cfg.Insecure,
 	}
 
 	creds, err := p.Issue(ctx, authCfg)

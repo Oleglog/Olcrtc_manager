@@ -87,6 +87,7 @@ type Config struct {
 	DNSServer  string
 	ProxyAddr  string
 	ProxyPort  int
+	Insecure   bool
 
 	// Options carries transport-specific tuning. Type is per-transport-package.
 	Options Options

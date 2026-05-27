@@ -41,10 +41,11 @@ type Provider struct{}
 // Engine reports which engine consumes credentials from this auth provider.
 func (Provider) Engine() string { return "jitsi" }
 
-const defaultServiceURL = "https://meet.cryptopro.ru"
+const defaultServiceURL = "https://meet1.arbitr.ru"
 
 // DefaultServiceURL returns the default Jitsi Meet service URL used by config
-// defaults and interactive helpers.
+// defaults and interactive helpers. Alternative servers accessible in their
+// network: https://meet.cryptopro.ru
 func (Provider) DefaultServiceURL() string { return defaultServiceURL }
 
 // Issue parses cfg.RoomURL into host+room and returns engine credentials.
@@ -52,15 +53,21 @@ func (Provider) DefaultServiceURL() string { return defaultServiceURL }
 // The URL field of the returned Credentials carries the Jitsi host (e.g.
 // "meet.example.com"); the room name lives in Extra under CredentialKeyRoom.
 // Token is unused — Jitsi guest access requires no token.
+// If cfg.Insecure is true, Extra["insecure"] is set to "true" so the engine
+// dials ws:// instead of wss://.
 func (Provider) Issue(_ context.Context, cfg auth.Config) (auth.Credentials, error) {
 	host, room, err := parseRoomURL(cfg.RoomURL)
 	if err != nil {
 		return auth.Credentials{}, err
 	}
+	extra := map[string]string{CredentialKeyRoom: room}
+	if cfg.Insecure {
+		extra["insecure"] = "true"
+	}
 	return auth.Credentials{
 		URL:   host,
 		Token: "",
-		Extra: map[string]string{CredentialKeyRoom: room},
+		Extra: extra,
 	}, nil
 }
 

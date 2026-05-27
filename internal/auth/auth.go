@@ -49,6 +49,9 @@ type Config struct {
 	DNSServer string
 	ProxyAddr string
 	ProxyPort int
+	// Insecure disables TLS for the signaling connection (ws:// instead of wss://).
+	// Used when connecting to self-hosted Jitsi instances without TLS.
+	Insecure bool
 }
 
 // Provider produces engine credentials.

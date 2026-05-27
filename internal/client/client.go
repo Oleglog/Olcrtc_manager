@@ -80,6 +80,7 @@ type Config struct {
 	KeyHex           string
 	LocalAddr        string
 	DNSServer        string
+	Insecure         bool
 	SOCKSUser        string
 	SOCKSPass        string
 	TransportOptions transport.Options
@@ -185,6 +186,7 @@ func (c *Client) bringUpLink(
 		Name:      names.Generate(),
 		OnData:    c.onData,
 		DNSServer: cfg.DNSServer,
+		Insecure:  cfg.Insecure,
 		Options:   cfg.TransportOptions,
 		Traffic:   cfg.Traffic,
 	})

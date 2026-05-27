@@ -110,6 +110,7 @@ type Config struct {
 	DNSServer        string
 	SOCKSProxyAddr   string
 	SOCKSProxyPort   int
+	Insecure         bool
 	TransportOptions transport.Options
 	Engine           string
 	URL              string
@@ -244,6 +245,7 @@ func (s *Server) bringUpLink(
 		DNSServer:  s.dnsServer,
 		ProxyAddr:  s.socksProxyAddr,
 		ProxyPort:  s.socksProxyPort,
+		Insecure:   cfg.Insecure,
 		Options:    cfg.TransportOptions,
 		Traffic:    cfg.Traffic,
 	})

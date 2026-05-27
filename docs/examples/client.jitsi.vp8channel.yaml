@@ -9,7 +9,7 @@ auth:
 # Для jitsi: полный URL комнаты (https://host/room или host/room).
 # Должен совпадать с сервером.
 room:
-  id: "https://meet.cryptopro.ru/REPLACE_WITH_ROOM_NAME"
+  id: "https://meet1.arbitr.ru/REPLACE_WITH_ROOM_NAME"
 
 crypto:
   # Можно использовать key_file: "./olcrtc.key", чтобы не хранить секрет прямо здесь.

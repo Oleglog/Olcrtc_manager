@@ -120,6 +120,7 @@ func New(ctx context.Context, cfg transport.Config) (transport.Transport, error)
 		DNSServer: cfg.DNSServer,
 		ProxyAddr: cfg.ProxyAddr,
 		ProxyPort: cfg.ProxyPort,
+		Insecure:  cfg.Insecure,
 		Engine:    cfg.Engine,
 		URL:       cfg.URL,
 		Token:     cfg.Token,

@@ -100,6 +100,7 @@ type Crypto struct {
 type Net struct {
 	Transport string `yaml:"transport"` // datachannel, videochannel, seichannel, vp8channel
 	DNS       string `yaml:"dns"`
+	Insecure  bool   `yaml:"insecure"`  // disable TLS for signaling (ws:// instead of wss://)
 }
 
 // SOCKS bundles SOCKS5 listener and outbound-proxy settings.
@@ -274,6 +275,7 @@ func Apply(dst session.Config, f File) session.Config {
 	dst.SOCKSUser = pickString(dst.SOCKSUser, f.SOCKS.User)
 	dst.SOCKSPass = pickString(dst.SOCKSPass, f.SOCKS.Pass)
 	dst.DNSServer = pickString(dst.DNSServer, f.Net.DNS)
+	dst.Insecure = dst.Insecure || f.Net.Insecure
 	dst.SOCKSProxyAddr = pickString(dst.SOCKSProxyAddr, f.SOCKS.ProxyAddr)
 	dst.SOCKSProxyPort = pickInt(dst.SOCKSProxyPort, f.SOCKS.ProxyPort)
 	dst.Video.Width = pickInt(dst.Video.Width, f.Video.Width)
@@ -325,6 +327,7 @@ func ApplyProfile(base session.Config, p Profile) session.Config {
 	dst.SOCKSUser = overlayString(dst.SOCKSUser, p.SOCKS.User)
 	dst.SOCKSPass = overlayString(dst.SOCKSPass, p.SOCKS.Pass)
 	dst.DNSServer = overlayString(dst.DNSServer, p.Net.DNS)
+	dst.Insecure = dst.Insecure || p.Net.Insecure
 	dst.SOCKSProxyAddr = overlayString(dst.SOCKSProxyAddr, p.SOCKS.ProxyAddr)
 	dst.SOCKSProxyPort = overlayInt(dst.SOCKSProxyPort, p.SOCKS.ProxyPort)
 	dst.Video.Width = overlayInt(dst.Video.Width, p.Video.Width)

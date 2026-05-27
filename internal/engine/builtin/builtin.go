@@ -38,6 +38,7 @@ type Config struct {
 	DNSServer  string
 	ProxyAddr  string
 	ProxyPort  int
+	Insecure   bool
 	// Engine, URL, Token are honoured only for the "none" carrier (direct
 	// engine access); other carriers derive them from their auth provider.
 	Engine string
@@ -117,6 +118,7 @@ func registerEngineAuth(name string, provider auth.Provider) {
 			DNSServer: cfg.DNSServer,
 			ProxyAddr: cfg.ProxyAddr,
 			ProxyPort: cfg.ProxyPort,
+			Insecure:  cfg.Insecure,
 		}
 		creds, err := provider.Issue(ctx, authCfg)
 		if err != nil {
