@@ -127,6 +127,14 @@ func (s *Session) handleCommonMessages(msg map[string]any, uid string) {
 	if _, ok := msg["updateDescription"]; ok {
 		s.sendAck(uid)
 	}
+	if _, ok := msg["slotsConfig"]; ok {
+		logger.Verbosef("goolom slotsConfig received uid=%s", uid)
+		s.sendAck(uid)
+	}
+	if _, ok := msg["slotsMeta"]; ok {
+		logger.Verbosef("goolom slotsMeta received uid=%s", uid)
+		s.sendAck(uid)
+	}
 	if _, ok := msg["vadActivity"]; ok {
 		s.sendAck(uid)
 	}
