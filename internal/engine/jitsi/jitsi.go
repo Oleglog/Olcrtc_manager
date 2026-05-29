@@ -127,6 +127,7 @@ type Session struct {
 	done         chan struct{}
 	doneOnce     sync.Once
 	cancel       context.CancelFunc
+	trickleCancel context.CancelFunc
 	runCtx       context.Context //nolint:containedctx // engine owns the supervisor lifetime
 	wg           sync.WaitGroup
 
@@ -551,7 +552,9 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session, sctpBridge 
 	// closes that race window — any source-add Jicofo emits is picked up
 	// the instant it lands on the wire.
 	s.wg.Add(1)
-	go s.trickleDrainLoop(pc, neg, jSess.LowLevel().Stanzas())
+	trickleCtx, trickleCancel := context.WithCancel(context.Background())
+	s.trickleCancel = trickleCancel
+	go s.trickleDrainLoop(trickleCtx, pc, neg, jSess.LowLevel().Stanzas())
 
 	// If colibri-ws is unavailable, create the SCTP DataChannel on the
 	// PeerConnection BEFORE Accept so it gets included in the SDP answer.
@@ -641,10 +644,12 @@ type negotiator interface {
 // Incoming source-add stanzas (announcing other participants' SSRCs) are
 // merged into the remote SDP via neg.HandleSourceAdd so pion can route the
 // inbound RTP through OnTrack.
-func (s *Session) trickleDrainLoop(pc *webrtc.PeerConnection, neg negotiator, stanzas <-chan string) {
+func (s *Session) trickleDrainLoop(ctx context.Context, pc *webrtc.PeerConnection, neg negotiator, stanzas <-chan string) {
 	defer s.wg.Done()
 	for {
 		select {
+		case <-ctx.Done():
+			return
 		case <-s.done:
 			return
 		case raw, ok := <-stanzas:
@@ -1344,22 +1349,92 @@ func (s *Session) reconnect(ctx context.Context) error {
 	defer s.reconnecting.Store(false)
 
 	s.bridgeReady.Store(false)
-	if old := s.jSess.Swap(nil); old != nil {
-		_ = old.Close()
-	}
+
+	// Close PC only — keep the XMPP session alive.
 	s.pcMu.Lock()
 	oldPC := s.pc
 	s.pc = nil
 	s.pcMu.Unlock()
+	if s.trickleCancel != nil {
+		s.trickleCancel()
+		s.trickleCancel = nil
+	}
 	if oldPC != nil {
 		_ = oldPC.Close()
+	}
+
+	s.localEpoch.Store(randomEpoch())
+	s.peerEpoch.Store(0)
+	s.resetPeerEpochs()
+	s.drainSendQueue()
+
+	jSess := s.jSess.Load()
+	if jSess == nil {
+		return s.reconnectFull(ctx)
+	}
+
+	// Rejoin MUC (leave + join) without waiting for session-initiate.
+	// This resets Jicofo's state for our participant so it will send
+	// a fresh session-initiate when another peer arrives.
+	logger.Infof("jitsi: rejoin %s/%s (non-blocking) ...", s.host, s.room)
+	if err := jSess.Rejoin(ctx, s.name); err != nil {
+		logger.Warnf("jitsi: rejoin failed: %v — full reconnect", err)
+		return s.reconnectFull(ctx)
+	}
+
+	// Wait for Jicofo to send session-initiate (when a peer joins the room).
+	logger.Infof("jitsi: waiting for session-initiate in %s/%s ...", s.host, s.room)
+	if _, err := jSess.WaitJingleReinitiate(ctx); err != nil {
+		logger.Warnf("jitsi: wait reinitiate failed: %v — full reconnect", err)
+		return s.reconnectFull(ctx)
+	}
+
+	// Got session-initiate — negotiate PC and open bridge.
+	sctpBridge := jSess.ColibriWS == ""
+	if err := s.negotiatePC(ctx, jSess, sctpBridge); err != nil {
+		logger.Warnf("jitsi: negotiate after reinitiate failed: %v — full reconnect", err)
+		return s.reconnectFull(ctx)
+	}
+	if sctpBridge {
+		if err := s.openBridgeSCTP(ctx, jSess); err != nil {
+			logger.Warnf("jitsi: bridge after reinitiate failed: %v — full reconnect", err)
+			return s.reconnectFull(ctx)
+		}
+	} else {
+		if err := s.openBridgeWS(ctx, jSess); err != nil {
+			logger.Warnf("jitsi: bridge after reinitiate failed: %v — full reconnect", err)
+			return s.reconnectFull(ctx)
+		}
+	}
+
+	s.peerEndpoint.Store(nil)
+	s.peerVideoSSRC.Store(0)
+	s.bridgeReady.Store(true)
+
+	s.wg.Add(1)
+	go s.recvLoop()
+
+	if err := s.Send(nil); err != nil {
+		logger.Debugf("jitsi: epoch announce failed: %v", err)
+	}
+	if s.onReconnect != nil {
+		s.onReconnect(nil)
+	}
+	logger.Infof("jitsi: reconnected %s/%s (reinitiate); colibri-ws=%s", s.host, s.room, jSess.ColibriWS)
+	return nil
+}
+
+// reconnectFull tears down everything and does a full rejoin (blocking on session-initiate).
+func (s *Session) reconnectFull(ctx context.Context) error {
+	if old := s.jSess.Swap(nil); old != nil {
+		_ = old.Close()
 	}
 	s.localEpoch.Store(randomEpoch())
 	s.peerEpoch.Store(0)
 	s.resetPeerEpochs()
 	s.drainSendQueue()
 
-	logger.Infof("jitsi: reconnecting %s/%s as %s ...", s.host, s.room, s.name)
+	logger.Infof("jitsi: full reconnect %s/%s as %s ...", s.host, s.room, s.name)
 	jSess, err := s.joinAndOpenBridge(ctx)
 	if err != nil {
 		return err
@@ -1375,11 +1450,10 @@ func (s *Session) reconnect(ctx context.Context) error {
 	if err := s.Send(nil); err != nil {
 		logger.Debugf("jitsi: epoch announce failed: %v", err)
 	}
-
 	if s.onReconnect != nil {
 		s.onReconnect(nil)
 	}
-	logger.Infof("jitsi: reconnected %s/%s; colibri-ws=%s", s.host, s.room, jSess.ColibriWS)
+	logger.Infof("jitsi: reconnected %s/%s (full); colibri-ws=%s", s.host, s.room, jSess.ColibriWS)
 	return nil
 }
 
