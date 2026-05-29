@@ -825,6 +825,32 @@ function showCreateInstanceModal() {
   wbHint.innerHTML = '<b>WB Stream больше не создаёт румы автоматически.</b> Создайте руму на <a href="https://stream.wb.ru" target="_blank" rel="noopener" class="underline">stream.wb.ru</a> и вставьте её ID в поле <b>Room ID</b>.';
   connectionSec.appendChild(wbHint);
 
+  const jitsiPresets = el('div', 'mb-3 text-xs text-gray-400 hidden flex flex-wrap items-center gap-2');
+  jitsiPresets.innerHTML = '<span>Jitsi server:</span>'
+    + '<button type="button" data-host="meet1.arbitr.ru" class="px-2 py-0.5 rounded border border-gray-600 hover:border-emerald-400 hover:text-emerald-300">meet1.arbitr.ru</button>'
+    + '<button type="button" data-host="meet.jit.si" class="px-2 py-0.5 rounded border border-gray-600 hover:border-emerald-400 hover:text-emerald-300">meet.jit.si</button>'
+    + '<button type="button" data-host="meet.cryptopro.ru" class="px-2 py-0.5 rounded border border-gray-600 hover:border-emerald-400 hover:text-emerald-300">meet.cryptopro.ru</button>'
+    + '<span class="text-gray-500">(клик подставит/заменит хост в Room ID)</span>';
+  jitsiPresets.querySelectorAll('button[data-host]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const host = btn.dataset.host;
+      const current = roomIDField.input.value.trim();
+      // If current value looks like a URL, swap the host. Otherwise prefill template.
+      const m = current.match(/^https?:\/\/[^\/]+(\/.*)?$/);
+      if (m) {
+        const tail = m[1] || '/';
+        roomIDField.input.value = 'https://' + host + tail;
+      } else if (current && !current.includes('/')) {
+        // Looks like just a room name — promote to full URL.
+        roomIDField.input.value = 'https://' + host + '/' + current;
+      } else {
+        roomIDField.input.value = 'https://' + host + '/';
+      }
+      roomIDField.input.focus();
+    });
+  });
+  connectionSec.appendChild(jitsiPresets);
+
   div.appendChild(connectionSec);
 
   // VP8 params
@@ -844,6 +870,7 @@ function showCreateInstanceModal() {
     vp8Block.classList.toggle('hidden', t !== 'vp8channel');
     dcWarn.classList.toggle('hidden', t !== 'datachannel');
     wbHint.classList.toggle('hidden', c !== 'wbstream');
+    jitsiPresets.classList.toggle('hidden', c !== 'jitsi');
     // Auto-rename
     const carriers = { jitsi: 'jitsi', telemost: 'telemost', wbstream: 'wbstream' };
     const cp = carriers[c] || c;
@@ -1055,6 +1082,31 @@ function showConfigModal(inst) {
   wbHint.innerHTML = '<b>WB Stream больше не создаёт румы автоматически.</b> Создайте руму на <a href="https://stream.wb.ru" target="_blank" rel="noopener" class="underline">stream.wb.ru</a> и вставьте её ID в поле <b>Room ID</b>.';
   div.appendChild(wbHint);
 
+  // Jitsi server presets (shown only when carrier=jitsi)
+  const jitsiPresets = el('div', 'mb-3 text-xs text-gray-400 hidden flex flex-wrap items-center gap-2');
+  jitsiPresets.innerHTML = '<span>Jitsi server:</span>'
+    + '<button type="button" data-host="meet1.arbitr.ru" class="px-2 py-0.5 rounded border border-gray-600 hover:border-emerald-400 hover:text-emerald-300">meet1.arbitr.ru</button>'
+    + '<button type="button" data-host="meet.jit.si" class="px-2 py-0.5 rounded border border-gray-600 hover:border-emerald-400 hover:text-emerald-300">meet.jit.si</button>'
+    + '<button type="button" data-host="meet.cryptopro.ru" class="px-2 py-0.5 rounded border border-gray-600 hover:border-emerald-400 hover:text-emerald-300">meet.cryptopro.ru</button>'
+    + '<span class="text-gray-500">(клик меняет хост в Room ID)</span>';
+  jitsiPresets.querySelectorAll('button[data-host]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const host = btn.dataset.host;
+      const current = roomIDField.input.value.trim();
+      const m = current.match(/^https?:\/\/[^\/]+(\/.*)?$/);
+      if (m) {
+        const tail = m[1] || '/';
+        roomIDField.input.value = 'https://' + host + tail;
+      } else if (current && !current.includes('/')) {
+        roomIDField.input.value = 'https://' + host + '/' + current;
+      } else {
+        roomIDField.input.value = 'https://' + host + '/';
+      }
+      roomIDField.input.focus();
+    });
+  });
+  div.appendChild(jitsiPresets);
+
   // Conditional visibility
   function getTransportOptions(carrier) {
     // datachannel is available but shown with warning for telemost/wbstream
@@ -1094,6 +1146,7 @@ function showConfigModal(inst) {
     vp8Block.classList.toggle('hidden', t !== 'vp8channel');
     seiBlock.classList.toggle('hidden', t !== 'seichannel');
     wbHint.classList.toggle('hidden', c !== 'wbstream');
+    jitsiPresets.classList.toggle('hidden', c !== 'jitsi');
     roomRotateBtn.disabled = (c === 'wbstream');
     roomRotateBtn.title = (c === 'wbstream') ? 'WB Stream отключил автосоздание румы' : '';
     dcWarn.classList.toggle('hidden', t !== 'datachannel');
