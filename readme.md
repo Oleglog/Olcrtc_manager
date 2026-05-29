@@ -18,6 +18,9 @@
 >   (server-side auto-gen всё ещё работает) или `telemost` (для telemost
 >   инсталлятор сам генерирует ID вида `olcrtc-XXXXXXXX`).
 
+> ### Падение звноков/комнат
+> - Для поддержания звонков/комнат используйте [infinity-room-panel](https://github.com/juushimatsu/infinity-room-panel)
+
 ## About
 
 olcRTC — across the sea.
