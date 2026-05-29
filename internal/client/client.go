@@ -373,6 +373,12 @@ func (c *Client) handleReconnect(ctx context.Context, cfg Config, cancel context
 	// reconnect callback which then drives a fresh handshake.
 	if reason == "liveness" && c.ln != nil {
 		c.ln.Reconnect("liveness")
+		// Return immediately — retryHandshake over the dead link would
+		// loop forever with "open control stream: timeout" while holding
+		// reconnectMu, blocking the carrier callback that fires once the
+		// link is actually back up. Let that callback (reason="carrier")
+		// drive the handshake when the transport is ready.
+		return
 	}
 
 	c.retryHandshake(ctx, cfg, cancel, reason)
