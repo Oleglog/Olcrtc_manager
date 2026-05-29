@@ -809,7 +809,7 @@ function showCreateInstanceModal() {
   const carrierField = makeSelectField('Carrier', icon('tag', 14), 'jitsi', ['jitsi', 'telemost', 'wbstream']);
   const transportField = makeSelectField('Transport', icon('wifi', 14), 'vp8channel', ['vp8channel', 'datachannel', 'seichannel', 'videochannel']);
   const nameField = makeInputField('Имя', icon('tag', 14), 'jitsi_olcrtc', { placeholder: 'имя инстанса' });
-  const roomIDField = makeInputField('Room ID', icon('tag', 14), '', { placeholder: 'для wbstream — создать на stream.wb.ru' });
+  const roomIDField = makeInputField('Room ID', icon('tag', 14), '', { placeholder: 'jitsi: https://meet1.arbitr.ru/yourroom · wbstream: создать на stream.wb.ru' });
 
   connGrid.appendChild(carrierField.field);
   connGrid.appendChild(transportField.field);
@@ -907,7 +907,7 @@ function showConfigModal(inst) {
   const carrierField = makeSelectField('Carrier', icon('tag', 14), inst.carrier || 'jitsi', ['jitsi', 'telemost', 'wbstream']);
   const transportField = makeSelectField('Transport', icon('wifi', 14), inst.transport || 'vp8channel', getTransportOptions(inst.carrier || 'jitsi'));
   const nameField = makeInputField('Имя', icon('tag', 14), inst.name || '', { placeholder: 'имя инстанса' });
-  const roomIDField = makeInputField('Room ID', icon('tag', 14), inst.room_id || '', { placeholder: 'для wbstream — создать на stream.wb.ru' });
+  const roomIDField = makeInputField('Room ID', icon('tag', 14), inst.room_id || '', { placeholder: 'jitsi: https://meet1.arbitr.ru/yourroom · wbstream: создать на stream.wb.ru' });
   const clientIDWrap = makeReadonlyWithRotate('Client ID', icon('shield', 14), inst.client_id || '(не задан)', async (rotateBtn) => {
     const ok = await showConfirm({
       title: 'Ротация Client ID?',

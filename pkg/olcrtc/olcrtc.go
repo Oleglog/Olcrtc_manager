@@ -15,7 +15,7 @@
 //
 //	sess, err := olcrtc.New(ctx, olcrtc.Config{
 //	    Auth:   "jitsi",
-//	    RoomID: "https://meet.cryptopro.ru/myroom",
+//	    RoomID: "https://meet1.arbitr.ru/myroom",
 //	})
 //
 // Import the implementations you need via blank imports, or call [RegisterDefaults]:

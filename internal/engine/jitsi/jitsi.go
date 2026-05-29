@@ -149,7 +149,7 @@ type bridgeOutbound struct {
 
 // New creates a new Jitsi engine session.
 //
-// cfg.URL carries the Jitsi host (e.g. "meet.cryptopro.ru") — populated by the
+// cfg.URL carries the Jitsi host (e.g. "meet1.arbitr.ru") — populated by the
 // jitsi auth provider after parsing the user-supplied room URL. cfg.Extra
 // must contain the room name under the "room" key.
 func New(_ context.Context, cfg engine.Config) (engine.Session, error) {
