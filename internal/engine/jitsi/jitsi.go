@@ -373,6 +373,9 @@ func (s *Session) openBridgeSCTP(ctx context.Context, jSess *j.Session) error {
 	if err != nil {
 		return fmt.Errorf("open bridge sctp: %w", err)
 	}
+	if br := jSess.Bridge(); br != nil {
+		br.EnableRawMode()
+	}
 	s.peerEndpoint.Store(nil)
 	s.peerVideoSSRC.Store(0)
 	s.bridgeReady.Store(true)
