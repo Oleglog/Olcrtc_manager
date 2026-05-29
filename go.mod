@@ -10,6 +10,7 @@ require (
 	github.com/magefile/mage v1.17.1
 	github.com/pion/interceptor v0.1.44
 	github.com/pion/logging v0.2.4
+	github.com/pion/rtcp v1.2.16
 	github.com/pion/rtp v1.10.1
 	github.com/pion/webrtc/v4 v4.2.12
 	github.com/xtaci/kcp-go/v5 v5.6.72
@@ -64,7 +65,6 @@ require (
 	github.com/pion/ice/v4 v4.2.5 // indirect
 	github.com/pion/mdns/v2 v2.1.0 // indirect
 	github.com/pion/randutil v0.1.0 // indirect
-	github.com/pion/rtcp v1.2.16 // indirect
 	github.com/pion/sctp v1.9.5 // indirect
 	github.com/pion/sdp/v3 v3.0.18 // indirect
 	github.com/pion/srtp/v3 v3.0.10 // indirect
