@@ -29,11 +29,14 @@ const (
 	MaxMessageSize = 16 * 1024
 	// DefaultInterval is the default interval between ping probes.
 	DefaultInterval = 10 * time.Second
-	// DefaultTimeout is the default time to wait for a pong.
-	DefaultTimeout = 5 * time.Second
+	// DefaultTimeout is the default time to wait for a pong. Generous because
+	// the ping shares the bulk smux/KCP stream: under a heavy transfer the
+	// ping byte can be head-of-line blocked behind queued data for several
+	// seconds, which is liveness-OK, not a dead link.
+	DefaultTimeout = 15 * time.Second
 	// DefaultFailures is the default number of consecutive missed pongs before
 	// the stream is marked unhealthy.
-	DefaultFailures = 3
+	DefaultFailures = 4
 )
 
 // MsgType labels a control message.

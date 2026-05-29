@@ -32,11 +32,15 @@ import (
 const (
 	defaultMaxPayloadSize = 60 * 1024
 	defaultConnectTimeout = 60 * time.Second
-	rtpBufSize            = 65536
-	outboundQueueSize     = 8192
-	inboundQueueSize      = 8192
-	canSendHighWatermark  = 90 // percent
-	keepaliveIdlePeriod   = 100 * time.Millisecond
+	rtpBufSize = 65536
+	// outboundQueueSize bounds KCP packets waiting for the paced writer. Sized
+	// to a couple of send windows so KCP's flush never blocks (a blocked
+	// WriteTo would stall KCP's update loop and delay ACKs); the paced writer
+	// keeps it drained so this depth is headroom, not standing latency.
+	outboundQueueSize    = 2048
+	inboundQueueSize     = 8192
+	canSendHighWatermark = 90 // percent
+	keepaliveIdlePeriod  = 100 * time.Millisecond
 )
 
 var (
@@ -100,6 +104,7 @@ type streamTransport struct {
 	kcpOnce       sync.Once
 	frameInterval time.Duration
 	batchSize     int
+	perTickBytes  int
 
 	// localEpoch is stamped into every outgoing VP8 frame. Explicit
 	// upper-layer resets rotate it so the peer can reset its KCP state too.
@@ -190,6 +195,17 @@ func newStreamTransport(
 	if batchSize <= 0 {
 		batchSize = defaultBatchSize
 	}
+	byteRate := opts.MaxBytesPerSec
+	if byteRate <= 0 {
+		byteRate = defaultMaxBytesPerSec
+	}
+	// Bytes we may emit per frame tick to hold the wire under byteRate. The
+	// ticker already paces at fps, so a per-tick cap bounds the rate without
+	// any token bookkeeping. Floor at one epoch header so keepalives fit.
+	perTickBytes := byteRate / fps
+	if perTickBytes < epochHdrLen {
+		perTickBytes = epochHdrLen
+	}
 
 	tr := &streamTransport{
 		stream:        stream,
@@ -201,6 +217,7 @@ func newStreamTransport(
 		writerDone:    make(chan struct{}),
 		frameInterval: time.Second / time.Duration(fps),
 		batchSize:     batchSize,
+		perTickBytes:  perTickBytes,
 		bindingToken:  bindingToken(cfg.RoomURL),
 		localEpoch:    randomEpoch(),
 		peers:         make(map[uint32]*kcpRuntime),
@@ -491,7 +508,7 @@ func (p *streamTransport) writerLoop() {
 			var sample []byte
 			select {
 			case frame := <-p.outbound:
-				sample = p.batchSample(frame)
+				sample = p.batchSample(frame, p.perTickBytes)
 				idleTicks = 0
 			default:
 				idleTicks++
@@ -511,7 +528,10 @@ func (p *streamTransport) writerLoop() {
 	}
 }
 
-func (p *streamTransport) batchSample(first []byte) []byte {
+func (p *streamTransport) batchSample(first []byte, maxBytes int) []byte {
+	if maxBytes <= 0 || maxBytes > defaultMaxPayloadSize {
+		maxBytes = defaultMaxPayloadSize
+	}
 	if len(first) <= epochHdrLen || p.batchSize <= 1 {
 		return first
 	}
@@ -528,7 +548,7 @@ func (p *streamTransport) batchSample(first []byte) []byte {
 				continue
 			}
 			payload := frame[epochHdrLen:]
-			if len(sample)+2+len(payload) > defaultMaxPayloadSize {
+			if len(sample)+2+len(payload) > maxBytes {
 				return sample
 			}
 			sample = appendBatchPacket(sample, payload)
