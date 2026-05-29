@@ -22,8 +22,7 @@ func (s *Session) Connect(ctx context.Context) error {
 		ICEServers: []webrtc.ICEServer{
 			{URLs: []string{"stun:stun.rtc.yandex.net:3478"}},
 		},
-		SDPSemantics:      webrtc.SDPSemanticsUnifiedPlan,
-		ICETransportPolicy: webrtc.ICETransportPolicyRelay,
+		SDPSemantics: webrtc.SDPSemanticsUnifiedPlan,
 	}
 
 	if err := s.setupPeerConnections(config); err != nil {
