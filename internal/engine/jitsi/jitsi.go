@@ -507,15 +507,28 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session, sctpBridge 
 			cb(track, recv)
 		}
 	})
+	var failedAt atomic.Int64
 	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		logger.Debugf("jitsi pc state: %s", state.String())
-		if state == webrtc.PeerConnectionStateFailed && !s.closed.Load() {
-			// Don't call onEnded here — on the server side that triggers
-			// cancel(ctx) and the systemd unit goes idle until restart.
-			// A transient ICE/DTLS flap (e.g. during a speedtest) is
-			// recoverable through the normal reconnect flow; let
-			// requestReconnect bring up a fresh PC and bridge.
-			s.requestReconnect("jitsi peer connection failed")
+		if s.closed.Load() {
+			return
+		}
+		switch state {
+		case webrtc.PeerConnectionStateFailed:
+			// Debounce: ICE/DTLS often flaps to Failed momentarily under
+			// load (speedtest) and recovers on its own within a second.
+			// Reconnecting on every flap caused an infinite teardown loop
+			// because the new bridge sometimes flaps again before stabilising.
+			// Only reconnect if Failed persists for >5s.
+			now := time.Now().UnixNano()
+			failedAt.Store(now)
+			time.AfterFunc(5*time.Second, func() {
+				if failedAt.Load() == now && !s.closed.Load() {
+					s.requestReconnect("jitsi peer connection failed for >5s")
+				}
+			})
+		case webrtc.PeerConnectionStateConnected:
+			failedAt.Store(0)
 		}
 	})
 
