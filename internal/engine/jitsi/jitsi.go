@@ -57,7 +57,7 @@ const (
 	defaultNick          = "olcrtc"
 	credentialKeyRoom    = "room"
 	videoTrackName       = "videochannel"
-	maxReconnects        = 5
+	maxReconnects        = 50
 	reconnectWindow      = 5 * time.Minute
 )
 
