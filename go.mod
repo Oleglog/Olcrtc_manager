@@ -16,7 +16,7 @@ require (
 	github.com/xtaci/kcp-go/v5 v5.6.72
 	github.com/xtaci/smux v1.5.57
 	github.com/zarazaex69/gr v0.0.0-20260430043628-45b595f4fef0
-	github.com/zarazaex69/j v0.0.0-20260529181825-e13370bd54a6
+	github.com/zarazaex69/j v0.0.0-20260529195601-733ba78eeac1
 	golang.org/x/crypto v0.50.0
 	golang.org/x/mobile v0.0.0-20260410095206-2cfb76559b7b
 	golang.org/x/sys v0.43.0
@@ -102,4 +102,4 @@ require (
 	rsc.io/qr v0.2.0 // indirect
 )
 
-replace github.com/zarazaex69/j => github.com/Oleglog/j v0.0.0-20260529181825-e13370bd54a6
+replace github.com/zarazaex69/j => github.com/Oleglog/j v0.0.0-20260529195601-733ba78eeac1
