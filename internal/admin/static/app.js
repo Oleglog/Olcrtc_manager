@@ -705,9 +705,7 @@ async function renderSettings(app) {
             await withLoading(updateBtn, async () => {
               try {
                 const updateRes = await api('/system/update', { method: 'POST', body: JSON.stringify({ version: res.latest_version }) });
-                showToast(updateRes.message || 'Обновление запущено. Страница перезагрузится через 90 секунд.', 'success');
-                // Reload page after 90 seconds to allow update to complete
-                setTimeout(() => { location.reload(); }, 90000);
+                showUpdateOverlay(res.latest_version);
               } catch (e) {
                 showToast('Ошибка обновления: ' + e.message, 'error');
               }
@@ -1683,6 +1681,137 @@ function showImportSubModal() {
       } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
     });
   };
+}
+
+// ── Update overlay ───────────────────────────────────────────────────────────
+function showUpdateOverlay(targetVersion) {
+  // Remove any existing overlay
+  const existing = document.getElementById('update-overlay');
+  if (existing) existing.remove();
+
+  const overlay = el('div', '');
+  overlay.id = 'update-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(1,1,2,0.95);backdrop-filter:blur(12px);display:flex;align-items:center;justify-content:center;z-index:9999;animation:fadeIn 0.3s ease-out;';
+
+  const content = el('div', '');
+  content.style.cssText = 'text-align:center;max-width:480px;padding:48px 32px;';
+
+  const spinnerWrap = el('div', '');
+  spinnerWrap.style.cssText = 'margin-bottom:32px;display:flex;justify-content:center;';
+  spinnerWrap.innerHTML = '<div style="width:64px;height:64px;border:4px solid var(--color-hairline);border-top-color:var(--color-primary);border-radius:50%;animation:spin 1s linear infinite;"></div>';
+
+  const title = el('h2', '');
+  title.style.cssText = 'font-size:28px;font-weight:600;letter-spacing:-0.6px;color:var(--color-ink);margin-bottom:12px;';
+  title.textContent = 'Обновление сервера...';
+
+  const subtitle = el('p', '');
+  subtitle.style.cssText = 'font-size:16px;color:var(--color-ink-muted);margin-bottom:24px;line-height:1.5;';
+  subtitle.textContent = 'Устанавливается версия v' + targetVersion;
+
+  const status = el('div', '');
+  status.id = 'update-status';
+  status.style.cssText = 'font-size:14px;color:var(--color-ink-subtle);margin-bottom:8px;font-family:ui-monospace,monospace;';
+  status.textContent = 'Скачивание бинарников...';
+
+  const progressBar = el('div', '');
+  progressBar.style.cssText = 'width:100%;height:4px;background:var(--color-hairline);border-radius:2px;margin-top:24px;overflow:hidden;';
+  const progressFill = el('div', '');
+  progressFill.id = 'update-progress';
+  progressFill.style.cssText = 'height:100%;background:var(--color-primary);width:10%;transition:width 0.5s ease;';
+  progressBar.appendChild(progressFill);
+
+  const elapsedEl = el('div', '');
+  elapsedEl.id = 'update-elapsed';
+  elapsedEl.style.cssText = 'font-size:13px;color:var(--color-ink-tertiary);margin-top:16px;';
+  elapsedEl.textContent = 'Прошло: 0s';
+
+  content.appendChild(spinnerWrap);
+  content.appendChild(title);
+  content.appendChild(subtitle);
+  content.appendChild(status);
+  content.appendChild(progressBar);
+  content.appendChild(elapsedEl);
+  overlay.appendChild(content);
+  document.body.appendChild(overlay);
+
+  const startTime = Date.now();
+  let attemptCount = 0;
+  let serverWentDown = false;
+
+  // Status messages timeline
+  const statusMessages = [
+    { time: 0, text: 'Скачивание бинарников...', progress: 15 },
+    { time: 10, text: 'Остановка сервисов...', progress: 30 },
+    { time: 20, text: 'Замена бинарников...', progress: 50 },
+    { time: 30, text: 'Запуск сервисов...', progress: 70 },
+    { time: 45, text: 'Ожидание готовности сервера...', progress: 85 },
+  ];
+
+  // Update elapsed time every second
+  const elapsedInterval = setInterval(() => {
+    const elapsed = Math.floor((Date.now() - startTime) / 1000);
+    elapsedEl.textContent = 'Прошло: ' + elapsed + 's';
+
+    // Update status message based on time
+    const msg = statusMessages.filter(m => elapsed >= m.time).pop();
+    if (msg) {
+      status.textContent = msg.text;
+      progressFill.style.width = msg.progress + '%';
+    }
+  }, 1000);
+
+  // Poll server every 3 seconds to check if it's back online
+  const pollInterval = setInterval(async () => {
+    attemptCount++;
+    const elapsed = Math.floor((Date.now() - startTime) / 1000);
+
+    // Don't even try to poll for first 15 seconds (server is being stopped)
+    if (elapsed < 15) return;
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2000);
+
+      const res = await fetch(API + '/system/status', {
+        headers: creds ? { 'Authorization': 'Basic ' + btoa(creds.username + ':' + creds.password) } : {},
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (res.ok) {
+        const data = await res.json();
+        // Server is back! Check if version updated
+        if (data.version && (data.version === targetVersion || data.version === 'v' + targetVersion)) {
+          // Update successful!
+          status.textContent = 'Обновление завершено! Перезагрузка...';
+          progressFill.style.width = '100%';
+          clearInterval(elapsedInterval);
+          clearInterval(pollInterval);
+          setTimeout(() => { location.reload(); }, 1500);
+        } else if (serverWentDown && elapsed > 30) {
+          // Server is back but version didn't update - still reload after a while
+          status.textContent = 'Сервер запущен. Проверка версии...';
+          if (elapsed > 60) {
+            clearInterval(elapsedInterval);
+            clearInterval(pollInterval);
+            setTimeout(() => { location.reload(); }, 1500);
+          }
+        }
+      }
+    } catch (e) {
+      // Server is down (expected during update)
+      serverWentDown = true;
+    }
+
+    // Safety: reload after 3 minutes regardless
+    if (elapsed > 180) {
+      status.textContent = 'Время ожидания истекло. Перезагрузка...';
+      clearInterval(elapsedInterval);
+      clearInterval(pollInterval);
+      setTimeout(() => { location.reload(); }, 1500);
+    }
+  }, 3000);
 }
 
 // ── Init ─────────────────────────────────────────────────────────────────────
