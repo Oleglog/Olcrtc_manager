@@ -165,6 +165,20 @@ func performUpdate(version string) error {
 		return fmt.Errorf("chmod admin: %w", err)
 	}
 
+	logger.Info("Checking running instances...")
+
+	// Get list of currently running instances BEFORE stopping
+	runningInstances := []int{}
+	ids, _ := ListInstances("/etc/olcrtc")
+	for _, id := range ids {
+		st, _ := SystemctlStatusInfo(InstanceService(id))
+		if st != nil && st.State == "running" {
+			runningInstances = append(runningInstances, id)
+		}
+	}
+
+	logger.Infof("Found %d running instances: %v", len(runningInstances), runningInstances)
+
 	logger.Info("Stopping services...")
 
 	// Stop all olcrtc services
@@ -173,8 +187,11 @@ func performUpdate(version string) error {
 	}
 
 	// Stop all instance services
-	if err := exec.Command("bash", "-c", "systemctl stop 'olcrtc@*'").Run(); err != nil {
-		logger.Warnf("stop olcrtc instances: %v", err)
+	for _, id := range runningInstances {
+		svc := InstanceService(id)
+		if err := exec.Command("systemctl", "stop", svc).Run(); err != nil {
+			logger.Warnf("stop %s: %v", svc, err)
+		}
 	}
 
 	// Wait a bit for services to stop
@@ -210,12 +227,17 @@ func performUpdate(version string) error {
 		logger.Errorf("start olcrtc-admin: %v", err)
 	}
 
-	// Start all instance services that were enabled
-	if err := exec.Command("bash", "-c", "systemctl start 'olcrtc@*'").Run(); err != nil {
-		logger.Warnf("start olcrtc instances: %v", err)
+	// Start only the instances that were running before
+	for _, id := range runningInstances {
+		svc := InstanceService(id)
+		if err := exec.Command("systemctl", "start", svc).Run(); err != nil {
+			logger.Errorf("start %s: %v", svc, err)
+		} else {
+			logger.Infof("Started %s", svc)
+		}
 	}
 
-	logger.Infof("Update to version %s completed successfully", version)
+	logger.Infof("Update to version %s completed successfully. Restarted %d instances.", version, len(runningInstances))
 	return nil
 }
 
