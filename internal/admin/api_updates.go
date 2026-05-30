@@ -181,13 +181,21 @@ func performUpdate(version string) error {
 
 	logger.Info("Stopping services...")
 
-	// Stop all olcrtc services
-	if err := exec.Command("systemctl", "stop", "olcrtc-admin").Run(); err != nil {
-		logger.Warnf("stop olcrtc-admin: %v", err)
+	// Stop admin service
+	if err := exec.Command("systemctl", "stop", "olcrtc-admin.service").Run(); err != nil {
+		logger.Warnf("stop olcrtc-admin.service: %v", err)
 	}
 
-	// Stop all instance services
+	// Stop main server service (instance 0)
+	if err := exec.Command("systemctl", "stop", "olcrtc-server.service").Run(); err != nil {
+		logger.Warnf("stop olcrtc-server.service: %v", err)
+	}
+
+	// Stop all additional instance services
 	for _, id := range runningInstances {
+		if id == 0 {
+			continue // already stopped above
+		}
 		svc := InstanceService(id)
 		if err := exec.Command("systemctl", "stop", svc).Run(); err != nil {
 			logger.Warnf("stop %s: %v", svc, err)
@@ -195,7 +203,7 @@ func performUpdate(version string) error {
 	}
 
 	// Wait a bit for services to stop
-	time.Sleep(2 * time.Second)
+	time.Sleep(3 * time.Second)
 
 	logger.Info("Replacing binaries...")
 
@@ -222,22 +230,36 @@ func performUpdate(version string) error {
 		logger.Warnf("daemon-reload: %v", err)
 	}
 
-	// Start admin service
-	if err := exec.Command("systemctl", "start", "olcrtc-admin").Run(); err != nil {
-		logger.Errorf("start olcrtc-admin: %v", err)
+	// Start main server service (instance 0)
+	if err := exec.Command("systemctl", "start", "olcrtc-server.service").Run(); err != nil {
+		logger.Errorf("start olcrtc-server.service: %v", err)
+	} else {
+		logger.Info("Started olcrtc-server.service")
 	}
 
-	// Start only the instances that were running before
+	// Start admin service
+	if err := exec.Command("systemctl", "start", "olcrtc-admin.service").Run(); err != nil {
+		logger.Errorf("start olcrtc-admin.service: %v", err)
+	} else {
+		logger.Info("Started olcrtc-admin.service")
+	}
+
+	// Start only the additional instances that were running before (skip instance 0)
+	restartedCount := 0
 	for _, id := range runningInstances {
+		if id == 0 {
+			continue // already started above as olcrtc-server.service
+		}
 		svc := InstanceService(id)
 		if err := exec.Command("systemctl", "start", svc).Run(); err != nil {
 			logger.Errorf("start %s: %v", svc, err)
 		} else {
 			logger.Infof("Started %s", svc)
+			restartedCount++
 		}
 	}
 
-	logger.Infof("Update to version %s completed successfully. Restarted %d instances.", version, len(runningInstances))
+	logger.Infof("Update to version %s completed successfully. Restarted main server + %d additional instances.", version, restartedCount)
 	return nil
 }
 
