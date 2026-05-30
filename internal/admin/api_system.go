@@ -54,7 +54,7 @@ func (s *Server) handleSystemStatus(w http.ResponseWriter, r *http.Request) {
 	vals := ReadInstanceEnv(mainEnv)
 
 	result := map[string]any{
-		"version":           "0.4.0",
+		"version":           Version,
 		"admin_version":     "0.1.0",
 		"hostname":          GetHostname(),
 		"public_ip":         s.cfg.PublicIP,

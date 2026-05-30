@@ -391,7 +391,7 @@ input::placeholder, textarea::placeholder {
   color: var(--color-ink-tertiary);
 }
 
-input:hover, select:hover, textarea:hover {
+input:hover, textarea:hover {
   border-color: var(--color-hairline-tertiary);
   background: var(--color-surface-3);
 }

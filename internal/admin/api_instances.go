@@ -134,6 +134,12 @@ func (s *Server) handleInstances(w http.ResponseWriter, r *http.Request) {
 		} else {
 			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		}
+	case "ping":
+		if r.Method == http.MethodPost {
+			s.pingInstance(w, id)
+		} else {
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		}
 	default:
 		http.Error(w, "Not Found", http.StatusNotFound)
 	}
@@ -566,4 +572,32 @@ func (s *Server) buildURIWith(vals map[string]string, clientID string) string {
 	}
 	uri += "#" + name
 	return uri
+}
+
+func (s *Server) pingInstance(w http.ResponseWriter, id int) {
+	// Check if instance is running
+	st, err := SystemctlStatusInfo(InstanceService(id))
+	if err != nil {
+		logger.Errorf("ping instance %d: %v", id, err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{
+			"error":   "failed_to_check_status",
+			"message": err.Error(),
+		})
+		return
+	}
+
+	if st == nil || st.State != "running" {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":      false,
+			"message": "Инстанс не запущен",
+		})
+		return
+	}
+
+	// Instance is running - assume connected
+	// TODO: Add actual connection check via control protocol
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":      true,
+		"message": "Инстанс запущен",
+	})
 }

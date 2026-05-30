@@ -73,6 +73,8 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/system/logs/", s.withAuth(s.withCORS(s.handleSystemLogs)))
 	s.mux.HandleFunc("/api/system/domain", s.withAuth(s.withCORS(s.handleSystemDomain)))
 	s.mux.HandleFunc("/api/system/ports", s.withAuth(s.withCORS(s.handleSystemPorts)))
+	s.mux.HandleFunc("/api/system/check-updates", s.withAuth(s.withCORS(s.handleCheckUpdates)))
+	s.mux.HandleFunc("/api/system/update", s.withAuth(s.withCORS(s.handleUpdate)))
 
 	s.mux.HandleFunc("/sub/", s.handlePublicSub)
 }
