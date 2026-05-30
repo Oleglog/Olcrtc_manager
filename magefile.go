@@ -46,13 +46,6 @@ func Cross() error {
 	targets := []struct{ os, arch string }{
 		{"linux", "amd64"},
 		{"linux", "arm64"},
-		{"windows", "amd64"},
-		{"darwin", "amd64"},
-		{"darwin", "arm64"},
-		{"freebsd", "amd64"},
-		{"freebsd", "arm64"},
-		{"openbsd", "amd64"},
-		{"openbsd", "arm64"},
 	}
 
 	for _, t := range targets {

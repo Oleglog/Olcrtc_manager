@@ -182,21 +182,7 @@ func performUpdate(version string) error {
 
 	logger.Info("Replacing binaries...")
 
-	// Backup old binaries
-	backupDir := "/usr/local/bin/olcrtc-backup-" + time.Now().Format("20060102-150405")
-	if err := os.MkdirAll(backupDir, 0755); err != nil {
-		return fmt.Errorf("create backup dir: %w", err)
-	}
-
-	// Backup existing binaries
-	if err := copyFile("/usr/local/bin/olcrtc", filepath.Join(backupDir, "olcrtc")); err != nil {
-		logger.Warnf("backup olcrtc: %v", err)
-	}
-	if err := copyFile("/usr/local/bin/olcrtc-admin", filepath.Join(backupDir, "olcrtc-admin")); err != nil {
-		logger.Warnf("backup olcrtc-admin: %v", err)
-	}
-
-	// Replace binaries
+	// Replace binaries directly (no backup needed)
 	if err := copyFile(serverPath, "/usr/local/bin/olcrtc"); err != nil {
 		return fmt.Errorf("install server binary: %w", err)
 	}
