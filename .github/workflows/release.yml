@@ -31,17 +31,35 @@ jobs:
         with:
           go-version: "1.25.x"
 
+      - name: Resolve version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG="${GITHUB_REF##*/}"
+          else
+            TAG="${{ github.event.inputs.tag }}"
+          fi
+          VERSION="${TAG#server-v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building version: $VERSION (tag: $TAG)"
+
       - name: Install Mage
         run: go install github.com/magefile/mage@latest
 
       - name: Build cross binaries
+        env:
+          OLCRTC_VERSION: ${{ steps.version.outputs.version }}
         run: mage cross
 
       - name: Build admin binaries (linux amd64/arm64)
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           mkdir -p build
-          GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o build/olcrtc-admin-linux-amd64 ./cmd/olcrtc-admin
-          GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o build/olcrtc-admin-linux-arm64 ./cmd/olcrtc-admin
+          LDFLAGS="-s -w -X github.com/openlibrecommunity/olcrtc/internal/admin.Version=${VERSION}"
+          GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "$LDFLAGS" -o build/olcrtc-admin-linux-amd64 ./cmd/olcrtc-admin
+          GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "$LDFLAGS" -o build/olcrtc-admin-linux-arm64 ./cmd/olcrtc-admin
 
       - name: List artifacts
         run: ls -la build/
