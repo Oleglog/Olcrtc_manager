@@ -63,6 +63,7 @@ type failoverConfig struct {
 func main() {
 	if err := run(); err != nil {
 		logger.Error(err)
+		flushStderrFilter()
 		os.Exit(1)
 	}
 }
