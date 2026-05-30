@@ -86,9 +86,13 @@ func TestNewDialerAndHTTPClient(t *testing.T) {
 	}
 
 	client := NewHTTPClient()
-	tr, ok := client.Transport.(*http.Transport)
+	rt, ok := client.Transport.(*retryTransport)
 	if !ok {
-		t.Fatalf("Transport type = %T, want *http.Transport", client.Transport)
+		t.Fatalf("Transport type = %T, want *protect.retryTransport", client.Transport)
+	}
+	tr, ok := rt.base.(*http.Transport)
+	if !ok {
+		t.Fatalf("base Transport type = %T, want *http.Transport", rt.base)
 	}
 	if tr.Proxy == nil || tr.DialContext == nil || tr.TLSClientConfig == nil ||
 		tr.TLSClientConfig.MinVersion != tls.VersionTLS12 || !tr.ForceAttemptHTTP2 || tr.MaxIdleConns != 10 ||
