@@ -552,7 +552,7 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session, sctpBridge 
 	// closes that race window — any source-add Jicofo emits is picked up
 	// the instant it lands on the wire.
 	s.wg.Add(1)
-	trickleCtx, trickleCancel := context.WithCancel(context.Background())
+	trickleCtx, trickleCancel := context.WithCancel(ctx)
 	s.trickleCancel = trickleCancel
 	go s.trickleDrainLoop(trickleCtx, pc, neg, jSess.LowLevel().Stanzas())
 
@@ -1350,18 +1350,7 @@ func (s *Session) reconnect(ctx context.Context) error {
 
 	s.bridgeReady.Store(false)
 
-	// Close PC only — keep the XMPP session alive.
-	s.pcMu.Lock()
-	oldPC := s.pc
-	s.pc = nil
-	s.pcMu.Unlock()
-	if s.trickleCancel != nil {
-		s.trickleCancel()
-		s.trickleCancel = nil
-	}
-	if oldPC != nil {
-		_ = oldPC.Close()
-	}
+	s.teardownPC()
 
 	s.localEpoch.Store(randomEpoch())
 	s.peerEpoch.Store(0)
@@ -1390,21 +1379,8 @@ func (s *Session) reconnect(ctx context.Context) error {
 	}
 
 	// Got session-initiate — negotiate PC and open bridge.
-	sctpBridge := jSess.ColibriWS == ""
-	if err := s.negotiatePC(ctx, jSess, sctpBridge); err != nil {
-		logger.Warnf("jitsi: negotiate after reinitiate failed: %v — full reconnect", err)
-		return s.reconnectFull(ctx)
-	}
-	if sctpBridge {
-		if err := s.openBridgeSCTP(ctx, jSess); err != nil {
-			logger.Warnf("jitsi: bridge after reinitiate failed: %v — full reconnect", err)
-			return s.reconnectFull(ctx)
-		}
-	} else {
-		if err := s.openBridgeWS(ctx, jSess); err != nil {
-			logger.Warnf("jitsi: bridge after reinitiate failed: %v — full reconnect", err)
-			return s.reconnectFull(ctx)
-		}
+	if err := s.reinitiateBridge(ctx, jSess); err != nil {
+		return err
 	}
 
 	s.peerEndpoint.Store(nil)
@@ -1421,6 +1397,45 @@ func (s *Session) reconnect(ctx context.Context) error {
 		s.onReconnect(nil)
 	}
 	logger.Infof("jitsi: reconnected %s/%s (reinitiate); colibri-ws=%s", s.host, s.room, jSess.ColibriWS)
+	return nil
+}
+
+// teardownPC closes the current PeerConnection and cancels the trickle loop.
+// Keeps the XMPP session alive.
+func (s *Session) teardownPC() {
+	s.pcMu.Lock()
+	oldPC := s.pc
+	s.pc = nil
+	s.pcMu.Unlock()
+	if s.trickleCancel != nil {
+		s.trickleCancel()
+		s.trickleCancel = nil
+	}
+	if oldPC != nil {
+		_ = oldPC.Close()
+	}
+}
+
+// reinitiateBridge negotiates a new PeerConnection and opens the bridge channel
+// (SCTP or WS depending on jSess.ColibriWS). On any failure falls back to a
+// full reconnect.
+func (s *Session) reinitiateBridge(ctx context.Context, jSess *j.Session) error {
+	sctpBridge := jSess.ColibriWS == ""
+	if err := s.negotiatePC(ctx, jSess, sctpBridge); err != nil {
+		logger.Warnf("jitsi: negotiate after reinitiate failed: %v — full reconnect", err)
+		return s.reconnectFull(ctx)
+	}
+	if sctpBridge {
+		if err := s.openBridgeSCTP(ctx, jSess); err != nil {
+			logger.Warnf("jitsi: bridge after reinitiate failed: %v — full reconnect", err)
+			return s.reconnectFull(ctx)
+		}
+	} else {
+		if err := s.openBridgeWS(ctx, jSess); err != nil {
+			logger.Warnf("jitsi: bridge after reinitiate failed: %v — full reconnect", err)
+			return s.reconnectFull(ctx)
+		}
+	}
 	return nil
 }
 
