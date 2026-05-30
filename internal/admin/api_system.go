@@ -222,6 +222,7 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
+		path = "/index.html"
 	}
 	contentType := "text/plain"
 	switch {
