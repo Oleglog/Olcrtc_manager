@@ -698,16 +698,19 @@ async function renderSettings(app) {
           updateBtn.onclick = async () => {
             const ok = await showConfirm({
               title: 'Обновить сервер?',
-              message: 'Сервер будет остановлен, обновлён и перезапущен. Это займёт несколько минут.',
+              message: 'Сервер и админка будут остановлены, обновлены и перезапущены. Это займёт 1-2 минуты. Все инстансы будут перезапущены автоматически.',
               confirmText: 'Обновить',
             });
             if (!ok) return;
             await withLoading(updateBtn, async () => {
               try {
-                await api('/system/update', { method: 'POST', body: JSON.stringify({ version: res.latest_version }) });
-                showToast('Обновление запущено. Сервер перезапустится через минуту.', 'success');
-                setTimeout(() => { location.reload(); }, 60000);
-              } catch (e) { showToast('Ошибка обновления: ' + e.message, 'error'); }
+                const updateRes = await api('/system/update', { method: 'POST', body: JSON.stringify({ version: res.latest_version }) });
+                showToast(updateRes.message || 'Обновление запущено. Страница перезагрузится через 90 секунд.', 'success');
+                // Reload page after 90 seconds to allow update to complete
+                setTimeout(() => { location.reload(); }, 90000);
+              } catch (e) {
+                showToast('Ошибка обновления: ' + e.message, 'error');
+              }
             });
           };
           updateRow.innerHTML = '';
