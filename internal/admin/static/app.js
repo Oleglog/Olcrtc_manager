@@ -262,7 +262,7 @@ async function renderDashboard(app) {
   // Header
   const header = el('div', 'flex items-center justify-between mb-6 flex-wrap gap-2');
   const titleWrap = el('div', 'flex items-center gap-2');
-  titleWrap.innerHTML = '<span class="text-emerald-400">' + icon('shield', 22) + '</span><h1 class="text-xl md:text-2xl font-semibold">olcRTC Admin</h1>';
+  titleWrap.innerHTML = '<span class="text-violet-400">' + icon('shield', 22) + '</span><h1 class="text-xl md:text-2xl font-semibold">olcRTC Admin</h1>';
   header.appendChild(titleWrap);
   const nav = el('div', 'flex gap-2');
   const settingsBtn = el('button', 'btn btn-secondary btn-sm');
@@ -797,7 +797,7 @@ function showQRModal(uri, inst) {
 function showCreateInstanceModal() {
   const div = el('div', '');
   const titleRow = el('div', 'flex items-center gap-2 mb-4');
-  titleRow.innerHTML = '<span class="text-emerald-400">' + icon('plus', 18) + '</span><h3 class="text-lg font-semibold">Создать инстанс</h3>';
+  titleRow.innerHTML = '<span class="text-violet-400">' + icon('plus', 18) + '</span><h3 class="text-lg font-semibold">Создать инстанс</h3>';
   div.appendChild(titleRow);
 
   const connectionSec = el('div', 'section mb-3');
@@ -806,8 +806,8 @@ function showCreateInstanceModal() {
   connectionSec.appendChild(connTitle);
   const connGrid = el('div', 'grid grid-cols-1 md:grid-cols-2 gap-3');
 
-  const carrierField = makeSelectField('Carrier', icon('tag', 14), 'jitsi', ['jitsi', 'telemost', 'wbstream']);
-  const transportField = makeSelectField('Transport', icon('wifi', 14), 'vp8channel', ['vp8channel', 'datachannel', 'seichannel', 'videochannel']);
+  const carrierField = makeSelectField('Провайдер', icon('tag', 14), 'jitsi', ['jitsi', 'telemost', 'wbstream']);
+  const transportField = makeSelectField('Транспорт', icon('wifi', 14), 'datachannel', ['datachannel', 'vp8channel', 'seichannel', 'videochannel']);
   const nameField = makeInputField('Имя', icon('tag', 14), 'jitsi_olcrtc', { placeholder: 'имя инстанса' });
   const roomIDField = makeInputField('Room ID', icon('tag', 14), '', { placeholder: 'jitsi: https://meet1.arbitr.ru/yourroom · wbstream: создать на stream.wb.ru' });
 
@@ -827,9 +827,9 @@ function showCreateInstanceModal() {
 
   const jitsiPresets = el('div', 'mb-3 text-xs text-gray-400 hidden flex flex-wrap items-center gap-2');
   jitsiPresets.innerHTML = '<span>Jitsi server:</span>'
-    + '<button type="button" data-host="meet1.arbitr.ru" class="px-2 py-0.5 rounded border border-gray-600 hover:border-emerald-400 hover:text-emerald-300">meet1.arbitr.ru</button>'
-    + '<button type="button" data-host="meet.jit.si" class="px-2 py-0.5 rounded border border-gray-600 hover:border-emerald-400 hover:text-emerald-300">meet.jit.si</button>'
-    + '<button type="button" data-host="meet.cryptopro.ru" class="px-2 py-0.5 rounded border border-gray-600 hover:border-emerald-400 hover:text-emerald-300">meet.cryptopro.ru</button>'
+    + '<button type="button" data-host="meet1.arbitr.ru" class="px-2 py-0.5 rounded border border-gray-600 hover:border-violet-400 hover:text-violet-300">meet1.arbitr.ru</button>'
+    + '<button type="button" data-host="meet.jit.si" class="px-2 py-0.5 rounded border border-gray-600 hover:border-violet-400 hover:text-violet-300">meet.jit.si</button>'
+    + '<button type="button" data-host="meet.cryptopro.ru" class="px-2 py-0.5 rounded border border-gray-600 hover:border-violet-400 hover:text-violet-300">meet.cryptopro.ru</button>'
     + '<span class="text-gray-500">(клик подставит/заменит хост в Room ID)</span>';
   jitsiPresets.querySelectorAll('button[data-host]').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -864,17 +864,51 @@ function showCreateInstanceModal() {
   vp8Block.appendChild(vp8Grid);
   div.appendChild(vp8Block);
 
+  function getTransportOptionsForCreate(carrier) {
+    if (carrier === 'jitsi') {
+      return ['datachannel', 'vp8channel', 'seichannel', 'videochannel'];
+    } else if (carrier === 'telemost') {
+      return ['vp8channel', 'videochannel'];
+    } else if (carrier === 'wbstream') {
+      return ['vp8channel', 'seichannel', 'videochannel'];
+    }
+    return ['vp8channel', 'datachannel', 'seichannel', 'videochannel'];
+  }
+
   function updateVisibility() {
     const t = transportField.input.value;
     const c = carrierField.input.value;
-    vp8Block.classList.toggle('hidden', t !== 'vp8channel');
-    dcWarn.classList.toggle('hidden', t !== 'datachannel');
+
+    // Update available transports based on carrier
+    const availableTransports = getTransportOptionsForCreate(c);
+    const currentTransport = transportField.input.value;
+
+    // Rebuild transport select
+    transportField.input.innerHTML = '';
+    availableTransports.forEach(tr => {
+      const opt = el('option', '', tr);
+      opt.value = tr;
+      transportField.input.appendChild(opt);
+    });
+
+    // Select current or first available
+    if (availableTransports.includes(currentTransport)) {
+      transportField.input.value = currentTransport;
+    } else {
+      transportField.input.value = availableTransports[0];
+    }
+
+    const finalTransport = transportField.input.value;
+
+    vp8Block.classList.toggle('hidden', finalTransport !== 'vp8channel');
+    dcWarn.classList.toggle('hidden', finalTransport === 'datachannel' && c === 'jitsi');
     wbHint.classList.toggle('hidden', c !== 'wbstream');
     jitsiPresets.classList.toggle('hidden', c !== 'jitsi');
+
     // Auto-rename
     const carriers = { jitsi: 'jitsi', telemost: 'telemost', wbstream: 'wbstream' };
     const cp = carriers[c] || c;
-    nameField.input.value = cp + '_olcrtc' + (t && t !== 'vp8channel' ? '_' + t : '');
+    nameField.input.value = cp + '_olcrtc' + (finalTransport && finalTransport !== 'vp8channel' ? '_' + finalTransport : '');
   }
   carrierField.input.addEventListener('change', updateVisibility);
   transportField.input.addEventListener('change', updateVisibility);
@@ -921,7 +955,7 @@ function showCreateInstanceModal() {
 function showConfigModal(inst) {
   const div = el('div', '');
   const titleRow = el('div', 'flex items-center gap-2 mb-4');
-  titleRow.innerHTML = '<span class="text-emerald-400">' + icon('sliders', 18) + '</span><h3 class="text-lg font-semibold">Настройка инстанса #' + inst.id + '</h3>';
+  titleRow.innerHTML = '<span class="text-violet-400">' + icon('sliders', 18) + '</span><h3 class="text-lg font-semibold">Настройка инстанса #' + inst.id + '</h3>';
   div.appendChild(titleRow);
 
   // ── Connection section ──
@@ -931,8 +965,8 @@ function showConfigModal(inst) {
   connectionSec.appendChild(connTitle);
   const connGrid = el('div', 'grid grid-cols-1 md:grid-cols-2 gap-3');
 
-  const carrierField = makeSelectField('Carrier', icon('tag', 14), inst.carrier || 'jitsi', ['jitsi', 'telemost', 'wbstream']);
-  const transportField = makeSelectField('Transport', icon('wifi', 14), inst.transport || 'vp8channel', getTransportOptions(inst.carrier || 'jitsi'));
+  const carrierField = makeSelectField('Провайдер', icon('tag', 14), inst.carrier || 'jitsi', ['jitsi', 'telemost', 'wbstream']);
+  const transportField = makeSelectField('Транспорт', icon('wifi', 14), inst.transport || 'vp8channel', getTransportOptions(inst.carrier || 'jitsi'));
   const nameField = makeInputField('Имя', icon('tag', 14), inst.name || '', { placeholder: 'имя инстанса' });
   const roomIDField = makeInputField('Room ID', icon('tag', 14), inst.room_id || '', { placeholder: 'jitsi: https://meet1.arbitr.ru/yourroom · wbstream: создать на stream.wb.ru' });
   const clientIDWrap = makeReadonlyWithRotate('Client ID', icon('shield', 14), inst.client_id || '(не задан)', async (rotateBtn) => {
@@ -1085,9 +1119,9 @@ function showConfigModal(inst) {
   // Jitsi server presets (shown only when carrier=jitsi)
   const jitsiPresets = el('div', 'mb-3 text-xs text-gray-400 hidden flex flex-wrap items-center gap-2');
   jitsiPresets.innerHTML = '<span>Jitsi server:</span>'
-    + '<button type="button" data-host="meet1.arbitr.ru" class="px-2 py-0.5 rounded border border-gray-600 hover:border-emerald-400 hover:text-emerald-300">meet1.arbitr.ru</button>'
-    + '<button type="button" data-host="meet.jit.si" class="px-2 py-0.5 rounded border border-gray-600 hover:border-emerald-400 hover:text-emerald-300">meet.jit.si</button>'
-    + '<button type="button" data-host="meet.cryptopro.ru" class="px-2 py-0.5 rounded border border-gray-600 hover:border-emerald-400 hover:text-emerald-300">meet.cryptopro.ru</button>'
+    + '<button type="button" data-host="meet1.arbitr.ru" class="px-2 py-0.5 rounded border border-gray-600 hover:border-violet-400 hover:text-violet-300">meet1.arbitr.ru</button>'
+    + '<button type="button" data-host="meet.jit.si" class="px-2 py-0.5 rounded border border-gray-600 hover:border-violet-400 hover:text-violet-300">meet.jit.si</button>'
+    + '<button type="button" data-host="meet.cryptopro.ru" class="px-2 py-0.5 rounded border border-gray-600 hover:border-violet-400 hover:text-violet-300">meet.cryptopro.ru</button>'
     + '<span class="text-gray-500">(клик меняет хост в Room ID)</span>';
   jitsiPresets.querySelectorAll('button[data-host]').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -1109,11 +1143,39 @@ function showConfigModal(inst) {
 
   // Conditional visibility
   function getTransportOptions(carrier) {
-    // datachannel is available but shown with warning for telemost/wbstream
+    // Матрица совместимости carrier/transport
+    // jitsi: все транспорты работают
+    // telemost: только vp8channel и videochannel (Goolom SFU ограничения)
+    // wbstream: vp8channel, seichannel, videochannel (datachannel требует canPublishData=moderator)
+    if (carrier === 'jitsi') {
+      return ['datachannel', 'vp8channel', 'seichannel', 'videochannel'];
+    } else if (carrier === 'telemost') {
+      return ['vp8channel', 'videochannel'];
+    } else if (carrier === 'wbstream') {
+      return ['vp8channel', 'seichannel', 'videochannel'];
+    }
     return ['vp8channel', 'datachannel', 'seichannel', 'videochannel'];
   }
   function updateTransportOptions() {
     const c = carrierField.input.value;
+    const availableTransports = getTransportOptions(c);
+    const currentTransport = transportField.input.value;
+
+    // Rebuild transport select options
+    transportField.input.innerHTML = '';
+    availableTransports.forEach(t => {
+      const opt = el('option', '', t);
+      opt.value = t;
+      transportField.input.appendChild(opt);
+    });
+
+    // If current transport is not available for new carrier, select first available
+    if (availableTransports.includes(currentTransport)) {
+      transportField.input.value = currentTransport;
+    } else {
+      transportField.input.value = availableTransports[0];
+    }
+
     // Auto-rename instance when carrier changes
     const curName = nameField.input.value;
     const carriers = { jitsi: 'jitsi', telemost: 'telemost', wbstream: 'wbstream' };
@@ -1138,7 +1200,7 @@ function showConfigModal(inst) {
   }
   // datachannel warning
   const dcWarn = el('div', 'p-2 mb-3 text-xs rounded border border-red-500/50 bg-red-500/10 text-red-200 hidden');
-  dcWarn.innerHTML = '<strong>Внимание:</strong> DataChannel может не работать с данным carrier. Рекомендуется <b>vp8channel</b>.';
+  dcWarn.innerHTML = '<strong>Внимание:</strong> DataChannel не работает с данным провайдером. Используйте <b>vp8channel</b>.';
   div.appendChild(dcWarn);
   function updateVisibility() {
     const t = transportField.input.value;
@@ -1149,7 +1211,8 @@ function showConfigModal(inst) {
     jitsiPresets.classList.toggle('hidden', c !== 'jitsi');
     roomRotateBtn.disabled = (c === 'wbstream');
     roomRotateBtn.title = (c === 'wbstream') ? 'WB Stream отключил автосоздание румы' : '';
-    dcWarn.classList.toggle('hidden', t !== 'datachannel');
+    // Show datachannel warning only for non-jitsi carriers
+    dcWarn.classList.toggle('hidden', !(t === 'datachannel' && c !== 'jitsi'));
   }
   carrierField.input.addEventListener('change', () => { updateTransportOptions(); });
   transportField.input.addEventListener('change', () => { updateNameFromTransport(); });
