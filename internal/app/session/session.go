@@ -191,6 +191,8 @@ type Config struct {
 	DNSServer             string
 	SOCKSProxyAddr        string
 	SOCKSProxyPort        int
+	SOCKSProxyUser        string
+	SOCKSProxyPass        string
 	Insecure              bool
 	Video                 VideoConfig
 	VP8                   VP8Config
@@ -689,6 +691,8 @@ func runOnce(
 			DNSServer:        cfg.DNSServer,
 			SOCKSProxyAddr:   cfg.SOCKSProxyAddr,
 			SOCKSProxyPort:   cfg.SOCKSProxyPort,
+			SOCKSProxyUser:   cfg.SOCKSProxyUser,
+			SOCKSProxyPass:   cfg.SOCKSProxyPass,
 			Insecure:         cfg.Insecure,
 			TransportOptions: opts,
 			Engine:           cfg.Engine,

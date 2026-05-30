@@ -111,6 +111,8 @@ type SOCKS struct {
 	Pass      string `yaml:"pass"`
 	ProxyAddr string `yaml:"proxy_addr"`
 	ProxyPort int    `yaml:"proxy_port"`
+	ProxyUser string `yaml:"proxy_user"`
+	ProxyPass string `yaml:"proxy_pass"`
 }
 
 // Engine selects a direct SFU connection when Auth.Provider is "none".
@@ -278,6 +280,8 @@ func Apply(dst session.Config, f File) session.Config {
 	dst.Insecure = dst.Insecure || f.Net.Insecure
 	dst.SOCKSProxyAddr = pickString(dst.SOCKSProxyAddr, f.SOCKS.ProxyAddr)
 	dst.SOCKSProxyPort = pickInt(dst.SOCKSProxyPort, f.SOCKS.ProxyPort)
+	dst.SOCKSProxyUser = pickString(dst.SOCKSProxyUser, f.SOCKS.ProxyUser)
+	dst.SOCKSProxyPass = pickString(dst.SOCKSProxyPass, f.SOCKS.ProxyPass)
 	dst.Video.Width = pickInt(dst.Video.Width, f.Video.Width)
 	dst.Video.Height = pickInt(dst.Video.Height, f.Video.Height)
 	dst.Video.FPS = pickInt(dst.Video.FPS, f.Video.FPS)
@@ -330,6 +334,8 @@ func ApplyProfile(base session.Config, p Profile) session.Config {
 	dst.Insecure = dst.Insecure || p.Net.Insecure
 	dst.SOCKSProxyAddr = overlayString(dst.SOCKSProxyAddr, p.SOCKS.ProxyAddr)
 	dst.SOCKSProxyPort = overlayInt(dst.SOCKSProxyPort, p.SOCKS.ProxyPort)
+	dst.SOCKSProxyUser = overlayString(dst.SOCKSProxyUser, p.SOCKS.ProxyUser)
+	dst.SOCKSProxyPass = overlayString(dst.SOCKSProxyPass, p.SOCKS.ProxyPass)
 	dst.Video.Width = overlayInt(dst.Video.Width, p.Video.Width)
 	dst.Video.Height = overlayInt(dst.Video.Height, p.Video.Height)
 	dst.Video.FPS = overlayInt(dst.Video.FPS, p.Video.FPS)
