@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -17,14 +18,59 @@ import (
 // Version is set via ldflags at build time.
 var Version = "1.8.20"
 
+// Update check cache to avoid GitHub API rate limits (60 req/hour unauthenticated)
+type updateCache struct {
+	timestamp       time.Time
+	currentVersion  string
+	latestVersion   string
+	updateAvailable bool
+	releaseURL      string
+	tagName         string
+}
+
+var (
+	updateCacheMu   sync.RWMutex
+	cachedUpdate    *updateCache
+	updateCacheTTL  = 10 * time.Minute
+)
+
 func (s *Server) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Query GitHub API for latest release
-	resp, err := http.Get("https://api.github.com/repos/Oleglog/Olcrtc_manager/releases/latest")
+	// Check cache first
+	updateCacheMu.RLock()
+	if cachedUpdate != nil && time.Since(cachedUpdate.timestamp) < updateCacheTTL {
+		cached := cachedUpdate
+		updateCacheMu.RUnlock()
+		writeJSON(w, http.StatusOK, map[string]any{
+			"current_version":  cached.currentVersion,
+			"latest_version":   cached.latestVersion,
+			"update_available": cached.updateAvailable,
+			"release_url":      cached.releaseURL,
+			"tag_name":         cached.tagName,
+			"cached":           true,
+		})
+		return
+	}
+	updateCacheMu.RUnlock()
+
+	// Query GitHub API for latest release with proper User-Agent
+	req, err := http.NewRequest("GET", "https://api.github.com/repos/Oleglog/Olcrtc_manager/releases/latest", nil)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{
+			"error":   "request_creation_failed",
+			"message": err.Error(),
+		})
+		return
+	}
+	req.Header.Set("User-Agent", "olcrtc-admin/"+Version)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
 	if err != nil {
 		logger.Errorf("check updates: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{
@@ -34,6 +80,32 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode == 403 {
+		// Rate limited - return cached value if any, even if stale
+		updateCacheMu.RLock()
+		if cachedUpdate != nil {
+			cached := cachedUpdate
+			updateCacheMu.RUnlock()
+			writeJSON(w, http.StatusOK, map[string]any{
+				"current_version":  cached.currentVersion,
+				"latest_version":   cached.latestVersion,
+				"update_available": cached.updateAvailable,
+				"release_url":      cached.releaseURL,
+				"tag_name":         cached.tagName,
+				"cached":           true,
+				"stale":            true,
+			})
+			return
+		}
+		updateCacheMu.RUnlock()
+
+		writeJSON(w, http.StatusTooManyRequests, map[string]string{
+			"error":   "rate_limited",
+			"message": "GitHub API лимит запросов исчерпан. Попробуйте через несколько минут.",
+		})
+		return
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{
@@ -62,6 +134,18 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
 	latestVersion := strings.TrimPrefix(release.TagName, "server-")
 
 	updateAvailable := latestVersion != currentVersion && release.TagName != ""
+
+	// Update cache
+	updateCacheMu.Lock()
+	cachedUpdate = &updateCache{
+		timestamp:       time.Now(),
+		currentVersion:  currentVersion,
+		latestVersion:   latestVersion,
+		updateAvailable: updateAvailable,
+		releaseURL:      release.HTMLURL,
+		tagName:         release.TagName,
+	}
+	updateCacheMu.Unlock()
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"current_version":  currentVersion,

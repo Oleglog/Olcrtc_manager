@@ -692,7 +692,10 @@ async function renderSettings(app) {
       try {
         const res = await api('/system/check-updates');
         if (res.update_available) {
-          showToast('Доступна новая версия: ' + res.latest_version, 'info');
+          let toastMsg = 'Доступна новая версия: ' + res.latest_version;
+          if (res.cached) toastMsg += ' (из кеша)';
+          if (res.stale) toastMsg = 'GitHub API лимит. Показаны последние данные: ' + res.latest_version;
+          showToast(toastMsg, 'info');
           const updateBtn = el('button', 'btn btn-primary');
           updateBtn.innerHTML = icon('download') + '<span>Обновить до ' + res.latest_version + '</span>';
           updateBtn.onclick = async () => {
@@ -715,10 +718,24 @@ async function renderSettings(app) {
           updateRow.appendChild(checkBtn);
           updateRow.appendChild(updateBtn);
         } else {
-          showToast('У вас установлена последняя версия', 'success');
+          let msg = 'У вас установлена последняя версия';
+          if (res.cached) msg += ' (из кеша)';
+          showToast(msg, 'success');
         }
       } catch (e) {
-        showToast('Ошибка проверки: ' + e.message, 'error');
+        // Parse error message for friendly display
+        let errMsg = e.message;
+        try {
+          const parsed = JSON.parse(e.message);
+          if (parsed.error === 'rate_limited') {
+            errMsg = parsed.message || 'GitHub API лимит запросов исчерпан. Попробуйте через несколько минут.';
+          } else if (parsed.error === 'github_api_error') {
+            errMsg = 'GitHub недоступен. Попробуйте позже.';
+          } else if (parsed.message) {
+            errMsg = parsed.message;
+          }
+        } catch {}
+        showToast('Ошибка проверки: ' + errMsg, 'error');
       }
     });
   };
