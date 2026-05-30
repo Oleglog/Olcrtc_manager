@@ -1,24 +1,21 @@
 package admin
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 )
 
 // Version is set via ldflags at build time.
-var Version = "1.8.19"
+var Version = "1.8.20"
 
 func (s *Server) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -101,73 +98,17 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Start update in background
-	go func() {
-		if err := performUpdate(req.Version); err != nil {
-			logger.Errorf("update failed: %v", err)
-		}
-	}()
-
-	writeJSON(w, http.StatusOK, map[string]string{
-		"message": "Обновление запущено. Сервер перезапустится через 1-2 минуты.",
-	})
-}
-
-func performUpdate(version string) error {
-	logger.Infof("Starting update to version %s", version)
-
 	// Determine architecture
 	arch := runtime.GOARCH
-	if arch == "amd64" {
-		arch = "amd64"
-	} else if arch == "arm64" {
-		arch = "arm64"
-	} else {
-		return fmt.Errorf("unsupported architecture: %s", arch)
+	if arch != "amd64" && arch != "arm64" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error":   "unsupported_arch",
+			"message": fmt.Sprintf("Unsupported architecture: %s", arch),
+		})
+		return
 	}
 
-	// Construct download URLs
-	tag := "server-v" + strings.TrimPrefix(version, "v")
-	baseURL := fmt.Sprintf("https://github.com/Oleglog/Olcrtc_manager/releases/download/%s", tag)
-
-	serverBinary := fmt.Sprintf("olcrtc-linux-%s", arch)
-	adminBinary := fmt.Sprintf("olcrtc-admin-linux-%s", arch)
-
-	serverURL := fmt.Sprintf("%s/%s", baseURL, serverBinary)
-	adminURL := fmt.Sprintf("%s/%s", baseURL, adminBinary)
-
-	// Create temp directory
-	tmpDir, err := os.MkdirTemp("", "olcrtc-update-*")
-	if err != nil {
-		return fmt.Errorf("create temp dir: %w", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	logger.Infof("Downloading binaries to %s", tmpDir)
-
-	// Download server binary
-	serverPath := filepath.Join(tmpDir, "olcrtc")
-	if err := downloadFile(serverURL, serverPath); err != nil {
-		return fmt.Errorf("download server binary: %w", err)
-	}
-
-	// Download admin binary
-	adminPath := filepath.Join(tmpDir, "olcrtc-admin")
-	if err := downloadFile(adminURL, adminPath); err != nil {
-		return fmt.Errorf("download admin binary: %w", err)
-	}
-
-	// Make binaries executable
-	if err := os.Chmod(serverPath, 0755); err != nil {
-		return fmt.Errorf("chmod server: %w", err)
-	}
-	if err := os.Chmod(adminPath, 0755); err != nil {
-		return fmt.Errorf("chmod admin: %w", err)
-	}
-
-	logger.Info("Checking running instances...")
-
-	// Get list of currently running instances BEFORE stopping
+	// Get list of currently running instances BEFORE we start anything
 	runningInstances := []int{}
 	ids, _ := ListInstances("/etc/olcrtc")
 	for _, id := range ids {
@@ -177,146 +118,144 @@ func performUpdate(version string) error {
 		}
 	}
 
-	logger.Infof("Found %d running instances: %v", len(runningInstances), runningInstances)
-
-	logger.Info("Stopping services...")
-
-	// Stop admin service
-	if err := exec.Command("systemctl", "stop", "olcrtc-admin.service").Run(); err != nil {
-		logger.Warnf("stop olcrtc-admin.service: %v", err)
-	}
-
-	// Stop main server service (instance 0)
-	if err := exec.Command("systemctl", "stop", "olcrtc-server.service").Run(); err != nil {
-		logger.Warnf("stop olcrtc-server.service: %v", err)
-	}
-
-	// Stop all additional instance services
+	// Build list of additional instance services to restart (skip 0, it's olcrtc-server.service)
+	var additionalServices []string
 	for _, id := range runningInstances {
-		if id == 0 {
-			continue // already stopped above
-		}
-		svc := InstanceService(id)
-		if err := exec.Command("systemctl", "stop", svc).Run(); err != nil {
-			logger.Warnf("stop %s: %v", svc, err)
+		if id != 0 {
+			additionalServices = append(additionalServices, InstanceService(id))
 		}
 	}
 
-	// Wait a bit for services to stop
-	time.Sleep(3 * time.Second)
+	// Generate update script
+	version := strings.TrimPrefix(req.Version, "v")
+	tag := "server-v" + version
+	repoURL := fmt.Sprintf("https://github.com/Oleglog/Olcrtc_manager/releases/download/%s", tag)
 
-	logger.Info("Replacing binaries...")
-
-	// Replace binaries directly (no backup needed)
-	if err := copyFile(serverPath, "/usr/local/bin/olcrtc"); err != nil {
-		return fmt.Errorf("install server binary: %w", err)
-	}
-	if err := copyFile(adminPath, "/usr/local/bin/olcrtc-admin"); err != nil {
-		return fmt.Errorf("install admin binary: %w", err)
+	additionalStartCmds := ""
+	for _, svc := range additionalServices {
+		additionalStartCmds += fmt.Sprintf("systemctl start %s || true\n", svc)
 	}
 
-	// Set permissions
-	if err := os.Chmod("/usr/local/bin/olcrtc", 0755); err != nil {
-		return fmt.Errorf("chmod /usr/local/bin/olcrtc: %w", err)
-	}
-	if err := os.Chmod("/usr/local/bin/olcrtc-admin", 0755); err != nil {
-		return fmt.Errorf("chmod /usr/local/bin/olcrtc-admin: %w", err)
+	script := fmt.Sprintf(`#!/bin/bash
+# olcRTC auto-update script - runs independently of admin service
+exec > /tmp/olcrtc-update.log 2>&1
+set -x
+
+echo "=== olcRTC Update Started at $(date) ==="
+echo "Updating to version: %s"
+echo "Architecture: %s"
+
+TMPDIR=$(mktemp -d)
+trap "rm -rf $TMPDIR" EXIT
+
+echo "Downloading olcrtc binary..."
+if ! curl -fsSL --max-time 60 "%s/olcrtc-linux-%s" -o "$TMPDIR/olcrtc"; then
+    echo "ERROR: Failed to download olcrtc binary"
+    # Restart admin so user knows update failed
+    systemctl start olcrtc-admin.service || true
+    exit 1
+fi
+
+echo "Downloading olcrtc-admin binary..."
+if ! curl -fsSL --max-time 60 "%s/olcrtc-admin-linux-%s" -o "$TMPDIR/olcrtc-admin"; then
+    echo "ERROR: Failed to download olcrtc-admin binary"
+    systemctl start olcrtc-admin.service || true
+    exit 1
+fi
+
+# Verify binaries are valid ELF files
+if ! file "$TMPDIR/olcrtc" | grep -q "ELF"; then
+    echo "ERROR: olcrtc binary is not a valid ELF file"
+    systemctl start olcrtc-admin.service || true
+    exit 1
+fi
+
+if ! file "$TMPDIR/olcrtc-admin" | grep -q "ELF"; then
+    echo "ERROR: olcrtc-admin binary is not a valid ELF file"
+    systemctl start olcrtc-admin.service || true
+    exit 1
+fi
+
+chmod +x "$TMPDIR/olcrtc" "$TMPDIR/olcrtc-admin"
+
+echo "Stopping services..."
+systemctl stop olcrtc-admin.service || true
+systemctl stop olcrtc-server.service || true
+%s
+
+sleep 3
+
+echo "Replacing binaries..."
+install -m 0755 "$TMPDIR/olcrtc" /usr/local/bin/olcrtc
+install -m 0755 "$TMPDIR/olcrtc-admin" /usr/local/bin/olcrtc-admin
+
+echo "Reloading systemd..."
+systemctl daemon-reload
+
+echo "Starting services..."
+systemctl start olcrtc-server.service
+sleep 2
+systemctl start olcrtc-admin.service
+sleep 1
+%s
+
+echo "=== Update Completed at $(date) ==="
+`,
+		version,
+		arch,
+		repoURL, arch,
+		repoURL, arch,
+		buildStopCommands(additionalServices),
+		additionalStartCmds,
+	)
+
+	scriptPath := "/tmp/olcrtc-update.sh"
+	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
+		logger.Errorf("failed to create update script: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{
+			"error":   "failed_to_create_script",
+			"message": err.Error(),
+		})
+		return
 	}
 
-	logger.Info("Restarting services...")
+	// Send response BEFORE starting update
+	writeJSON(w, http.StatusOK, map[string]string{
+		"message": "Обновление запущено. Сервер перезапустится через 1-2 минуты.",
+	})
 
-	// Restart services
-	if err := exec.Command("systemctl", "daemon-reload").Run(); err != nil {
-		logger.Warnf("daemon-reload: %v", err)
-	}
+	// Start update script in background, fully detached
+	go func() {
+		// Wait a bit to ensure response is sent
+		time.Sleep(2 * time.Second)
 
-	// Start main server service (instance 0)
-	if err := exec.Command("systemctl", "start", "olcrtc-server.service").Run(); err != nil {
-		logger.Errorf("start olcrtc-server.service: %v", err)
-	} else {
-		logger.Info("Started olcrtc-server.service")
-	}
-
-	// Start admin service
-	if err := exec.Command("systemctl", "start", "olcrtc-admin.service").Run(); err != nil {
-		logger.Errorf("start olcrtc-admin.service: %v", err)
-	} else {
-		logger.Info("Started olcrtc-admin.service")
-	}
-
-	// Start only the additional instances that were running before (skip instance 0)
-	restartedCount := 0
-	for _, id := range runningInstances {
-		if id == 0 {
-			continue // already started above as olcrtc-server.service
+		cmd := exec.Command("bash", scriptPath)
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			Setsid: true, // Create new session, detach from parent
 		}
-		svc := InstanceService(id)
-		if err := exec.Command("systemctl", "start", svc).Run(); err != nil {
-			logger.Errorf("start %s: %v", svc, err)
-		} else {
-			logger.Infof("Started %s", svc)
-			restartedCount++
+		// Redirect stdout/stderr to /dev/null so process doesn't depend on parent
+		devNull, _ := os.Open(os.DevNull)
+		if devNull != nil {
+			cmd.Stdout = devNull
+			cmd.Stderr = devNull
+			cmd.Stdin = devNull
 		}
-	}
 
-	logger.Infof("Update to version %s completed successfully. Restarted main server + %d additional instances.", version, restartedCount)
-	return nil
+		if err := cmd.Start(); err != nil {
+			logger.Errorf("failed to start update script: %v", err)
+			return
+		}
+
+		// Don't wait for the process - it will outlive us
+		_ = cmd.Process.Release()
+		logger.Info("Update script started, admin service will restart after binaries are replaced")
+	}()
 }
 
-func downloadFile(url, dest string) error {
-	resp, err := http.Get(url)
-	if err != nil {
-		return err
+func buildStopCommands(services []string) string {
+	cmds := ""
+	for _, svc := range services {
+		cmds += fmt.Sprintf("systemctl stop %s || true\n", svc)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("download failed: HTTP %d", resp.StatusCode)
-	}
-
-	out, err := os.Create(dest)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
-	_, err = io.Copy(out, resp.Body)
-	return err
-}
-
-func copyFile(src, dst string) error {
-	source, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer source.Close()
-
-	destination, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer destination.Close()
-
-	_, err = io.Copy(destination, source)
-	return err
-}
-
-func verifyChecksum(filePath, expectedChecksum string) error {
-	f, err := os.Open(filePath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return err
-	}
-
-	actualChecksum := hex.EncodeToString(h.Sum(nil))
-	if actualChecksum != expectedChecksum {
-		return fmt.Errorf("checksum mismatch: expected %s, got %s", expectedChecksum, actualChecksum)
-	}
-
-	return nil
+	return cmds
 }
