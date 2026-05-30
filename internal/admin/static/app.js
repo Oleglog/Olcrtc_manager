@@ -262,7 +262,7 @@ async function renderDashboard(app) {
   // Header
   const header = el('div', 'flex items-center justify-between mb-6 flex-wrap gap-2');
   const titleWrap = el('div', 'flex items-center gap-2');
-  titleWrap.innerHTML = '<span class="text-violet-400">' + icon('shield', 22) + '</span><h1 class="text-xl md:text-2xl font-semibold">olcRTC Admin</h1>';
+  titleWrap.innerHTML = '<span style="color: var(--color-primary)">' + icon('shield', 22) + '</span><h1 class="text-xl md:text-2xl font-semibold">olcRTC Admin</h1>';
   header.appendChild(titleWrap);
   const nav = el('div', 'flex gap-2');
   const settingsBtn = el('button', 'btn btn-secondary btn-sm');
@@ -797,7 +797,7 @@ function showQRModal(uri, inst) {
 function showCreateInstanceModal() {
   const div = el('div', '');
   const titleRow = el('div', 'flex items-center gap-2 mb-4');
-  titleRow.innerHTML = '<span class="text-violet-400">' + icon('plus', 18) + '</span><h3 class="text-lg font-semibold">Создать инстанс</h3>';
+  titleRow.innerHTML = '<span style="color: var(--color-primary)">' + icon('plus', 18) + '</span><h3 class="text-lg font-semibold">Создать инстанс</h3>';
   div.appendChild(titleRow);
 
   const connectionSec = el('div', 'section mb-3');
@@ -827,11 +827,19 @@ function showCreateInstanceModal() {
 
   const jitsiPresets = el('div', 'mb-3 text-xs text-gray-400 hidden flex flex-wrap items-center gap-2');
   jitsiPresets.innerHTML = '<span>Jitsi server:</span>'
-    + '<button type="button" data-host="meet1.arbitr.ru" class="px-2 py-0.5 rounded border border-gray-600 hover:border-violet-400 hover:text-violet-300">meet1.arbitr.ru</button>'
-    + '<button type="button" data-host="meet.jit.si" class="px-2 py-0.5 rounded border border-gray-600 hover:border-violet-400 hover:text-violet-300">meet.jit.si</button>'
-    + '<button type="button" data-host="meet.cryptopro.ru" class="px-2 py-0.5 rounded border border-gray-600 hover:border-violet-400 hover:text-violet-300">meet.cryptopro.ru</button>'
+    + '<button type="button" data-host="meet1.arbitr.ru" class="px-2 py-0.5 rounded border" style="border-color: var(--color-hairline); transition: all 0.15s;">meet1.arbitr.ru</button>'
+    + '<button type="button" data-host="meet.jit.si" class="px-2 py-0.5 rounded border" style="border-color: var(--color-hairline); transition: all 0.15s;">meet.jit.si</button>'
+    + '<button type="button" data-host="meet.cryptopro.ru" class="px-2 py-0.5 rounded border" style="border-color: var(--color-hairline); transition: all 0.15s;">meet.cryptopro.ru</button>'
     + '<span class="text-gray-500">(клик подставит/заменит хост в Room ID)</span>';
   jitsiPresets.querySelectorAll('button[data-host]').forEach((btn) => {
+    btn.addEventListener('mouseenter', () => {
+      btn.style.borderColor = 'var(--color-primary)';
+      btn.style.color = 'var(--color-primary)';
+    });
+    btn.addEventListener('mouseleave', () => {
+      btn.style.borderColor = 'var(--color-hairline)';
+      btn.style.color = '';
+    });
     btn.addEventListener('click', () => {
       const host = btn.dataset.host;
       const current = roomIDField.input.value.trim();
@@ -955,7 +963,7 @@ function showCreateInstanceModal() {
 function showConfigModal(inst) {
   const div = el('div', '');
   const titleRow = el('div', 'flex items-center gap-2 mb-4');
-  titleRow.innerHTML = '<span class="text-violet-400">' + icon('sliders', 18) + '</span><h3 class="text-lg font-semibold">Настройка инстанса #' + inst.id + '</h3>';
+  titleRow.innerHTML = '<span style="color: var(--color-primary)">' + icon('sliders', 18) + '</span><h3 class="text-lg font-semibold">Настройка инстанса #' + inst.id + '</h3>';
   div.appendChild(titleRow);
 
   // ── Connection section ──
@@ -1119,11 +1127,19 @@ function showConfigModal(inst) {
   // Jitsi server presets (shown only when carrier=jitsi)
   const jitsiPresets = el('div', 'mb-3 text-xs text-gray-400 hidden flex flex-wrap items-center gap-2');
   jitsiPresets.innerHTML = '<span>Jitsi server:</span>'
-    + '<button type="button" data-host="meet1.arbitr.ru" class="px-2 py-0.5 rounded border border-gray-600 hover:border-violet-400 hover:text-violet-300">meet1.arbitr.ru</button>'
-    + '<button type="button" data-host="meet.jit.si" class="px-2 py-0.5 rounded border border-gray-600 hover:border-violet-400 hover:text-violet-300">meet.jit.si</button>'
-    + '<button type="button" data-host="meet.cryptopro.ru" class="px-2 py-0.5 rounded border border-gray-600 hover:border-violet-400 hover:text-violet-300">meet.cryptopro.ru</button>'
+    + '<button type="button" data-host="meet1.arbitr.ru" class="px-2 py-0.5 rounded border" style="border-color: var(--color-hairline); transition: all 0.15s;">meet1.arbitr.ru</button>'
+    + '<button type="button" data-host="meet.jit.si" class="px-2 py-0.5 rounded border" style="border-color: var(--color-hairline); transition: all 0.15s;">meet.jit.si</button>'
+    + '<button type="button" data-host="meet.cryptopro.ru" class="px-2 py-0.5 rounded border" style="border-color: var(--color-hairline); transition: all 0.15s;">meet.cryptopro.ru</button>'
     + '<span class="text-gray-500">(клик меняет хост в Room ID)</span>';
   jitsiPresets.querySelectorAll('button[data-host]').forEach((btn) => {
+    btn.addEventListener('mouseenter', () => {
+      btn.style.borderColor = 'var(--color-primary)';
+      btn.style.color = 'var(--color-primary)';
+    });
+    btn.addEventListener('mouseleave', () => {
+      btn.style.borderColor = 'var(--color-hairline)';
+      btn.style.color = '';
+    });
     btn.addEventListener('click', () => {
       const host = btn.dataset.host;
       const current = roomIDField.input.value.trim();
