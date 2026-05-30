@@ -705,14 +705,14 @@ async function renderSettings(app) {
               confirmText: 'Обновить',
             });
             if (!ok) return;
-            await withLoading(updateBtn, async () => {
-              try {
-                const updateRes = await api('/system/update', { method: 'POST', body: JSON.stringify({ version: res.latest_version }) });
-                showUpdateOverlay(res.latest_version);
-              } catch (e) {
-                showToast('Ошибка обновления: ' + e.message, 'error');
-              }
-            });
+            // Show overlay BEFORE the request — admin server may kill itself
+            // before responding, causing fetch to throw. Overlay must already be up.
+            showUpdateOverlay(res.latest_version);
+            try {
+              await api('/system/update', { method: 'POST', body: JSON.stringify({ version: res.latest_version }) });
+            } catch (e) {
+              // Network errors expected (admin restarts itself); overlay polls for recovery
+            }
           };
           updateRow.innerHTML = '';
           updateRow.appendChild(checkBtn);
