@@ -2,7 +2,7 @@
 
 /* ── Design Tokens ────────────────────────────────────────────────────────── */
 :root {
-  /* Colors */
+  /* Dark theme (default) */
   --color-primary: #5e6ad2;
   --color-primary-hover: #828fff;
   --color-primary-focus: #5e69d1;
@@ -16,6 +16,7 @@
   --color-surface-3: #18191a;
   --color-hairline: #23252a;
   --color-hairline-strong: #34343a;
+  --color-hairline-tertiary: #3e3e44;
   --color-success: #27a644;
   --color-error: #f43f5e;
 
@@ -35,6 +36,26 @@
   --spacing-xl: 32px;
 }
 
+/* Light theme */
+[data-theme="light"] {
+  --color-primary: #5e6ad2;
+  --color-primary-hover: #4c5bc4;
+  --color-primary-focus: #5e69d1;
+  --color-ink: #18191a;
+  --color-ink-muted: #3e3e44;
+  --color-ink-subtle: #62666d;
+  --color-ink-tertiary: #8a8f98;
+  --color-canvas: #ffffff;
+  --color-surface-1: #f5f6f6;
+  --color-surface-2: #ebebec;
+  --color-surface-3: #e0e1e2;
+  --color-hairline: #d0d1d2;
+  --color-hairline-strong: #b0b1b2;
+  --color-hairline-tertiary: #9a9b9c;
+  --color-success: #27a644;
+  --color-error: #dc2626;
+}
+
 body {
   font-family: -apple-system, system-ui, 'SF Pro Display', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   background: var(--color-canvas);
@@ -43,6 +64,47 @@ body {
   font-weight: 400;
   line-height: 1.5;
   letter-spacing: -0.05px;
+  transition: background 0.3s ease, color 0.3s ease;
+}
+
+/* ── Animations ─────────────────────────────────────────────────────────── */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.fade-in {
+  animation: fadeIn 0.3s ease-out;
+}
+
+.slide-in {
+  animation: slideIn 0.3s ease-out;
 }
 
 /* ── Cards & layout ─────────────────────────────────────────────────────── */
@@ -50,15 +112,17 @@ body {
   background: var(--color-surface-1);
   border: 1px solid var(--color-hairline);
   border-radius: var(--rounded-lg);
+  animation: fadeIn 0.3s ease-out;
 }
 
 .card-hover {
-  transition: border-color .15s, transform .15s;
+  transition: border-color .2s ease, transform .2s ease, box-shadow .2s ease;
 }
 
 .card-hover:hover {
   border-color: var(--color-hairline-strong);
-  transform: translateY(-1px);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
 }
 
 .section-title {
@@ -296,8 +360,8 @@ pre.logs {
 
 /* ── Form controls ──────────────────────────────────────────────────────── */
 input, select, textarea {
-  background: var(--color-surface-1);
-  border: 1px solid var(--color-hairline);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-hairline-strong);
   color: var(--color-ink);
   padding: 8px 12px;
   border-radius: var(--rounded-md);
@@ -306,8 +370,16 @@ input, select, textarea {
   font-size: 16px;
   line-height: 1.5;
   letter-spacing: -0.05px;
-  transition: border-color .15s, box-shadow .15s;
+  transition: border-color .15s, box-shadow .15s, background .15s;
   min-height: 40px;
+}
+
+select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23d0d6e0' d='M6 9L1 4h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 32px;
+  appearance: none;
 }
 
 textarea {
@@ -319,16 +391,23 @@ input::placeholder, textarea::placeholder {
   color: var(--color-ink-tertiary);
 }
 
+input:hover, select:hover, textarea:hover {
+  border-color: var(--color-hairline-tertiary);
+  background: var(--color-surface-3);
+}
+
 input:focus, select:focus, textarea:focus {
   outline: none;
-  border-color: var(--color-primary-focus);
-  box-shadow: 0 0 0 2px rgba(94,106,210,0.2);
+  border-color: var(--color-primary);
+  background: var(--color-surface-2);
+  box-shadow: 0 0 0 3px rgba(94,106,210,0.15);
 }
 
 input:disabled, input[readonly] {
   color: var(--color-ink-subtle);
-  background: var(--color-canvas);
+  background: var(--color-surface-1);
   border-color: var(--color-hairline);
+  opacity: 0.6;
 }
 
 .field {

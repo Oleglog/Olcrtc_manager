@@ -27,6 +27,23 @@ async function api(path, opts = {}) {
   return res.json();
 }
 
+// ── Theme helper ─────────────────────────────────────────────────────────────
+function getTheme() {
+  return localStorage.getItem('olcrtc_theme') || 'dark';
+}
+
+function setTheme(theme) {
+  localStorage.setItem('olcrtc_theme', theme);
+  document.documentElement.setAttribute('data-theme', theme);
+}
+
+function toggleTheme() {
+  const current = getTheme();
+  const next = current === 'dark' ? 'light' : 'dark';
+  setTheme(next);
+  return next;
+}
+
 // ── DOM helpers ──────────────────────────────────────────────────────────────
 function el(type, cls, text) {
   const e = document.createElement(type);
@@ -63,7 +80,9 @@ const ICONS = {
   'download': '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
   'rotate-ccw': '<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>',
   'shield': '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
-  'sliders-horizontal': '<line x1="21" y1="4" x2="14" y2="4"/><line x1="10" y1="4" x2="3" y2="4"/><line x1="21" y1="12" x2="12" y2="12"/><line x1="8" y1="12" x2="3" y2="12"/><line x1="21" y1="20" x2="16" y2="20"/><line x1="12" y1="20" x2="3" y2="20"/><line x1="14" y1="2" x2="14" y2="6"/><line x1="8" y1="10" x2="8" y2="14"/><line x1="16" y1="18" x2="16" y2="22"/>'
+  'sliders-horizontal': '<line x1="21" y1="4" x2="14" y2="4"/><line x1="10" y1="4" x2="3" y2="4"/><line x1="21" y1="12" x2="12" y2="12"/><line x1="8" y1="12" x2="3" y2="12"/><line x1="21" y1="20" x2="16" y2="20"/><line x1="12" y1="20" x2="3" y2="20"/><line x1="14" y1="2" x2="14" y2="6"/><line x1="8" y1="10" x2="8" y2="14"/><line x1="16" y1="18" x2="16" y2="22"/>',
+  'sun': '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>',
+  'moon': '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>'
 };
 
 function icon(name, sz) {
@@ -265,6 +284,14 @@ async function renderDashboard(app) {
   titleWrap.innerHTML = '<span style="color: var(--color-primary)">' + icon('shield', 22) + '</span><h1 class="text-xl md:text-2xl font-semibold">olcRTC Admin</h1>';
   header.appendChild(titleWrap);
   const nav = el('div', 'flex gap-2');
+  const themeBtn = el('button', 'btn btn-secondary btn-sm');
+  themeBtn.setAttribute('aria-label', 'Переключить тему');
+  const currentTheme = getTheme();
+  themeBtn.innerHTML = currentTheme === 'dark' ? icon('sun') + '<span class="hidden sm:inline">Светлая</span>' : icon('moon') + '<span class="hidden sm:inline">Тёмная</span>';
+  themeBtn.onclick = () => {
+    const newTheme = toggleTheme();
+    themeBtn.innerHTML = newTheme === 'dark' ? icon('sun') + '<span class="hidden sm:inline">Светлая</span>' : icon('moon') + '<span class="hidden sm:inline">Тёмная</span>';
+  };
   const settingsBtn = el('button', 'btn btn-secondary btn-sm');
   settingsBtn.setAttribute('aria-label', 'Настройки');
   settingsBtn.innerHTML = icon('settings') + '<span class="hidden sm:inline">Настройки</span>';
@@ -273,6 +300,7 @@ async function renderDashboard(app) {
   logoutBtn.setAttribute('aria-label', 'Выход');
   logoutBtn.innerHTML = icon('log-out') + '<span class="hidden sm:inline">Выход</span>';
   logoutBtn.onclick = () => { creds = null; localStorage.removeItem('olcrtc_creds'); route('/login'); };
+  nav.appendChild(themeBtn);
   nav.appendChild(settingsBtn);
   nav.appendChild(logoutBtn);
   header.appendChild(nav);
@@ -443,6 +471,23 @@ function renderInstanceCard(inst) {
   qrBtn.setAttribute('aria-label', 'Показать QR-код');
   qrBtn.innerHTML = icon('qr-code') + '<span>QR</span>';
   qrBtn.onclick = () => showQRModal(inst.uri, inst);
+  const pingBtn = el('button', 'btn btn-secondary btn-sm');
+  pingBtn.setAttribute('aria-label', 'Проверить соединение');
+  pingBtn.innerHTML = icon('wifi') + '<span>Пинг</span>';
+  pingBtn.onclick = async () => {
+    await withLoading(pingBtn, async () => {
+      try {
+        const res = await api('/instances/' + inst.id + '/ping', { method: 'POST' });
+        if (res && res.ok) {
+          showToast('Инстанс подключён к руме ✓', 'success');
+        } else {
+          showToast(res.message || 'Инстанс не подключён', 'error');
+        }
+      } catch (e) {
+        showToast('Ошибка пинга: ' + e.message, 'error');
+      }
+    });
+  };
   const cfgBtn = el('button', 'btn btn-secondary btn-sm');
   cfgBtn.setAttribute('aria-label', 'Настройки инстанса');
   cfgBtn.innerHTML = icon('sliders') + '<span>Настройки</span>';
@@ -477,6 +522,7 @@ function renderInstanceCard(inst) {
   };
   actions.appendChild(uriBtn);
   actions.appendChild(qrBtn);
+  actions.appendChild(pingBtn);
   actions.appendChild(cfgBtn);
   actions.appendChild(startStopBtn);
   actions.appendChild(restartBtn);
@@ -631,6 +677,53 @@ async function renderSettings(app) {
     <div class="text-sm text-gray-300">Admin UI: <span class="copyable">${sys.admin_port || '-'}</span></div>
     <div class="text-sm text-gray-300">Подписки: <span class="copyable">${sys.sub_port || '-'}</span></div>`;
   card.appendChild(portBlock);
+
+  // Server Updates
+  const updateBlock = el('div', '');
+  updateBlock.innerHTML = '<h3 class="font-semibold mb-2 inline-flex items-center gap-2">' + icon('download', 16) + '<span>Обновления</span></h3>';
+  const versionInfo = el('div', 'text-sm mb-3');
+  versionInfo.innerHTML = '<div class="text-gray-300">Текущая версия: <span class="copyable">' + (sys.version || '-') + '</span></div>';
+  updateBlock.appendChild(versionInfo);
+  const updateRow = el('div', 'flex gap-2 flex-wrap');
+  const checkBtn = el('button', 'btn btn-secondary');
+  checkBtn.innerHTML = icon('refresh-cw') + '<span>Проверить обновления</span>';
+  checkBtn.onclick = async () => {
+    await withLoading(checkBtn, async () => {
+      try {
+        const res = await api('/system/check-updates');
+        if (res.update_available) {
+          showToast('Доступна новая версия: ' + res.latest_version, 'info');
+          const updateBtn = el('button', 'btn btn-primary');
+          updateBtn.innerHTML = icon('download') + '<span>Обновить до ' + res.latest_version + '</span>';
+          updateBtn.onclick = async () => {
+            const ok = await showConfirm({
+              title: 'Обновить сервер?',
+              message: 'Сервер будет остановлен, обновлён и перезапущен. Это займёт несколько минут.',
+              confirmText: 'Обновить',
+            });
+            if (!ok) return;
+            await withLoading(updateBtn, async () => {
+              try {
+                await api('/system/update', { method: 'POST', body: JSON.stringify({ version: res.latest_version }) });
+                showToast('Обновление запущено. Сервер перезапустится через минуту.', 'success');
+                setTimeout(() => { location.reload(); }, 60000);
+              } catch (e) { showToast('Ошибка обновления: ' + e.message, 'error'); }
+            });
+          };
+          updateRow.innerHTML = '';
+          updateRow.appendChild(checkBtn);
+          updateRow.appendChild(updateBtn);
+        } else {
+          showToast('У вас установлена последняя версия', 'success');
+        }
+      } catch (e) {
+        showToast('Ошибка проверки: ' + e.message, 'error');
+      }
+    });
+  };
+  updateRow.appendChild(checkBtn);
+  updateBlock.appendChild(updateRow);
+  card.appendChild(updateBlock);
 
   // Security
   const secBlock = el('div', '');
@@ -873,43 +966,51 @@ function showCreateInstanceModal() {
   div.appendChild(vp8Block);
 
   function getTransportOptionsForCreate(carrier) {
+    // Всегда возвращаем все транспорты
+    return ['datachannel', 'vp8channel', 'seichannel', 'videochannel'];
+  }
+
+  function isTransportCompatibleForCreate(carrier, transport) {
     if (carrier === 'jitsi') {
-      return ['datachannel', 'vp8channel', 'seichannel', 'videochannel'];
+      return true;
     } else if (carrier === 'telemost') {
-      return ['vp8channel', 'videochannel'];
+      return transport === 'vp8channel' || transport === 'videochannel';
     } else if (carrier === 'wbstream') {
-      return ['vp8channel', 'seichannel', 'videochannel'];
+      return transport === 'vp8channel' || transport === 'seichannel' || transport === 'videochannel';
     }
-    return ['vp8channel', 'datachannel', 'seichannel', 'videochannel'];
+    return true;
   }
 
   function updateVisibility() {
     const t = transportField.input.value;
     const c = carrierField.input.value;
 
-    // Update available transports based on carrier
-    const availableTransports = getTransportOptionsForCreate(c);
+    // Update available transports with warnings
+    const allTransports = getTransportOptionsForCreate(c);
     const currentTransport = transportField.input.value;
 
-    // Rebuild transport select
+    // Rebuild transport select with warnings
     transportField.input.innerHTML = '';
-    availableTransports.forEach(tr => {
+    allTransports.forEach(tr => {
       const opt = el('option', '', tr);
       opt.value = tr;
+      if (!isTransportCompatibleForCreate(c, tr)) {
+        opt.textContent = tr + ' ⚠️ (несовместим)';
+        opt.style.color = '#f59e0b';
+      }
       transportField.input.appendChild(opt);
     });
 
-    // Select current or first available
-    if (availableTransports.includes(currentTransport)) {
+    // Restore selection
+    if (allTransports.includes(currentTransport)) {
       transportField.input.value = currentTransport;
-    } else {
-      transportField.input.value = availableTransports[0];
     }
 
     const finalTransport = transportField.input.value;
+    const isCompatible = isTransportCompatibleForCreate(c, finalTransport);
 
     vp8Block.classList.toggle('hidden', finalTransport !== 'vp8channel');
-    dcWarn.classList.toggle('hidden', finalTransport === 'datachannel' && c === 'jitsi');
+    dcWarn.classList.toggle('hidden', isCompatible || finalTransport !== 'datachannel');
     wbHint.classList.toggle('hidden', c !== 'wbstream');
     jitsiPresets.classList.toggle('hidden', c !== 'jitsi');
 
@@ -1159,37 +1260,42 @@ function showConfigModal(inst) {
 
   // Conditional visibility
   function getTransportOptions(carrier) {
-    // Матрица совместимости carrier/transport
-    // jitsi: все транспорты работают
-    // telemost: только vp8channel и videochannel (Goolom SFU ограничения)
-    // wbstream: vp8channel, seichannel, videochannel (datachannel требует canPublishData=moderator)
-    if (carrier === 'jitsi') {
-      return ['datachannel', 'vp8channel', 'seichannel', 'videochannel'];
-    } else if (carrier === 'telemost') {
-      return ['vp8channel', 'videochannel'];
-    } else if (carrier === 'wbstream') {
-      return ['vp8channel', 'seichannel', 'videochannel'];
-    }
-    return ['vp8channel', 'datachannel', 'seichannel', 'videochannel'];
+    // Всегда возвращаем все транспорты, но помечаем несовместимые
+    return ['datachannel', 'vp8channel', 'seichannel', 'videochannel'];
   }
+
+  function isTransportCompatible(carrier, transport) {
+    // Проверка совместимости carrier/transport
+    if (carrier === 'jitsi') {
+      return true; // jitsi поддерживает все транспорты
+    } else if (carrier === 'telemost') {
+      return transport === 'vp8channel' || transport === 'videochannel';
+    } else if (carrier === 'wbstream') {
+      return transport === 'vp8channel' || transport === 'seichannel' || transport === 'videochannel';
+    }
+    return true;
+  }
+
   function updateTransportOptions() {
     const c = carrierField.input.value;
-    const availableTransports = getTransportOptions(c);
     const currentTransport = transportField.input.value;
 
-    // Rebuild transport select options
+    // Rebuild transport select options with warnings
     transportField.input.innerHTML = '';
-    availableTransports.forEach(t => {
+    const allTransports = ['datachannel', 'vp8channel', 'seichannel', 'videochannel'];
+    allTransports.forEach(t => {
       const opt = el('option', '', t);
       opt.value = t;
+      if (!isTransportCompatible(c, t)) {
+        opt.textContent = t + ' ⚠️ (несовместим)';
+        opt.style.color = '#f59e0b';
+      }
       transportField.input.appendChild(opt);
     });
 
-    // If current transport is not available for new carrier, select first available
-    if (availableTransports.includes(currentTransport)) {
+    // Restore current selection
+    if (allTransports.includes(currentTransport)) {
       transportField.input.value = currentTransport;
-    } else {
-      transportField.input.value = availableTransports[0];
     }
 
     // Auto-rename instance when carrier changes
@@ -1577,5 +1683,9 @@ function showImportSubModal() {
 }
 
 // ── Init ─────────────────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', render);
+document.addEventListener('DOMContentLoaded', () => {
+  // Initialize theme
+  setTheme(getTheme());
+  render();
+});
 })();
