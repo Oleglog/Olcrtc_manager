@@ -224,31 +224,45 @@ echo "=== Update Completed at $(date) ==="
 		"message": "Обновление запущено. Сервер перезапустится через 1-2 минуты.",
 	})
 
-	// Start update script in background, fully detached
+	// Start update script in a separate transient systemd unit
+	// This detaches it from admin service cgroup, so admin can stop without killing the script
 	go func() {
 		// Wait a bit to ensure response is sent
 		time.Sleep(2 * time.Second)
 
-		cmd := exec.Command("bash", scriptPath)
-		cmd.SysProcAttr = &syscall.SysProcAttr{
-			Setsid: true, // Create new session, detach from parent
-		}
-		// Redirect stdout/stderr to /dev/null so process doesn't depend on parent
-		devNull, _ := os.Open(os.DevNull)
-		if devNull != nil {
-			cmd.Stdout = devNull
-			cmd.Stderr = devNull
-			cmd.Stdin = devNull
-		}
+		// Use systemd-run to create a transient unit independent of admin service
+		cmd := exec.Command("systemd-run",
+			"--no-block",
+			"--collect",
+			"--unit=olcrtc-update",
+			"--description=olcRTC auto-update",
+			"bash", scriptPath,
+		)
 
-		if err := cmd.Start(); err != nil {
-			logger.Errorf("failed to start update script: %v", err)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			logger.Errorf("failed to start systemd-run update: %v, output: %s", err, string(output))
+			// Fallback: try to run directly with setsid
+			fallback := exec.Command("setsid", "bash", scriptPath)
+			fallback.SysProcAttr = &syscall.SysProcAttr{
+				Setsid: true,
+			}
+			devNull, _ := os.Open(os.DevNull)
+			if devNull != nil {
+				fallback.Stdout = devNull
+				fallback.Stderr = devNull
+				fallback.Stdin = devNull
+			}
+			if err := fallback.Start(); err != nil {
+				logger.Errorf("fallback update also failed: %v", err)
+				return
+			}
+			_ = fallback.Process.Release()
+			logger.Info("Fallback update started")
 			return
 		}
 
-		// Don't wait for the process - it will outlive us
-		_ = cmd.Process.Release()
-		logger.Info("Update script started, admin service will restart after binaries are replaced")
+		logger.Info("Update script started via systemd-run, will continue after admin stops")
 	}()
 }
 
