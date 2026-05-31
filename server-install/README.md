@@ -2,58 +2,57 @@
 
 > [**Русский**](#russian) ниже • Full English documentation continues below
 
-> ### ⚠ Known issues / Известные проблемы (май 2026)
+> ### ⚠ Known issues
 >
-> - **WB Stream**: разработчики stream.wb.ru отключили публичный API создания
->   комнат и приём гостей в звонки. Автогенерация румы для `wbstream` больше
->   не работает. При выборе `wbstream` инсталлятор и админка теперь требуют
->   указать **Room ID вручную** — создайте руму на <https://stream.wb.ru> и
->   скопируйте её ID из URL.
-> - Чтобы быстро запустить сервер без ручных шагов — используйте `jitsi`
->   (server-side auto-gen всё ещё работает) или `telemost` (для telemost
->   инсталлятор сам генерирует ID вида `olcrtc-XXXXXXXX`).
-> - **Upstream breaking refactor**: в ветке
->   [`openlibrecommunity/olcrtc#refactor/universal-carrier`](https://github.com/openlibrecommunity/olcrtc/tree/refactor/universal-carrier)
->   готовится переписывание carrier-слоя. После слияния в `master` API
->   провайдеров изменится и потребуется обновление панели + Android-клиента.
+> - **WB Stream**: stream.wb.ru shut down its public room-creation API and
+>   blocks guest joins. `wbstream` auto-room-gen no longer works — create the
+>   room manually at <https://stream.wb.ru> and copy the room ID from the URL.
+>   Pass it with `--id <room>` on first install or set it later in the Admin
+>   Web UI.
+> - For the fastest spin-up without manual steps, use `jitsi` (server-side
+>   auto-gen still works) or `telemost` (the installer self-generates an
+>   `olcrtc-XXXXXXXX` room ID).
+> - **Upstream refactor**: the carrier layer is being rewritten in
+>   [`openlibrecommunity/olcrtc#refactor/universal-carrier`](https://github.com/openlibrecommunity/olcrtc/tree/refactor/universal-carrier).
+>   When it lands, provider APIs will change and panel + Android client will
+>   need an update.
 
-One-shot installer that puts an [olcrtc](https://github.com/openlibrecommunity/olcrtc)
-server CLI on a Linux VPS with a hardened `systemd` service. The binaries
-themselves are not committed to this branch — they live in
+One-shot installer that drops an [olcrtc](https://github.com/openlibrecommunity/olcrtc)
+server and the **Admin Web UI** onto a Linux VPS as hardened `systemd`
+services. Binaries are not committed — they live in
 [GitHub Releases](https://github.com/Oleglog/Olcrtc_manager/releases) and the
-installer fetches them on demand. You can also build them locally from source
-with `./build-from-source.sh`.
+installer pulls them on demand. Local builds via `./build-from-source.sh`
+are also supported.
 
 What the installer does:
 
-- detects the VPS architecture (`linux/amd64` or `linux/arm64`),
-- downloads the matching pre-built binary from the GitHub Release that
-  corresponds to this installer version (or uses a local `bin/$arch` if you
-  built / placed one),
-- installs it to `/usr/local/bin/olcrtc` and a small launcher to
-  `/usr/local/bin/olcrtc-launcher`,
-- creates a dedicated `olcrtc` system user,
+- detects VPS architecture (`linux/amd64` or `linux/arm64`),
+- downloads matching pre-built binaries (`olcrtc`, `olcrtc-admin`) — or uses
+  `server-install/bin/$arch/` if present,
+- installs to `/usr/local/bin/olcrtc`, `/usr/local/bin/olcrtc-admin`, and the
+  launcher to `/usr/local/bin/olcrtc-launcher`,
+- creates the `olcrtc` system user,
 - generates a 256-bit hex encryption key (`/etc/olcrtc/key.hex`),
-- registers a hardened `systemd` service (`olcrtc-server.service`),
-- provisions the Room ID:
-    - **wbstream** — prompts you for a Room ID created manually at
-      <https://stream.wb.ru> (WB Stream removed the public room-creation API),
+- writes hardened `systemd` units (`olcrtc-server.service` and
+  `olcrtc-admin.service`),
+- provisions a Room ID:
+    - **wbstream** — prompts for an ID created manually at
+      <https://stream.wb.ru>,
     - **jitsi** — asks the carrier to auto-create a room on first start and
-      captures the room ID from `journalctl`,
-    - **telemost** — generates a random `olcrtc-XXXXXXXX` Room ID locally;
-- pins the resulting Room ID into the service environment so the same room
-  is reused across restarts,
-- supports an optional outbound SOCKS5 proxy (NO_AUTH or RFC 1929
-  USER/PASSWORD), useful when the VPS IP is blocked by
-  wbstream / jitsi / telemost, and an optional `-debug` flag,
-- prints the credentials you need to fill into the Android app.
+      scrapes the ID from `journalctl`,
+    - **telemost** — generates a random `olcrtc-XXXXXXXX` ID locally,
+- pins the Room ID into env so it survives restarts,
+- starts both services and prints the **Admin UI URL** + default credentials.
 
-Default carrier is **`wbstream`**. Default transport is **`datachannel`**.
+Defaults: **carrier=`jitsi`**, **transport=`vp8channel`**, **DNS=`8.8.8.8:53`**.
 
-### Carrier & transport matrix
+After install, **all configuration goes through the Admin Web UI** — there is
+no interactive shell menu anymore.
+
+## Carrier & transport matrix
 
 | Transport | telemost | jitsi | wbstream |
-|-----------|:--------:|:----:|:--------:|
+|-----------|:--------:|:-----:|:--------:|
 | datachannel | ✗ | ✓ | ✓ |
 | vp8channel | ✓ | ✓ | ✓ |
 | seichannel | ✗ | ✓ | ✓ |
@@ -63,200 +62,191 @@ Speed (descending): **datachannel** (~6 MB/s) > **vp8channel** > **seichannel** 
 
 ## Requirements
 
-- A Linux VPS with `systemd`, `bash`, `openssl`, `curl`, `journalctl`. Any
-  recent Ubuntu / Debian / Fedora / Alma / Arch will do. CGO is NOT required.
-- Outbound internet access on TCP 443 + UDP (for ICE/TURN). No inbound ports
-  need to be opened.
+- Linux VPS with `systemd`, `bash`, `openssl`, `curl`, `journalctl`. Recent
+  Ubuntu / Debian / Fedora / Alma / Arch all work. CGO not required.
+- Outbound TCP/443 + UDP (for ICE/TURN). No inbound ports needed by the
+  tunnel itself; the Admin UI listens on **8443/tcp** (auto-falls back to
+  9443/8080/3000/4443 if 8443 is taken).
 - `x86_64` or `aarch64` CPU.
-- Recommended: 1 vCPU, 1 GB RAM, 10 GB disk. The binary is ~20 MB and uses
-  ~50–250 MB RAM depending on traffic.
+- Recommended: 1 vCPU, 1 GB RAM, 10 GB disk. Binary ~20 MB; ~50–250 MB RAM
+  under traffic.
 
-## Quick start (default — wbstream + datachannel)
+## Quick start
 
-**Option A — one-liner** (recommended, downloads and runs the interactive
-setup script):
+**Option A — one-liner** (recommended):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/refactor-universal-carrier-fork/server-install/olcrtc-setup.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/master/server-install/olcrtc-setup.sh | sudo bash
 ```
 
-**Option B — from a release tarball** (binary already inside):
+**Option B — release tarball** (binaries inside, no GitHub access on the VPS
+needed at install time):
 
 ```bash
 curl -fsSL -o /tmp/olcrtc.tgz \
-    https://github.com/Oleglog/Olcrtc_manager/releases/latest/download/olcrtc-server-installer-0.1.3.tgz
-rm -rf /tmp/olcrtc-server-installer-*
+    https://github.com/Oleglog/Olcrtc_manager/releases/latest/download/olcrtc-server-installer.tgz
 tar -xzf /tmp/olcrtc.tgz -C /tmp
 sudo bash /tmp/olcrtc-server-installer-*/olcrtc-setup.sh
 ```
 
-**Option C — build from source** (no GitHub access on the VPS / reproducible
-build required):
+**Option C — build from source** (fully offline / reproducible):
 
 ```bash
+git clone https://github.com/Oleglog/Olcrtc_manager
 cd Olcrtc_manager
-./server-install/build-from-source.sh   # produces server-install/bin/olcrtc-linux-{amd64,arm64}
+./server-install/build-from-source.sh   # → server-install/bin/olcrtc-linux-{amd64,arm64}
 sudo bash server-install/olcrtc-setup.sh
 ```
 
-The installer prints the credentials you need to enter into the **olcRTC**
-Android app at the end:
+> `build-from-source.sh` only builds the `olcrtc` server binary. The Admin UI
+> binary (`olcrtc-admin`) is still pulled from GitHub Releases.
+
+After install you'll see:
 
 ```
-==========================================================
-        olcRTC server is up.
-==========================================================
+═══════════════════════════════════════════
+  Установка завершена!
+═══════════════════════════════════════════
 
-  Carrier:         wbstream
-  Transport:       datachannel (~6 МБ/с)
-  Room ID:         01HZX...
-  Key (hex):       7b3c1f...
-  DNS:             8.8.8.8:53
-  Public IP:       a.b.c.d
-...
+  Admin UI:  https://<VPS-IP>:8443
+  Логин:     admin
+  Пароль:    admin
+
+  ⚠  Сертификат самоподписанный.
+     В браузере нажмите 'Дополнительно' → 'Перейти'.
 ```
 
-## Picking a different carrier / transport
+Open the Admin UI, accept the self-signed cert, log in, and **change the
+password** in the settings page.
 
-Use the interactive menu after the server is installed:
-
-```bash
-sudo bash olcrtc-setup.sh   # → menu item 3) Сменить carrier
-                             # → menu item 4) Сменить транспорт
-```
-
-Or pass CLI flags during initial install:
+### Picking carrier / transport at install time
 
 ```bash
 sudo bash olcrtc-setup.sh --carrier telemost --transport vp8channel
 sudo bash olcrtc-setup.sh --carrier jitsi --transport datachannel
-sudo bash olcrtc-setup.sh --carrier wbstream                       # default transport = datachannel
+sudo bash olcrtc-setup.sh --carrier wbstream --id <room-id-from-stream.wb.ru>
 ```
 
-The legacy `--provider` flag is still accepted as an alias for `--carrier`.
+The legacy `--provider` is still accepted as an alias for `--carrier`.
+For `telemost` / `wbstream` you can pass an explicit room ID with `--id`.
 
-For **telemost**, the room ID is whatever string you choose — it is not
-provisioned by Yandex. You can pass it as a CLI flag:
+## Re-running the script
 
-```bash
-sudo bash olcrtc-setup.sh --carrier telemost --telemost-id my-vpn-room
+`olcrtc-setup.sh` is **install-only** since v1.0.0 — there is no interactive
+management menu. Re-running without flags on an installed system prints
+status and the Admin UI URL:
+
+```
+olcRTC уже установлен.
+Admin UI:  https://<IP>:8443
+olcrtc-server: running
+olcrtc-admin:  running
 ```
 
-## Re-running the setup script
+Available CLI flags after install:
 
-The setup script is idempotent — re-running keeps the existing key, room ID,
-proxy and debug settings unless you ask otherwise. The **recommended** way is
-through the interactive menu:
+| Flag | What it does |
+|------|--------------|
+| `--update` | Pull the latest `olcrtc` + `olcrtc-admin` binaries and restart services |
+| `--regenerate` | Regenerate Room ID (jitsi/telemost) — clients need re-link |
+| `--regenerate-key` | Regenerate encryption key + Room ID — clients need re-link |
+| `--show-token` | Print Admin UI login + password |
+| `--status` | `systemctl status` for both services |
+| `--uninstall` | Full uninstall (handles all instances) |
 
-```bash
-sudo bash olcrtc-setup.sh
-```
-
-| Menu item | Equivalent CLI flag |
-|-----------|---------------------|
-| 3) Сменить carrier | `--carrier jitsi` |
-| 4) Сменить транспорт | `--transport vp8channel` |
-| 5) Пересоздать room ID | `--regenerate` |
-| 6) Ротация ключа + room ID | `--regenerate-key` |
-| 7) Настроить SOCKS5-прокси | `--socks-proxy host:port` |
-| 8) Убрать SOCKS5-прокси | `--socks-proxy ""` |
-| 9) Debug-логирование | `--debug` / `--no-debug` |
-| 11) Обновить бинарник | (re-run the script) |
-
-CLI flags also work for non-interactive / scripted usage:
-
-```bash
-sudo bash olcrtc-setup.sh --regenerate                      # keep key, get a new room ID
-sudo bash olcrtc-setup.sh --regenerate-key                  # rotate everything (key + room)
-sudo bash olcrtc-setup.sh --carrier jitsi                    # change carrier
-sudo bash olcrtc-setup.sh --transport vp8channel            # change transport
-sudo bash olcrtc-setup.sh --socks-proxy host:port           # route outbound through SOCKS5 (NO_AUTH)
-sudo bash olcrtc-setup.sh --socks-proxy user:pass@h:port    # route outbound through SOCKS5 (USER/PASSWORD)
-sudo bash olcrtc-setup.sh --socks-proxy ""                  # remove existing SOCKS5 proxy
-sudo bash olcrtc-setup.sh --debug                           # enable -debug logging
-sudo bash olcrtc-setup.sh --no-debug                        # disable -debug logging
-```
-
-Rotating the key invalidates every existing client; you will need to update
-the Android app profile with the new key.
+Everything else (carrier change, transport change, DNS, SOCKS5, WARP, debug
+logging, multi-instance, subscriptions) is configured **in the Admin Web
+UI**.
 
 ## Outbound SOCKS5 proxy (when your VPS IP is blocked)
 
-Wildberries Stream and Jitsi Meet block many datacenter IPs and require a
-residential / Russian IP to register a guest session. Yandex Telemost is
-more permissive but can still throttle or rotate sessions on suspicious IPs.
+WB Stream and Jitsi block many datacenter IPs and require a residential / RU
+IP to register a guest session. Yandex Telemost is more permissive but can
+still throttle.
 
 If your VPS gets `i/o timeout` connecting to `stream.wb.ru` (or similar),
-or is blocked by wbstream / jitsi, rent a residential SOCKS5 proxy. Both
-`NO_AUTH` (IP-whitelisted) and `RFC 1929 USER/PASSWORD` are supported —
-use whichever your provider gives you:
+rent a residential SOCKS5 proxy and configure it **per instance** in the
+Admin UI (instance form → field **SOCKS proxy**).
 
-Use the interactive menu item **7) Настроить SOCKS5-прокси**, or pass flags:
+Both formats work:
+- IP-whitelisted: `host:port`
+- USER/PASSWORD (RFC 1929): `user:pass@host:port`
+- `socks5://` and `socks5h://` schemes are accepted and stripped.
 
-```bash
-# IP-whitelisted proxy (no credentials):
-sudo bash olcrtc-setup.sh --socks-proxy 1.2.3.4:1080
+This sets `OLCRTC_SOCKS_PROXY=...` in the instance env. The launcher splits
+credentials from `host:port` and writes `socks:` block into `config.yaml`.
 
-# Username/password proxy (RFC 1929):
-sudo bash olcrtc-setup.sh --socks-proxy alice:hunter2@1.2.3.4:1080
-
-# Optional `socks5://` / `socks5h://` scheme is accepted and stripped:
-sudo bash olcrtc-setup.sh --socks-proxy socks5://alice:hunter2@1.2.3.4:1080
-```
-
-This writes `OLCRTC_SOCKS_PROXY=...` into `/etc/olcrtc/env`. The launcher
-splits credentials from `host:port` and invokes the binary with
-`-socks-proxy <host> -socks-proxy-port <port>` (and
-`-socks-proxy-user` / `-socks-proxy-pass` when credentials are present).
-
-What goes through the proxy and what does not:
+What goes through SOCKS and what doesn't:
 
 | Traffic | Routing |
 | --- | --- |
-| Carrier HTTP API calls (wbstream / jitsi / telemost guest registration, room creation, polling) | through the SOCKS5 proxy |
-| Carrier WebSocket signalling (jitsi / telemost) | through the SOCKS5 proxy |
-| Client TCP traffic tunnelled from the Android device (browser, Telegram, anything else) | **direct from the VPS, NOT through the proxy** |
-| WebRTC media (UDP between VPS and Android) | direct, peer-to-peer (SOCKS5 cannot tunnel UDP via CONNECT) |
+| Carrier HTTP API (room creation, guest registration, polling) | through SOCKS5 |
+| Carrier WebSocket signalling (jitsi / telemost) | through SOCKS5 |
+| Client TCP tunnel traffic (Telegram, browser, etc.) | **direct from VPS, NOT through SOCKS5** |
+| WebRTC media (UDP between VPS and Android) | direct, peer-to-peer |
 
-Client TCP traffic is intentionally **not** routed through the proxy.
-The proxy exists to make the provider see a residential / RU IP for
-registration; if every outbound connection were forced through it, geo-
-restricted services (e.g. Telegram, which is blocked from RU IPs) would
-become unreachable from the tunnel. Each tunnelled TCP connection
-therefore exits straight from the VPS, with the VPS's geolocation.
+Client TCP intentionally bypasses SOCKS — the proxy exists so the carrier
+sees a residential / RU IP for registration. If everything went through
+SOCKS, geo-blocked services (Telegram from RU IPs) would break inside the
+tunnel.
+
+To **also** hide the VPS IP from sites the client visits, use **WARP** below.
+
+## WARP proxy (hide VPS IP from client traffic)
+
+`OLCRTC_WARP_PROXY=host:port` routes the **client tunnel dial path** through
+a local SOCKS5 — typically `wireproxy` or a 3X-UI inbound that egresses via
+Cloudflare WARP. Result: visited sites see a Cloudflare IP, not your VPS IP.
+
+Configure per-instance via the Admin UI (field **WARP proxy**, e.g.
+`127.0.0.1:40000`).
+
+WARP applies **only** to the dial path inside the tunnel; signalling is not
+affected. WARP and SOCKS5 are independent — both can be set on the same
+instance.
+
+> WARP routing was a documented feature for a while but only became actually
+> wired through to `s.dial()` in v1.8.34. If you set `OLCRTC_WARP_PROXY` on
+> an older binary, it had no effect. Run `--update` to pull v1.8.34+.
+
+Full guide: [WARP-PROXY.md](WARP-PROXY.md)
 
 ## Debug logging
 
-Use the interactive menu item **9) Включить / выключить debug-логирование**,
-or pass flags:
+Toggle via the Admin UI (instance form → **Debug** checkbox), or set
+`OLCRTC_DEBUG=1` in the instance env file and restart the service. Logs land
+in journald:
 
 ```bash
-sudo bash olcrtc-setup.sh --debug
-journalctl -u olcrtc-server -f
+journalctl -u olcrtc-server -f                # main instance
+journalctl -u olcrtc-server@2 -f              # additional instance #2
+journalctl -u olcrtc-admin -f                 # admin UI
 ```
 
-You will see ICE candidate negotiation, DTLS state changes, and per-stream
+You'll see ICE candidate negotiation, DTLS state changes, and per-stream
 errors. Useful for diagnosing reconnects on Telemost or one-off DTLS
-timeouts. Re-run with `--no-debug` (or toggle via the menu) to switch back.
+timeouts.
 
-## Manage the service
+## Manage the services
 
 ```bash
-systemctl status olcrtc-server      # status snapshot
-journalctl -u olcrtc-server -f      # live logs
+systemctl status olcrtc-server      # status
 systemctl restart olcrtc-server     # restart
-systemctl stop olcrtc-server        # stop (won't restart on reboot)
-systemctl disable olcrtc-server     # don't start on reboot
+systemctl stop olcrtc-server        # stop until reboot
+systemctl disable olcrtc-server     # don't start on boot
+
+systemctl status olcrtc-admin       # admin UI
+systemctl restart olcrtc-admin
+
+systemctl status 'olcrtc-server@*'  # all extra instances
 ```
 
 ## Multiple instances
 
-You can run several independent olcRTC servers on the same VPS, each with its
-own room ID, encryption key, carrier and transport. Use the interactive manager menu:
-
-```bash
-sudo bash olcrtc-setup.sh   # → menu item 20) Управление инстансами
-```
+The Admin UI lets you run several independent olcRTC servers on the same VPS,
+each with its own Room ID, key, carrier, transport, SOCKS, WARP, etc. Open
+the **Instances** page → **Add instance**. Up to 20 additional instances
+supported.
 
 Each additional instance (`#2`, `#3`, …) gets:
 
@@ -264,147 +254,93 @@ Each additional instance (`#2`, `#3`, …) gets:
 | --- | --- |
 | `/etc/olcrtc/<N>/env` | Instance config |
 | `/etc/olcrtc/<N>/key.hex` | Instance encryption key |
-| `/var/lib/olcrtc-<N>/` | Instance state directory |
-| `olcrtc-server@<N>.service` | Systemd template unit instance |
+| `/var/lib/olcrtc-<N>/` | Instance state |
+| `olcrtc-server@<N>.service` | Systemd template instance |
 
-All instances share the same binary (`/usr/local/bin/olcrtc`), launcher, and
-system user (`olcrtc`). Up to 20 additional instances are supported.
-
+All instances share the same binary, launcher, and `olcrtc` system user.
 The template unit (`olcrtc-server@.service`) is created automatically when
-the first additional instance is added and removed when the last one is deleted.
+the first additional instance is added.
 
 ## Subscriptions
 
-The subscription system lets you publish a permanent URL (e.g.
-`http://IP:2096/sub/xJGHpw`) that clients can add once. After recreating
-the server you import the same subscriptions, add the new instance URI, and
-clients pick up the change automatically — no QR re-scan needed.
+A subscription is a permanent URL (e.g. `http://<IP>:2096/sub/xJGHpw`) that
+the client adds **once**. After recreating or migrating the server, import
+the subscription DB, attach the new instance URI, and clients pick up the
+change automatically — no QR re-scan.
 
-### Enabling subscriptions
+### Enabling
 
-During first install `olcrtc-setup.sh` asks:
+The installer asks during first install:
 
 ```
 Enable subscription server? (y/N): y
 Subscription server port [Enter = 2096]: 2096
 ```
 
-This writes `OLCRTC_SUB_ENABLED=1` and `OLCRTC_SUB_PORT=2096` into
-`/etc/olcrtc/env`. The embedded HTTP server starts alongside the main tunnel
-on port **2096** (configurable).
+This sets `OLCRTC_SUB_ENABLED=1` and `OLCRTC_SUB_PORT=2096` in
+`/etc/olcrtc/env`. The HTTP server starts alongside `olcrtc-server` on port
+2096.
 
-### Managing subscriptions (menu item 30)
+### Managing
 
-```bash
-sudo bash olcrtc-setup.sh   # → menu item 30) Управление подписками
-```
-
-The subscription submenu offers:
-
-| # | Action | Description |
-|---|--------|-------------|
-| 1 | **List subscriptions** | Show all subscriptions with their instances |
-| 2 | **Create subscription** | Enter a name, optionally specify a slug (6-char random by default) |
-| 3 | **Add instance** | Choose a subscription slug, paste the full `olcrtc://` URI |
-| 4 | **Remove instance** | Choose a subscription, then remove a single instance by ID |
-| 5 | **Detach all instances** | Remove all instances from a subscription (subscription stays, empty) |
-| 6 | **Delete subscription** | Remove subscription; if it has instances, asks whether to delete or detach them first |
-| 7 | **Export** | Save all subscriptions to a JSON file |
-| 8 | **Import** | Load subscriptions from a previously exported JSON file |
-
-### Typical workflow
-
-**First-time setup:**
-
-1. Install olcrtc via `olcrtc-setup.sh`, answer **y** to enable subscriptions.
-2. After install, open the menu → **30) Управление подписками** → **2) Создать подписку** (e.g. name `my-vpn`, slug auto-generated → `xJGHpw`).
-3. Copy the `olcrtc://` URI from the QR/URI output (menu item **2** in the main menu).
-4. **30 → 3) Добавить инстанс** → paste the URI into subscription `xJGHpw`.
-5. Client app adds the subscription URL: `http://<IP>:2096/sub/xJGHpw`.
-
-**Server recreation (keep the same subscription URL):**
-
-1. Before destroying the server, export: **30 → 7) Экспорт** → saves `/tmp/olcrtc-subscriptions.json`.
-2. On the new server, install with subscriptions enabled, then import: **30 → 8) Импорт**.
-3. The subscription `xJGHpw` is restored with the same slug.
-4. Add the new instance URI: **30 → 3)**.
-5. Clients refresh the subscription and get the new parameters.
-
-### Multiple instances per subscription
-
-A single subscription can hold several `olcrtc://` URIs with different
-carriers or transports. The client fetches all URIs from
-`GET /sub/{slug}` (plain text, one per line) and selects the best one.
+Use the Admin UI → **Subscriptions** page to create/edit subscriptions, add
+or remove instances, and export/import the JSON dump.
 
 ### Subscription data
 
 | Path | Contents |
 |------|----------|
-| `/var/lib/olcrtc/subscriptions.db` | SQLite database (created at first start) |
-| `OLCRTC_SUB_ENABLED=1` in env | Enables the HTTP server |
-| `OLCRTC_SUB_PORT=2096` in env | HTTP server listen port |
+| `/var/lib/olcrtc/subscriptions.db` | SQLite DB (created on first run) |
+| `OLCRTC_SUB_ENABLED=1` | Enables the HTTP server |
+| `OLCRTC_SUB_PORT=2096` | HTTP listen port |
 
-When uninstalling, both `olcrtc-setup.sh` (menu item **12**) and
-`olcrtc-uninstall.sh` ask whether to delete the subscription database.
-If you answer **N**, a copy is saved to `/tmp/olcrtc-subscriptions.db`.
+`olcrtc-uninstall.sh` asks whether to delete the DB; saying **N** copies it
+to `/tmp/olcrtc-subscriptions.db` for safe-keeping.
 
-### HTTP API reference
+### HTTP API
 
-Public (open to the internet if the port is reachable):
+Public:
 
 | Method | Path | Response |
 |--------|------|----------|
 | `GET` | `/sub/{slug}` | Plain-text list of `olcrtc://` URIs, one per line |
 
-Management (localhost only, used by `olcrtc-setup.sh` via `curl`):
+Localhost-only management API (used by the Admin UI):
 
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/subscriptions` | List all subscriptions (JSON) |
-| `POST` | `/api/subscriptions` | Create subscription `{name, slug}` |
+| `POST` | `/api/subscriptions` | Create `{name, slug}` |
 | `DELETE` | `/api/subscriptions/{slug}` | Delete subscription + instances |
-| `DELETE` | `/api/subscriptions/{slug}?detach=true` | Remove all instances, keep subscription |
-| `GET` | `/api/subscriptions/{slug}/instances` | List instances (JSON) |
+| `DELETE` | `/api/subscriptions/{slug}?detach=true` | Drop all instances, keep slug |
+| `GET` | `/api/subscriptions/{slug}/instances` | List instances |
 | `POST` | `/api/subscriptions/{slug}/instances` | Add instance `{raw_uri}` |
 | `DELETE` | `/api/subscriptions/{slug}/instances/{id}` | Remove instance |
-| `GET` | `/api/export` | Export all subscriptions (JSON) |
-| `POST` | `/api/import` | Import subscriptions (JSON) |
+| `GET` | `/api/export` | Export everything (JSON) |
+| `POST` | `/api/import` | Import JSON dump |
 
-### Optional: custom domain
+### Custom domain for subscriptions (optional)
 
-By default clients access subscriptions via `http://<IP>:2096/sub/{slug}`.
-Binding a domain adds HTTPS and hides the port:
-`https://sub.example.com/sub/{slug}`.
+By default clients hit `http://<IP>:2096/sub/{slug}`. Binding a domain adds
+HTTPS and hides the port: `https://sub.example.com/sub/{slug}`.
 
 #### 1. DNS
 
-Add an **A record** `sub.example.com → <VPS IP>` at your DNS provider.
+A-record `sub.example.com → <VPS IP>`.
 
-#### 2. TLS certificate (Let's Encrypt)
+#### 2. TLS certificate
 
 ```bash
-sudo apt install certbot python3-certbot-nginx   # if not installed
-
-# Option A — certbot nginx plugin (easiest when port 80 is free or nginx owns it):
-sudo certbot --nginx -d sub.example.com
-
-# Option B — standalone (stop whatever uses port 80 first):
-sudo systemctl stop nginx
+sudo apt install certbot python3-certbot-nginx
+sudo certbot --nginx -d sub.example.com           # easiest if nginx owns 80
+# or:
 sudo certbot certonly --standalone -d sub.example.com
-sudo systemctl start nginx
-
-# Option C — webroot (nginx is running, no plugin):
 sudo certbot certonly --webroot -w /var/www/html -d sub.example.com
 ```
 
-#### 3a. Standard nginx (no SNI multiplexer)
+#### 3a. Plain nginx (no SNI multiplexer)
 
-If your nginx does **not** use a `stream {}` SNI pre-read block (i.e. no
-3x-ui / xray / reality on port 443), a simple `http {}` server block is
-enough:
-
-```bash
-sudo tee /etc/nginx/sites-available/olcrtc-sub <<'EOF'
+```nginx
 server {
     listen 80;
     server_name sub.example.com;
@@ -424,420 +360,254 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
     }
 }
-EOF
+```
 
+```bash
 sudo ln -sf /etc/nginx/sites-available/olcrtc-sub /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
 #### 3b. nginx with SNI multiplexer (3x-ui / xray / reality)
 
-If your server already runs **3x-ui** or another TLS service that uses an
-nginx `stream {}` block with `ssl_preread` to route connections by SNI, all
-TLS traffic on port 443 is intercepted **before** it reaches `http {}`
-server blocks. A regular `listen 443 ssl` will never see traffic.
+If port 443 is already pre-read by an nginx `stream {}` block (typical with
+3x-ui), a plain `listen 443 ssl` will never see traffic. Add the sub-domain
+to the SNI map and let the http block listen on a private internal port:
 
-Typical stream config (`/etc/nginx/stream-enabled/*.conf` or similar):
+Stream config (already present, shown for context):
 
 ```nginx
 map $ssl_preread_server_name $sni_name {
     hostnames;
-    panel.example.com        xray;
-    www.example.com          www;
-    default                  xray;      # unknown SNI → xray
+    panel.example.com   xray;
+    sub.example.com     olcrtc_sub;     # ← add this line
+    default             xray;
 }
-upstream xray { server 127.0.0.1:8443; }
-upstream www  { server 127.0.0.1:7443; }
+upstream xray       { server 127.0.0.1:8443; }
+upstream olcrtc_sub { server 127.0.0.1:9443; }   # ← add this upstream
 
 server {
     listen 443;
     proxy_pass $sni_name;
     ssl_preread on;
-    proxy_protocol on;        # may or may not be present
+    proxy_protocol on;          # may or may not be present
 }
 ```
 
-**Steps:**
+HTTP block on the internal port:
 
-1. **Add upstream** for the subscription server (pick a free local port,
-   e.g. 9443):
+```nginx
+server {
+    listen 80;
+    server_name sub.example.com;
+    return 301 https://$host$request_uri;
+}
 
-   ```bash
-   # Add upstream + SNI entry (adjust the stream config path)
-   sudo sed -i '/upstream www {/i\upstream olcrtc_sub {\n    server 127.0.0.1:9443;\n}\n' \
-       /etc/nginx/stream-enabled/*.conf
-   sudo sed -i '/default/i\    sub.example.com            olcrtc_sub;' \
-       /etc/nginx/stream-enabled/*.conf
-   ```
+server {
+    listen 127.0.0.1:9443 ssl http2 proxy_protocol;
+    server_name sub.example.com;
+    real_ip_header proxy_protocol;
+    set_real_ip_from 127.0.0.1;
 
-2. **Create the HTTP server block** listening on the internal port:
+    ssl_certificate     /etc/letsencrypt/live/sub.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/sub.example.com/privkey.pem;
 
-   ```bash
-   sudo tee /etc/nginx/sites-available/olcrtc-sub <<'EOF'
-   server {
-       listen 80;
-       server_name sub.example.com;
-       return 301 https://$host$request_uri;
-   }
+    location / {
+        proxy_pass http://127.0.0.1:2096;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+```
 
-   server {
-       listen 127.0.0.1:9443 ssl http2 proxy_protocol;
-       server_name sub.example.com;
-       real_ip_header proxy_protocol;
-       set_real_ip_from 127.0.0.1;
+> If your stream block does **not** have `proxy_protocol on;`, drop
+> `proxy_protocol` from the `listen` directive and remove the
+> `real_ip_header` / `set_real_ip_from` lines.
 
-       ssl_certificate     /etc/letsencrypt/live/sub.example.com/fullchain.pem;
-       ssl_certificate_key /etc/letsencrypt/live/sub.example.com/privkey.pem;
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+curl -sf https://sub.example.com/sub/{slug}
+```
 
-       location / {
-           proxy_pass http://127.0.0.1:2096;
-           proxy_set_header Host $host;
-           proxy_set_header X-Real-IP $remote_addr;
-       }
-   }
-   EOF
-
-   sudo ln -sf /etc/nginx/sites-available/olcrtc-sub /etc/nginx/sites-enabled/
-   ```
-
-   > **Note**: if your stream block does NOT have `proxy_protocol on;`,
-   > remove `proxy_protocol` from the `listen` directive and remove the
-   > `real_ip_header` / `set_real_ip_from` lines.
-
-3. **Test and reload:**
-
-   ```bash
-   sudo nginx -t && sudo systemctl reload nginx
-   ```
-
-4. **Verify:**
-
-   ```bash
-   curl -sf https://sub.example.com/sub/{slug}
-   ```
-
-Existing 3x-ui / xray routes are **not affected** — only the new SNI entry
-is added; `default` still falls through to xray.
+Existing 3x-ui / xray routes are not affected — only the new SNI entry is
+added; `default` still falls through to xray.
 
 #### 4. Optional: close port 2096 externally
 
-Once the domain works, you can block direct access to the subscription port:
+Once the domain works, block direct access:
 
 ```bash
-sudo ufw deny 2096/tcp    # or: iptables -A INPUT -p tcp --dport 2096 -j DROP
+sudo ufw deny 2096/tcp        # or iptables -A INPUT -p tcp --dport 2096 -j DROP
 ```
 
-nginx reaches `127.0.0.1:2096` locally — the firewall does not interfere.
-
-Clients then use only: `https://sub.example.com/sub/{slug}`
+nginx reaches `127.0.0.1:2096` locally — the firewall doesn't interfere.
+Clients then use only `https://sub.example.com/sub/{slug}`.
 
 ## Uninstall
 
-Recommended — use the uninstall script (handles all instances):
+Recommended (handles all instances, asks about subscription DB):
 
 ```bash
-# From a checkout:
 sudo bash olcrtc-uninstall.sh
 
-# Or one-liner (no checkout needed):
-curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/refactor-universal-carrier-fork/server-install/olcrtc-uninstall.sh | sudo bash
+# or one-liner:
+curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/master/server-install/olcrtc-uninstall.sh | sudo bash
 ```
 
 Manual (main instance only):
 
 ```bash
-sudo systemctl disable --now olcrtc-server
-sudo rm -f /etc/systemd/system/olcrtc-server.service
+sudo systemctl disable --now olcrtc-server olcrtc-admin
+sudo rm -f /etc/systemd/system/olcrtc-server.service \
+           /etc/systemd/system/olcrtc-server@.service \
+           /etc/systemd/system/olcrtc-admin.service
 sudo systemctl daemon-reload
-sudo rm -rf /etc/olcrtc /var/lib/olcrtc /var/lib/olcrtc-* /usr/local/bin/olcrtc /usr/local/bin/olcrtc-launcher
-sudo rm -f /etc/systemd/system/olcrtc-server@.service
+sudo rm -rf /etc/olcrtc /var/lib/olcrtc /var/lib/olcrtc-* \
+            /usr/local/bin/olcrtc /usr/local/bin/olcrtc-launcher \
+            /usr/local/bin/olcrtc-admin
 sudo userdel olcrtc 2>/dev/null || true
 ```
 
-## How it picks the room ID
+## How the Room ID is allocated
 
-For `wbstream` and `jitsi`, the room is allocated server-side by the
-respective provider when the olcrtc binary calls their REST API on startup.
-The first run uses `-id any`, which makes the upstream API allocate a fresh
-room and log a line of the form:
+- **jitsi** — server-side auto-gen. The first run uses `-id any`, the
+  carrier API allocates a fresh room and emits `Jazz room created: <id>`
+  into journald. The installer scrapes it and pins it to `/etc/olcrtc/env`.
+- **wbstream** — auto-gen disabled by WB. You must create the room manually
+  at <https://stream.wb.ru> and pass the ID via `--id` (or paste it in the
+  Admin UI).
+- **telemost** — no API call. The user-supplied (or generated) string is the
+  room.
 
-    WB Stream room created: 01HZX...
-    Jitsi room created: ...
-
-The installer scrapes that line out of `journalctl`, persists the value to
-`/etc/olcrtc/env`, and restarts the service so subsequent restarts pin the
-same room until you explicitly rotate it with `--regenerate`.
-
-For `telemost`, no API call is needed — the user-supplied ID is the room.
+Subsequent restarts reuse the persisted ID. Use `--regenerate` (or the Admin
+UI) to allocate a fresh one.
 
 ## Where things live
 
 | Path | Owner | Mode | Contents |
 | --- | --- | --- | --- |
-| `/usr/local/bin/olcrtc` | root:root | 0755 | The Go binary |
-| `/usr/local/bin/olcrtc-launcher` | root:root | 0755 | Bash wrapper that translates env to flags |
+| `/usr/local/bin/olcrtc` | root:root | 0755 | The Go server binary |
+| `/usr/local/bin/olcrtc-admin` | root:root | 0755 | Admin Web UI binary |
+| `/usr/local/bin/olcrtc-launcher` | root:root | 0755 | Bash wrapper: env → `config.yaml` |
 | `/etc/olcrtc/key.hex` | root:olcrtc | 0640 | 64-char hex encryption key |
-| `/etc/olcrtc/env` | root:olcrtc | 0640 | EnvironmentFile read by systemd (CARRIER, TRANSPORT, LINK, ROOM_ID, KEY, DNS, etc.) |
-| `/var/lib/olcrtc/` | olcrtc:olcrtc | 0750 | Per-process state directory |
-| `/etc/systemd/system/olcrtc-server.service` | root:root | 0644 | Hardened systemd unit |
-| `/etc/olcrtc/<N>/env` | root:olcrtc | 0640 | Config for additional instance N |
+| `/etc/olcrtc/env` | root:olcrtc | 0640 | Main instance env (CARRIER, TRANSPORT, ROOM_ID, KEY, DNS, …) |
+| `/etc/olcrtc/admin.env` | root:root | 0600 | Admin UI env (port, login, pass, domain) |
+| `/etc/olcrtc/<N>/env` | root:olcrtc | 0640 | Env for additional instance N |
 | `/etc/olcrtc/<N>/key.hex` | root:olcrtc | 0640 | Key for additional instance N |
-| `/var/lib/olcrtc-<N>/` | olcrtc:olcrtc | 0750 | State directory for instance N |
-| `/etc/systemd/system/olcrtc-server@.service` | root:root | 0644 | Systemd template unit (auto-created) |
-| `/var/lib/olcrtc/subscriptions.db` | olcrtc:olcrtc | 0750 | Subscription SQLite database (if enabled) |
+| `/var/lib/olcrtc/` | olcrtc:olcrtc | 0750 | Main instance state |
+| `/var/lib/olcrtc-<N>/` | olcrtc:olcrtc | 0750 | State for additional instance N |
+| `/var/lib/olcrtc/admin-tls/` | olcrtc:olcrtc | 0750 | Self-signed TLS for Admin UI |
+| `/var/lib/olcrtc/subscriptions.db` | olcrtc:olcrtc | 0640 | Subscription SQLite DB |
+| `/etc/systemd/system/olcrtc-server.service` | root:root | 0644 | Hardened systemd unit (main) |
+| `/etc/systemd/system/olcrtc-server@.service` | root:root | 0644 | Template unit for extra instances |
+| `/etc/systemd/system/olcrtc-admin.service` | root:root | 0644 | Admin UI unit |
 
-## Licenses
+## License
 
-- olcrtc itself is **WTFPL**.
-- The binaries and installer in this repository are derivative works of
-  https://github.com/openlibrecommunity/olcrtc and inherit its license.
+- olcRTC is **WTFPL**.
+- Binaries and installer in this repo are derivative works of
+  https://github.com/openlibrecommunity/olcrtc and inherit the same license.
 
 ---
 
 <a name="russian"></a>
 ## Русский
 
-Этот скрипт ставит olcRTC-сервер на Linux VPS под `systemd` за одну команду.
+Один скрипт ставит olcRTC-сервер + Admin Web UI на Linux VPS под `systemd`.
 
 ### Самый быстрый путь
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/refactor-universal-carrier-fork/server-install/olcrtc-setup.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/master/server-install/olcrtc-setup.sh | sudo bash
 ```
 
-С residential SOCKS5-прокси (если IP VPS заблокирован у wbstream / jitsi / telemost):
-
-```bash
-sudo bash olcrtc-setup.sh --socks-proxy USER:PASS@HOST:PORT
-```
+После установки скрипт напечатает URL Admin UI и креды (по умолчанию
+`admin/admin`, **сразу смените пароль**). Дальнейшее управление
+(carrier, транспорт, SOCKS5, WARP, инстансы, подписки, обновления, debug) —
+целиком через Web UI.
 
 ### Что произойдёт
 
-1. Скачается бинарник `olcrtc` (~20 МБ, под `linux/amd64` или `linux/arm64`)
-2. Создастся системный пользователь `olcrtc`
-3. Сгенерируется 256-битный ключ шифрования в `/etc/olcrtc/key.hex`
-4. Запишется конфиг в `/etc/olcrtc/env`
-5. Зарегистрируется hardened `systemd`-юнит `olcrtc-server.service`
-6. Wildberries Stream / Jitsi Meet / Telemost создадут комнату при первом старте
-7. Инсталлер выведет на экран **Provider**, **Room ID** и **Encryption key** — эти три значения нужно ввести в Android-приложение
+1. Скачаются бинарники `olcrtc` и `olcrtc-admin` (~20 МБ каждый,
+   `linux/amd64` или `linux/arm64`).
+2. Создастся системный пользователь `olcrtc`.
+3. Сгенерируется 256-битный ключ в `/etc/olcrtc/key.hex`.
+4. Запишется конфиг в `/etc/olcrtc/env` и `/etc/olcrtc/admin.env`.
+5. Зарегистрируются hardened systemd-юниты `olcrtc-server.service` и
+   `olcrtc-admin.service`.
+6. Для `jitsi` — Room ID получится по API. Для `wbstream` — спросит
+   вручную (создать на <https://stream.wb.ru>). Для `telemost` — сгенерится
+   локальный `olcrtc-XXXXXXXX`.
+7. На экране — Admin UI URL + логин/пароль.
 
-### Сменить carrier / транспорт
-
-Через интерактивное меню (пункты **3** и **4**), или флагами CLI:
-
-```bash
-sudo bash olcrtc-setup.sh --carrier wbstream                          # по умолчанию
-sudo bash olcrtc-setup.sh --carrier jitsi --transport datachannel      # Jitsi Meet + быстрый транспорт
-sudo bash olcrtc-setup.sh --carrier telemost --transport vp8channel   # Yandex Telemost
-```
-
-Старый флаг `--provider` принимается как алиас для `--carrier`.
-
-### Повторный запуск (идемпотентность)
-
-Скрипт можно запускать сколько угодно раз. Рекомендуется использовать интерактивное меню:
+### Флаги CLI (после установки)
 
 ```bash
-sudo bash olcrtc-setup.sh   # открывается интерактивное меню управления
+sudo bash olcrtc-setup.sh                 # статус и URL Admin UI
+sudo bash olcrtc-setup.sh --update        # обновить бинарники
+sudo bash olcrtc-setup.sh --regenerate    # пересоздать Room ID
+sudo bash olcrtc-setup.sh --regenerate-key # пересоздать ключ + Room ID
+sudo bash olcrtc-setup.sh --show-token    # показать логин/пароль
+sudo bash olcrtc-setup.sh --status        # systemctl status
+sudo bash olcrtc-setup.sh --uninstall     # полное удаление
 ```
 
-Для скриптового использования доступны CLI-флаги:
+Старого интерактивного меню нет — всё через Admin UI.
 
-```bash
-sudo bash olcrtc-setup.sh --regenerate                # сменить комнату (ключ остаётся)
-sudo bash olcrtc-setup.sh --regenerate-key            # сменить и ключ, и комнату
-sudo bash olcrtc-setup.sh --carrier jitsi              # сменить carrier
-sudo bash olcrtc-setup.sh --transport vp8channel      # сменить транспорт
-sudo bash olcrtc-setup.sh --socks-proxy host:port     # включить SOCKS5 (NO_AUTH)
-sudo bash olcrtc-setup.sh --socks-proxy u:p@h:port    # включить SOCKS5 (USER/PASSWORD)
-sudo bash olcrtc-setup.sh --socks-proxy ""            # выключить SOCKS5
-sudo bash olcrtc-setup.sh --debug                     # включить verbose-логирование
-sudo bash olcrtc-setup.sh --no-debug                  # выключить verbose-логирование
-```
+### Что идёт через SOCKS5, что не идёт
 
-### Проверка после установки
+| Трафик | Маршрут |
+|---|---|
+| Carrier HTTP API + WebSocket signalling | через SOCKS5 |
+| Клиентский TCP-туннель (Telegram, браузер) | **напрямую с VPS** |
+| WebRTC media (UDP) | напрямую (UDP не идёт через CONNECT) |
 
-```bash
-sudo systemctl status olcrtc-server               # сервис должен быть active
-sudo journalctl -u olcrtc-server -n 50 --no-pager # должна быть строка "room created"
-sudo grep -E '^OLCRTC_(CARRIER|TRANSPORT|ROOM_ID|KEY)=' /etc/olcrtc/env
-```
+Клиентский TCP **не** идёт через SOCKS — иначе сервисы, заблокированные
+у RU-IP (Telegram), сломались бы внутри туннеля. Чтобы скрыть IP VPS от
+посещаемых сайтов — используйте **WARP** (см. ниже).
 
-Эти значения (Carrier, Transport, Room ID, Key) вводятся в Android-приложение в настройках профиля **olcRTC**.
+### WARP-прокси (скрыть IP VPS)
 
-### Что идёт через прокси, что не идёт (с v0.1.3)
+`OLCRTC_WARP_PROXY=host:port` маршрутизирует **только клиентский
+tunnel-трафик** через локальный SOCKS5 (поверх Cloudflare WARP). Для сайта
+выглядит как Cloudflare IP, а не как IP VPS. Настраивается на инстанс
+через Admin UI (поле **WARP proxy**) или прямой правкой
+`/etc/olcrtc/<N>/env`.
 
-| Трафик                                                       | Маршрут                          |
-|--------------------------------------------------------------|----------------------------------|
-| Регистрация в carrier (HTTP API + WebSocket signalling)      | через прокси                     |
-| WebRTC media (UDP между VPS и Android)                        | напрямую (UDP не идёт через CONNECT) |
-| TCP-трафик клиента через туннель (Telegram, браузер и т.д.)  | **напрямую с VPS, минуя прокси** |
+> До v1.8.34 настройка читалась из YAML, но не доходила до dial-функции —
+> запустите `--update`, если вы устанавливались раньше.
 
-Это важно: до v0.1.3 (включая v0.1.2) клиентский TCP-трафик тоже шёл через прокси, из-за чего Telegram и другие сервисы, заблокированные в РФ, не работали через туннель. **Используй v0.1.3 или выше.**
+Подробности — [WARP-PROXY.md](WARP-PROXY.md).
 
 ### Несколько инстансов
 
-На одном VPS можно запустить несколько независимых olcRTC-серверов, каждый со
-своим room ID, ключом, carrier и транспортом. Управление через интерактивное меню:
+До 20 независимых olcRTC-серверов на одном VPS. Каждый — свой Room ID,
+ключ, carrier, транспорт, SOCKS, WARP. Управление через Admin UI →
+**Instances** → **Add instance**.
 
-```bash
-sudo bash olcrtc-setup.sh   # → пункт 20) Управление инстансами
-```
-
-Каждый дополнительный инстанс (`#2`, `#3`, …) получает свой конфиг
-(`/etc/olcrtc/<N>/env`), ключ (`/etc/olcrtc/<N>/key.hex`) и state-директорию
-(`/var/lib/olcrtc-<N>/`). Все инстансы используют один бинарник и одного
-системного пользователя. Лимит — 20 дополнительных инстансов.
+| Путь | Содержимое |
+|---|---|
+| `/etc/olcrtc/<N>/env` | Конфиг инстанса |
+| `/etc/olcrtc/<N>/key.hex` | Ключ инстанса |
+| `/var/lib/olcrtc-<N>/` | State-директория |
+| `olcrtc-server@<N>.service` | Systemd template-юнит |
 
 ### Подписки
 
-Система подписок позволяет создать постоянный URL (например
-`http://IP:2096/sub/xJGHpw`), который клиент добавляет один раз. После
-пересоздания сервера достаточно импортировать подписки, добавить новый
-инстанс — и клиент подхватит новые параметры без повторного сканирования QR.
-
-**Включение при установке:**
-
-При первом запуске `olcrtc-setup.sh` спросит:
-
-```
-Включить сервер подписок? (y/N): y
-Порт сервера подписок [Enter = 2096]: 2096
-```
-
-**Управление подписками:**
-
-```bash
-sudo bash olcrtc-setup.sh   # → пункт 30) Управление подписками
-```
-
-Подменю:
-
-| # | Действие | Описание |
-|---|----------|----------|
-| 1 | **Список подписок** | Все подписки с инстансами |
-| 2 | **Создать подписку** | Ввести имя, slug генерируется автоматически (6 символов) |
-| 3 | **Добавить инстанс** | Выбрать подписку, вставить полную `olcrtc://` URI |
-| 4 | **Убрать инстанс** | Выбрать подписку, убрать один инстанс по ID |
-| 5 | **Открепить все инстансы** | Убрать все инстансы из подписки (подписка остаётся пустой) |
-| 6 | **Удалить подписку** | Удалить подписку; если есть инстансы — спросит удалить или открепить |
-| 7 | **Экспорт** | Сохранить подписки в JSON-файл |
-| 8 | **Импорт** | Загрузить подписки из JSON-файла |
-
-**Сценарий «обновление сервера»:**
-
-1. Экспорт: пункт **30 → 7** → сохраняет `/tmp/olcrtc-subscriptions.json`.
-2. На новом сервере: установить с подписками, импорт: **30 → 8**.
-3. Slug `xJGHpw` восстановлен → добавить новый инстанс через **30 → 3**.
-4. Клиент обновляет подписку — получает новые параметры.
-
-**Привязка домена (опционально):**
-
-По умолчанию клиент обращается к `http://<IP>:2096/sub/{slug}`.
-С доменом: `https://sub.example.com/sub/{slug}` — HTTPS, без порта.
-
-1. **DNS** — A-запись `sub.example.com → IP VPS`.
-2. **Сертификат** — `sudo certbot --nginx -d sub.example.com`
-   (или `certbot certonly --standalone` / `--webroot`).
-3. **nginx** — два варианта:
-
-   **3а. Обычный nginx** (порт 443 свободен, нет 3x-ui):
-
-   ```bash
-   sudo tee /etc/nginx/sites-available/olcrtc-sub <<'EOF'
-   server {
-       listen 80;
-       server_name sub.example.com;
-       return 301 https://$host$request_uri;
-   }
-   server {
-       listen 443 ssl http2;
-       server_name sub.example.com;
-       ssl_certificate     /etc/letsencrypt/live/sub.example.com/fullchain.pem;
-       ssl_certificate_key /etc/letsencrypt/live/sub.example.com/privkey.pem;
-       location / {
-           proxy_pass http://127.0.0.1:2096;
-           proxy_set_header Host $host;
-           proxy_set_header X-Real-IP $remote_addr;
-       }
-   }
-   EOF
-   sudo ln -sf /etc/nginx/sites-available/olcrtc-sub /etc/nginx/sites-enabled/
-   sudo nginx -t && sudo systemctl reload nginx
-   ```
-
-   **3б. nginx + SNI мультиплексор (3x-ui / xray / reality):**
-
-   Если на сервере 3x-ui, порт 443 перехватывает `stream {}` блок с
-   `ssl_preread` → обычный `listen 443 ssl` не получит трафик.
-
-   Решение: добавить upstream + SNI-правило в stream-конфиг, а HTTP-блок
-   слушает на внутреннем порту (например 9443):
-
-   ```bash
-   # 1. Upstream + SNI запись в stream-конфиге
-   sudo sed -i '/upstream www {/i\upstream olcrtc_sub {\n    server 127.0.0.1:9443;\n}\n' \
-       /etc/nginx/stream-enabled/*.conf
-   sudo sed -i '/default/i\    sub.example.com            olcrtc_sub;' \
-       /etc/nginx/stream-enabled/*.conf
-
-   # 2. HTTP server block на внутреннем порту
-   sudo tee /etc/nginx/sites-available/olcrtc-sub <<'EOF'
-   server {
-       listen 80;
-       server_name sub.example.com;
-       return 301 https://$host$request_uri;
-   }
-   server {
-       listen 127.0.0.1:9443 ssl http2 proxy_protocol;
-       server_name sub.example.com;
-       real_ip_header proxy_protocol;
-       set_real_ip_from 127.0.0.1;
-       ssl_certificate     /etc/letsencrypt/live/sub.example.com/fullchain.pem;
-       ssl_certificate_key /etc/letsencrypt/live/sub.example.com/privkey.pem;
-       location / {
-           proxy_pass http://127.0.0.1:2096;
-           proxy_set_header Host $host;
-           proxy_set_header X-Real-IP $remote_addr;
-       }
-   }
-   EOF
-   sudo ln -sf /etc/nginx/sites-available/olcrtc-sub /etc/nginx/sites-enabled/
-   sudo nginx -t && sudo systemctl reload nginx
-   ```
-
-   > Если в stream-блоке **нет** `proxy_protocol on;`, уберите
-   > `proxy_protocol` из `listen` и строки `real_ip_header` /
-   > `set_real_ip_from`.
-
-   Маршруты 3x-ui **не затрагиваются** — добавляется только новое
-   SNI-правило; `default` по-прежнему уходит в xray.
-
-4. **Закрыть порт 2096 снаружи (опционально):**
-   `sudo ufw deny 2096/tcp` — nginx ходит к `127.0.0.1:2096` локально.
+Постоянный URL вида `http://IP:2096/sub/xJGHpw` — клиент добавляет один раз,
+после пересоздания сервера достаточно импортировать БД и привязать новый
+инстанс. Управление через Admin UI → **Subscriptions**. Привязка домена и
+nginx — см. английский раздел выше.
 
 ### Удаление
 
-Рекомендуется использовать скрипт удаления (удаляет все инстансы):
-
 ```bash
-# Из checkout:
-sudo bash olcrtc-uninstall.sh
-
-# Или одной командой:
-curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/refactor-universal-carrier-fork/server-install/olcrtc-uninstall.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/master/server-install/olcrtc-uninstall.sh | sudo bash
 ```
 
-Ручное удаление:
-
-```bash
-sudo systemctl disable --now olcrtc-server
-sudo rm -f /etc/systemd/system/olcrtc-server.service /etc/systemd/system/olcrtc-server@.service
-sudo systemctl daemon-reload
-sudo rm -rf /etc/olcrtc /var/lib/olcrtc /var/lib/olcrtc-* /usr/local/bin/olcrtc /usr/local/bin/olcrtc-launcher
-sudo userdel olcrtc 2>/dev/null || true
-```
+Или ручное удаление — см. английский раздел выше.
 
 ### Полная документация
 
-Английская версия выше содержит подробности по всем флагам, путям, формату конфига, сборке из исходников и устройству systemd-юнита. Русский раздел — это TL;DR.
+Английский раздел выше — полный справочник по флагам, путям, формату
+конфига, сборке из исходников и устройству systemd-юнитов. Этот раздел —
+TL;DR.

@@ -7,32 +7,36 @@
 
 </div>
 
-> ### ⚠ Known issues / Известные проблемы (май 2026)
+> ### ⚠ Known issues / Известные проблемы
 >
-> - **WB Stream**: разработчики stream.wb.ru отключили публичный API создания
->   комнат и приём гостей в звонки. Автогенерация румы для `wbstream` больше
->   не работает — руму нужно создать вручную на <https://stream.wb.ru> и
->   указать её ID в админке (поле `Room ID` в форме настройки инстанса) или
->   при установке. Подробности см. в `server-install/README.md`.
-> - Чтобы быстро запустить сервер без ручных шагов — используйте `jitsi`
->   (server-side auto-gen всё ещё работает) или `telemost` (для telemost
->   инсталлятор сам генерирует ID вида `olcrtc-XXXXXXXX`).
+> - **WB Stream**: stream.wb.ru отключил публичный API создания комнат и приём
+>   гостей. Для `wbstream` нужно создать руму вручную на
+>   <https://stream.wb.ru> и указать её ID при создании инстанса в Admin UI.
+> - Самый быстрый старт — `jitsi` (auto-gen Room ID работает) или `telemost`
+>   (инсталлер сам генерирует ID `olcrtc-XXXXXXXX`).
 
-> ### Падение звноков/комнат
-> - Для поддержания звонков/комнат используйте [infinity-room-panel](https://github.com/juushimatsu/infinity-room-panel)
+> ### Падение звонков/комнат
+> Для поддержки живых комнат используйте
+> [infinity-room-panel](https://github.com/juushimatsu/infinity-room-panel).
 
 ## About
 
 olcRTC — across the sea.
 
-Tunnels TCP traffic over WebRTC through whitelisted Russian conferencing
-services (Yandex Telemost, Jitsi, Wildberries Stream) so it cannot be
-blocked without breaking the upstream service.
+Туннель TCP через WebRTC поверх «легальных» конференц-сервисов
+(Yandex Telemost, Jitsi Meet, WB Stream): для внешнего наблюдателя это
+обычный звонок, внутри — зашифрованный поток до приложения.
 
-This fork ([Oleglog/Olcrtc_manager](https://github.com/Oleglog/Olcrtc_manager))
-adds a one-command systemd installer, interactive management menu, SOCKS5
-proxy support for signalling, multi-instance support, and pre-built binaries
-for `linux/amd64` and `linux/arm64`.
+Этот форк ([Oleglog/Olcrtc_manager](https://github.com/Oleglog/Olcrtc_manager))
+надстраивает над upstream
+[openlibrecommunity/olcrtc](https://github.com/openlibrecommunity/olcrtc):
+
+- one-command systemd-инсталлер (`server-install/olcrtc-setup.sh`),
+- **Admin Web UI** на 8443 — все настройки, инстансы, подписки, обновления,
+- мульти-инстансы (до 20 на VPS),
+- сервер подписок (постоянный URL → клиент подхватывает изменения),
+- pre-built бинарники для `linux/amd64` и `linux/arm64`,
+- WARP-прокси для скрытия публичного IP VPS от клиентского трафика.
 
 ## Quick links
 
@@ -45,30 +49,37 @@ for `linux/amd64` and `linux/arm64`.
 
 ## Server — quick start
 
-One command, no git required:
+Одна команда, без `git`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/master/server-install/olcrtc-setup.sh | sudo bash
 ```
 
-Or from a checkout:
+Из чекаута:
+
 ```bash
 git clone https://github.com/Oleglog/Olcrtc_manager
 cd Olcrtc_manager
 sudo bash server-install/olcrtc-setup.sh
 ```
 
-[More info](docs/about.md)
+После установки скрипт печатает URL Admin UI и креды:
 
-[Client URI format](docs/uri.md)
+```
+Admin UI:  https://<VPS-IP>:8443
+Логин:     admin
+Пароль:    admin
+```
 
-The script is **self-contained** — it downloads the binary, installs the
-systemd service, and prints **Carrier**, **Transport**, **Room ID** and
-**Encryption key** to enter into the Android app.
+Дальнейшее управление (carrier, транспорт, SOCKS, WARP, инстансы,
+подписки, обновления) — целиком через web-интерфейс.
 
-After installation, re-run the same script for an interactive management menu.
+> ⚠ Сертификат самоподписанный — в браузере подтвердите «Перейти».
+> При первом входе **смените пароль** в настройках.
 
-See the full server documentation: **[server-install/README.md](server-install/README.md)**
+См. полную документацию по серверу: **[server-install/README.md](server-install/README.md)**.
+
+[About](docs/about.md) · [Client URI format](docs/uri.md)
 
 ## Carrier & transport matrix
 
@@ -79,26 +90,27 @@ See the full server documentation: **[server-install/README.md](server-install/R
 | seichannel | ✗ | ✓ | ✓ |
 | videochannel | ✓ | ✓ | ✓ |
 
-Speed (descending): **datachannel** (~6 MB/s) > **vp8channel** > **seichannel** > **videochannel** (~200 KB/s)
+Speed: **datachannel** (~6 MB/s) > **vp8channel** > **seichannel** > **videochannel** (~200 KB/s)
 
-Default carrier: **jitsi**. Default transport: **datachannel**.
+Defaults: **carrier=`jitsi`**, **transport=`vp8channel`**.
 
 ## Server management
 
-Re-run the same script — it detects the existing installation and shows a menu:
+Скрипт `olcrtc-setup.sh` — install-only. После установки повторный запуск
+без флагов покажет статус и URL Admin UI. Управление — через Admin UI или
+эти флаги:
 
 ```bash
-sudo bash olcrtc-setup.sh
+sudo bash olcrtc-setup.sh --update           # обновить бинарники
+sudo bash olcrtc-setup.sh --status           # статус сервисов
+sudo bash olcrtc-setup.sh --show-token       # показать логин/пароль
+sudo bash olcrtc-setup.sh --regenerate       # пересоздать Room ID
+sudo bash olcrtc-setup.sh --regenerate-key   # пересоздать ключ + Room ID
+sudo bash olcrtc-setup.sh --uninstall        # полное удаление
 ```
 
-Menu items include:
-- Change carrier / transport
-- Regenerate room ID / encryption key
-- Configure SOCKS5 proxy
-- Toggle debug logging
-- Multiple instances (up to 20)
-- Update binary
-- Full uninstall
+Флаги `--carrier`, `--transport`, `--name`, `--id` — только для первичной
+установки (после установки меняются через Admin UI).
 
 ### Uninstall
 
@@ -106,81 +118,80 @@ Menu items include:
 curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/master/server-install/olcrtc-uninstall.sh | sudo bash
 ```
 
-See [`server-install/README.md`](server-install/README.md) for details.
+## SOCKS5 для signalling
 
-## Docs (upstream)
+Если IP VPS заблокирован у wbstream / jitsi / telemost (нужен
+residential / RU-IP), укажите SOCKS5 в карточке инстанса в Admin UI
+(поле **SOCKS proxy**: `host:port` или `user:pass@host:port`,
+RFC 1929 поддерживается).
 
-- [Quick start with containers](docs/fast.md)
-- [Manual setup](docs/manual.md)
-- [Settings matrix](docs/settings.md)
-
-## Build from source
-
-```bash
-# install mage first
-go install github.com/magefile/mage@latest
-
-# build cli + ui
-mage build
-
-# build cli only
-mage buildCLI
-
-# build cli with b codec, clones b repo, builds libb.so, compiles with -tags b
-mage buildCLIB
-
-# cross-compile for linux / windows / darwin
-mage cross
-
-# android aar via gomobile
-mage mobile
-
-# container image
-mage podman
-mage docker
-
-# lint / test / clean
-mage lint
-mage test
-mage clean
-```
-
-## SOCKS5 proxy for signalling
-
-If your VPS IP is blocked by wbstream / jitsi / telemost, route signalling
-through a residential SOCKS5 proxy:
-
-```bash
-sudo bash olcrtc-setup.sh --socks-proxy user:pass@host:port
-```
-
-Only provider API / signalling goes through the proxy. Client TCP tunnel
-traffic exits directly from the VPS. See
-[server-install/README.md § Outbound SOCKS5 proxy](server-install/README.md#outbound-socks5-proxy-when-your-vps-ip-is-blocked).
+Через SOCKS идёт **только carrier-трафик** (HTTP API + WebSocket
+signalling). Клиентский TCP-туннель уходит напрямую с VPS — иначе
+гео-блокированные сервисы (Telegram и т.п.) перестали бы работать.
 
 ## WARP proxy (hide VPS IP)
 
-Route client tunnel traffic through Cloudflare WARP so visited sites see a
-WARP IP instead of your VPS IP. Two setup options:
+Чтобы посещаемые сайты видели Cloudflare WARP-IP вместо IP вашего VPS,
+поднимите локальный SOCKS5 поверх WARP (через `wireproxy` или
+3X-UI inbound) и укажите его в инстансе:
 
-- **wireproxy** — standalone daemon, no dependencies
-- **3X-UI** — use an existing Xray WARP outbound as SOCKS5
-
-Enable via menu (item 14) or env:
-```bash
-# /etc/olcrtc/env
+```
 OLCRTC_WARP_PROXY=127.0.0.1:40000
 ```
 
-Full guide: **[server-install/WARP-PROXY.md](server-install/WARP-PROXY.md)**
+Через Admin UI: поле **WARP proxy** в карточке инстанса. Через env: правка
+`/etc/olcrtc/<N>/env` + `systemctl restart olcrtc-server@<N>`.
+
+WARP применяется **только** к клиентскому туннельному трафику; signalling
+остаётся через прямое подключение или через SOCKS5 (см. выше).
+
+Полное руководство: **[server-install/WARP-PROXY.md](server-install/WARP-PROXY.md)**
+
+## Build from source
+
+Требуется Go 1.22+ и [mage](https://magefile.org/):
+
+```bash
+go install github.com/magefile/mage@latest
+
+mage build         # cli + ui
+mage buildCLI      # только cli
+mage cross         # cross-compile linux/windows/darwin
+mage mobile        # Android .aar (gomobile)
+mage podman        # container image
+mage docker        # container image
+mage lint
+mage test
+mage e2e
+mage clean
+```
+
+Только серверные бинарники для двух Linux-архитектур:
+
+```bash
+./server-install/build-from-source.sh   # → server-install/bin/olcrtc-linux-{amd64,arm64}
+```
+
+После этого `olcrtc-setup.sh` подхватит локальные бинарники и не пойдёт в
+GitHub Releases.
+
+## Docs
+
+- [About](docs/about.md)
+- [Quick start with containers](docs/fast.md)
+- [Manual setup](docs/manual.md)
+- [Settings matrix](docs/settings.md)
+- [Client URI format](docs/uri.md)
+- [Subscriptions](docs/sub.md)
 
 ## License
-Apache License 2.0. See `LICENSE` for details.
+
+olcRTC — **WTFPL**. Этот форк — derivative work upstream-проекта и
+наследует ту же лицензию. См. `LICENSE`.
 
 <div align="center">
 
 ---
-
 
 Telegram: [zarazaex](https://t.me/zarazaexe)
 <br>
@@ -189,6 +200,5 @@ Email: [zarazaex@tuta.io](mailto:zarazaex@tuta.io)
 Site: [zarazaex.xyz](https://zarazaex.xyz)
 <br>
 Made for: [olcNG](https://github.com/zarazaex69/olcng)
-
 
 </div>

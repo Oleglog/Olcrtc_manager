@@ -49,29 +49,31 @@ Cloudflare WARP. В качестве SOCKS5 можно использовать 
 
 ## Включение в olcrtc
 
-### Через меню (рекомендуется)
+### Через Admin Web UI (рекомендуется)
 
-```bash
-# Запустить менеджер
-sudo bash olcrtc-setup.sh
-# Выбрать пункт 14 → ввести адрес (по умолчанию 127.0.0.1:40000)
-```
+Открыть Admin UI → карточка инстанса → поле **WARP proxy** → ввести адрес
+(например `127.0.0.1:40000`) → **Save**. Сервис перезапускается автоматически.
 
 ### Через env-файл
 
 ```bash
-# Добавить/изменить в /etc/olcrtc/env:
+# /etc/olcrtc/env (главный инстанс) или /etc/olcrtc/<N>/env (доп. инстанс)
 OLCRTC_WARP_PROXY=127.0.0.1:40000
 
-# Перезапустить сервис:
-sudo systemctl restart olcrtc-server
+sudo systemctl restart olcrtc-server         # для главного
+sudo systemctl restart olcrtc-server@2       # для инстанса #2
 ```
 
-### Через CLI
+### Через CLI (ручной запуск бинарника)
 
 ```bash
 olcrtc -mode srv ... -warp-proxy 127.0.0.1 -warp-proxy-port 40000
 ```
+
+> **⚠ Версия бинарника:** до v1.8.34 настройка `OLCRTC_WARP_PROXY` читалась
+> из YAML, но не доходила до `Server.dial()` — клиентский трафик всё равно
+> уходил с IP VPS. Если вы устанавливали ранее, выполните
+> `sudo bash olcrtc-setup.sh --update`.
 
 ---
 
@@ -159,8 +161,8 @@ systemctl enable --now wireproxy-warp
 curl --proxy socks5://127.0.0.1:40000 https://ifconfig.me
 # Должен показать Cloudflare IP, не IP VPS
 
-# Включить в olcrtc (пункт 14 в меню или вручную):
-sudo bash olcrtc-setup.sh
+# Включить в olcrtc — через Admin UI (поле WARP proxy в карточке инстанса)
+# или прямо в env-файле (OLCRTC_WARP_PROXY=127.0.0.1:40000)
 ```
 
 ---
@@ -220,13 +222,10 @@ curl --proxy socks5://127.0.0.1:40000 https://ifconfig.me
 ### 4. Включить в olcrtc
 
 ```bash
-# Через меню (пункт 14):
-sudo bash olcrtc-setup.sh
-
+# Через Admin UI: карточка инстанса → поле WARP proxy → 127.0.0.1:40000 → Save
 # Или вручную:
-# В /etc/olcrtc/env добавить:
-#   OLCRTC_WARP_PROXY=127.0.0.1:40000
-# И перезапустить:
+#   В /etc/olcrtc/env (или /etc/olcrtc/<N>/env) добавить:
+#     OLCRTC_WARP_PROXY=127.0.0.1:40000
 #   sudo systemctl restart olcrtc-server
 ```
 
@@ -247,13 +246,11 @@ sudo bash olcrtc-setup.sh
 ## Отключение WARP
 
 ```bash
-# Через меню (пункт 15):
-sudo bash olcrtc-setup.sh
-
+# Через Admin UI: карточка инстанса → очистить поле WARP proxy → Save
 # Или вручную:
-# Убрать OLCRTC_WARP_PROXY из /etc/olcrtc/env
-# sudo systemctl restart olcrtc-server
+#   Убрать строку OLCRTC_WARP_PROXY из /etc/olcrtc/env (или /etc/olcrtc/<N>/env)
+#   sudo systemctl restart olcrtc-server
 ```
 
-Без `OLCRTC_WARP_PROXY` olcrtc работает как раньше — прямое подключение
-от VPS.
+Без `OLCRTC_WARP_PROXY` olcrtc dial-функция работает как раньше — прямое
+подключение от VPS (если SOCKS5 не настроен) или через SOCKS5.
