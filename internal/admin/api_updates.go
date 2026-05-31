@@ -18,7 +18,8 @@ import (
 // Version is set via ldflags at build time.
 var Version = "1.8.20"
 
-// Update check cache to avoid GitHub API rate limits (60 req/hour unauthenticated)
+// Update check cache: stored after each successful GitHub fetch, served only
+// as a stale fallback when both GitHub paths (redirect + API) fail.
 type updateCache struct {
 	timestamp       time.Time
 	currentVersion  string
@@ -29,9 +30,8 @@ type updateCache struct {
 }
 
 var (
-	updateCacheMu   sync.RWMutex
-	cachedUpdate    *updateCache
-	updateCacheTTL  = 10 * time.Minute
+	updateCacheMu sync.RWMutex
+	cachedUpdate  *updateCache
 )
 
 func (s *Server) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
@@ -40,53 +40,32 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check cache first
-	updateCacheMu.RLock()
-	if cachedUpdate != nil && time.Since(cachedUpdate.timestamp) < updateCacheTTL {
-		cached := cachedUpdate
-		updateCacheMu.RUnlock()
-		writeJSON(w, http.StatusOK, map[string]any{
-			"current_version":  cached.currentVersion,
-			"latest_version":   cached.latestVersion,
-			"update_available": cached.updateAvailable,
-			"release_url":      cached.releaseURL,
-			"tag_name":         cached.tagName,
-			"cached":           true,
-		})
-		return
-	}
-	updateCacheMu.RUnlock()
-
 	currentVersion := "v" + Version
-	tagName, releaseURL, err := fetchLatestTagViaRedirect()
+	tagName, releaseURL, source, err := fetchLatestTag()
 	if err != nil {
-		// Fallback to GitHub API
-		tagName, releaseURL, err = fetchLatestTagViaAPI()
-		if err != nil {
-			// Rate limited or unreachable — return stale cache if any
-			updateCacheMu.RLock()
-			if cachedUpdate != nil {
-				cached := cachedUpdate
-				updateCacheMu.RUnlock()
-				writeJSON(w, http.StatusOK, map[string]any{
-					"current_version":  cached.currentVersion,
-					"latest_version":   cached.latestVersion,
-					"update_available": cached.updateAvailable,
-					"release_url":      cached.releaseURL,
-					"tag_name":         cached.tagName,
-					"cached":           true,
-					"stale":            true,
-				})
-				return
-			}
+		// Both GitHub paths failed — fall back to stale cache if any
+		updateCacheMu.RLock()
+		if cachedUpdate != nil {
+			cached := cachedUpdate
 			updateCacheMu.RUnlock()
-			logger.Errorf("check updates: %v", err)
-			writeJSON(w, http.StatusServiceUnavailable, map[string]string{
-				"error":   "github_unreachable",
-				"message": "GitHub недоступен. Попробуйте позже.",
+			writeJSON(w, http.StatusOK, map[string]any{
+				"current_version":  cached.currentVersion,
+				"latest_version":   cached.latestVersion,
+				"update_available": cached.updateAvailable,
+				"release_url":      cached.releaseURL,
+				"tag_name":         cached.tagName,
+				"source":           "stale_cache",
+				"stale":            true,
 			})
 			return
 		}
+		updateCacheMu.RUnlock()
+		logger.Errorf("check updates: %v", err)
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+			"error":   "github_unreachable",
+			"message": "GitHub недоступен. Попробуйте позже.",
+		})
+		return
 	}
 
 	latestVersion := strings.TrimPrefix(tagName, "server-")
@@ -109,7 +88,23 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
 		"update_available": updateAvailable,
 		"release_url":      releaseURL,
 		"tag_name":         tagName,
+		"source":           source,
 	})
+}
+
+// fetchLatestTag tries the rate-limit-free redirect path first, then falls back
+// to the rate-limited GitHub API. Returns source = "redirect" or "api".
+func fetchLatestTag() (tag, url, source string, err error) {
+	tag, url, err = fetchLatestTagViaRedirect()
+	if err == nil {
+		return tag, url, "redirect", nil
+	}
+	redirectErr := err
+	tag, url, err = fetchLatestTagViaAPI()
+	if err == nil {
+		return tag, url, "api", nil
+	}
+	return "", "", "", fmt.Errorf("redirect: %v; api: %w", redirectErr, err)
 }
 
 // fetchLatestTagViaRedirect resolves the latest release by reading the Location
