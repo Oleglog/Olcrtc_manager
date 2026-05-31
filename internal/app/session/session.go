@@ -693,6 +693,8 @@ func runOnce(
 			SOCKSProxyPort:   cfg.SOCKSProxyPort,
 			SOCKSProxyUser:   cfg.SOCKSProxyUser,
 			SOCKSProxyPass:   cfg.SOCKSProxyPass,
+			WarpProxyAddr:    cfg.WarpProxyAddr,
+			WarpProxyPort:    cfg.WarpProxyPort,
 			Insecure:         cfg.Insecure,
 			TransportOptions: opts,
 			Engine:           cfg.Engine,

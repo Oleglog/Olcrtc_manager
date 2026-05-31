@@ -79,6 +79,8 @@ type Server struct {
 	socksProxyPort int
 	socksProxyUser string
 	socksProxyPass string
+	warpProxyAddr  string
+	warpProxyPort  int
 	liveness       control.Config
 	health         *runtime.HealthTracker
 	done           chan struct{}
@@ -114,6 +116,11 @@ type Config struct {
 	SOCKSProxyPort   int
 	SOCKSProxyUser   string
 	SOCKSProxyPass   string
+	// WarpProxyAddr/Port point to a local SOCKS5 proxy used for client tunnel
+	// traffic (the dial() path). When set it takes precedence over SOCKSProxy*
+	// for that traffic so the VPS public IP is not exposed.
+	WarpProxyAddr    string
+	WarpProxyPort    int
 	Insecure         bool
 	TransportOptions transport.Options
 	Engine           string
@@ -173,6 +180,8 @@ func Run(ctx context.Context, cfg Config) error {
 		socksProxyPort: cfg.SOCKSProxyPort,
 		socksProxyUser: cfg.SOCKSProxyUser,
 		socksProxyPass: cfg.SOCKSProxyPass,
+		warpProxyAddr:  cfg.WarpProxyAddr,
+		warpProxyPort:  cfg.WarpProxyPort,
 		liveness:       cfg.Liveness,
 		health:         runtime.NewHealthTracker(cfg.OnHealth),
 		peerSessions:   make(map[string]*peerSession),
@@ -895,7 +904,19 @@ func (s *Server) dispatch(stream *smux.Stream, req ConnectRequest, sessionID str
 
 func (s *Server) dial(req ConnectRequest) (net.Conn, error) {
 	addr := net.JoinHostPort(req.Addr, strconv.Itoa(req.Port))
-	if s.socksProxyAddr == "" {
+
+	// Tunnel traffic priority: WARP > SOCKS > direct.
+	// WARP wins so the VPS public IP isn't exposed to client traffic.
+	proxyHost, proxyPort, proxyUser, proxyPass := "", 0, "", ""
+	switch {
+	case s.warpProxyAddr != "" && s.warpProxyPort > 0:
+		proxyHost, proxyPort = s.warpProxyAddr, s.warpProxyPort
+	case s.socksProxyAddr != "":
+		proxyHost, proxyPort = s.socksProxyAddr, s.socksProxyPort
+		proxyUser, proxyPass = s.socksProxyUser, s.socksProxyPass
+	}
+
+	if proxyHost == "" {
 		dialer := &net.Dialer{
 			Timeout:   10 * time.Second,
 			KeepAlive: 30 * time.Second,
@@ -908,7 +929,7 @@ func (s *Server) dial(req ConnectRequest) (net.Conn, error) {
 		return conn, nil
 	}
 
-	proxyAddr := net.JoinHostPort(s.socksProxyAddr, strconv.Itoa(s.socksProxyPort))
+	proxyAddr := net.JoinHostPort(proxyHost, strconv.Itoa(proxyPort))
 	dialer := &net.Dialer{
 		Timeout:   10 * time.Second,
 		KeepAlive: 30 * time.Second,
@@ -918,7 +939,7 @@ func (s *Server) dial(req ConnectRequest) (net.Conn, error) {
 		return nil, fmt.Errorf("failed to dial proxy: %w", err)
 	}
 
-	if err := s.socks5Connect(conn, req.Addr, req.Port); err != nil {
+	if err := s.socks5ConnectWithAuth(conn, req.Addr, req.Port, proxyUser, proxyPass); err != nil {
 		_ = conn.Close()
 		return nil, err
 	}
@@ -926,7 +947,11 @@ func (s *Server) dial(req ConnectRequest) (net.Conn, error) {
 }
 
 func (s *Server) socks5Connect(conn net.Conn, targetAddr string, targetPort int) error {
-	if s.socksProxyUser != "" {
+	return s.socks5ConnectWithAuth(conn, targetAddr, targetPort, s.socksProxyUser, s.socksProxyPass)
+}
+
+func (s *Server) socks5ConnectWithAuth(conn net.Conn, targetAddr string, targetPort int, proxyUser, proxyPass string) error {
+	if proxyUser != "" {
 		// Offer username/password auth (RFC 1929) only.
 		if _, err := conn.Write([]byte{5, 1, 2}); err != nil {
 			return fmt.Errorf("failed to write socks5 auth: %w", err)
@@ -947,12 +972,12 @@ func (s *Server) socks5Connect(conn net.Conn, targetAddr string, targetPort int)
 	}
 	switch resp[1] {
 	case 0: // no auth accepted
-		if s.socksProxyUser != "" {
+		if proxyUser != "" {
 			return ErrSocks5AuthFailed
 		}
 	case 2: // username/password
-		user := s.socksProxyUser
-		pass := s.socksProxyPass
+		user := proxyUser
+		pass := proxyPass
 		if len(user) > 255 {
 			user = user[:255]
 		}
