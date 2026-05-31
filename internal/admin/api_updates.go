@@ -225,43 +225,74 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 exec > /tmp/olcrtc-update.log 2>&1
 set -x
 
+STATE_FILE=/tmp/olcrtc-update-state.json
+
+write_state() {
+    local phase="$1"
+    local message="$2"
+    local percent="$3"
+    local now
+    now=$(date +%%s)
+    cat > "$STATE_FILE" <<EOF
+{"phase":"$phase","message":"$message","percent":$percent,"target_version":"%s","updated_at":$now}
+EOF
+}
+
+fail_state() {
+    local message="$1"
+    local now
+    now=$(date +%%s)
+    cat > "$STATE_FILE" <<EOF
+{"phase":"error","message":"$message","percent":0,"target_version":"%s","updated_at":$now}
+EOF
+}
+
 echo "=== olcRTC Update Started at $(date) ==="
 echo "Updating to version: %s"
 echo "Architecture: %s"
 
+write_state "starting" "Подготовка обновления..." 2
+
 TMPDIR=$(mktemp -d)
 trap "rm -rf $TMPDIR" EXIT
 
+write_state "downloading_server" "Скачивание сервера..." 10
 echo "Downloading olcrtc binary..."
 if ! curl -fsSL --max-time 60 "%s/olcrtc-linux-%s" -o "$TMPDIR/olcrtc"; then
     echo "ERROR: Failed to download olcrtc binary"
-    # Restart admin so user knows update failed
+    fail_state "Не удалось скачать сервер"
     systemctl start olcrtc-admin.service || true
     exit 1
 fi
 
+write_state "downloading_admin" "Скачивание админки..." 25
 echo "Downloading olcrtc-admin binary..."
 if ! curl -fsSL --max-time 60 "%s/olcrtc-admin-linux-%s" -o "$TMPDIR/olcrtc-admin"; then
     echo "ERROR: Failed to download olcrtc-admin binary"
+    fail_state "Не удалось скачать админку"
     systemctl start olcrtc-admin.service || true
     exit 1
 fi
 
+write_state "verifying" "Проверка бинарников..." 35
 # Verify binaries are valid ELF files
 if ! file "$TMPDIR/olcrtc" | grep -q "ELF"; then
     echo "ERROR: olcrtc binary is not a valid ELF file"
+    fail_state "Повреждённый бинарник сервера"
     systemctl start olcrtc-admin.service || true
     exit 1
 fi
 
 if ! file "$TMPDIR/olcrtc-admin" | grep -q "ELF"; then
     echo "ERROR: olcrtc-admin binary is not a valid ELF file"
+    fail_state "Повреждённый бинарник админки"
     systemctl start olcrtc-admin.service || true
     exit 1
 fi
 
 chmod +x "$TMPDIR/olcrtc" "$TMPDIR/olcrtc-admin"
 
+write_state "stopping" "Остановка сервисов..." 45
 echo "Stopping services..."
 systemctl stop olcrtc-admin.service || true
 systemctl stop olcrtc-server.service || true
@@ -269,6 +300,7 @@ systemctl stop olcrtc-server.service || true
 
 sleep 3
 
+write_state "replacing" "Замена бинарников..." 60
 echo "Replacing binaries..."
 install -m 0755 "$TMPDIR/olcrtc" /usr/local/bin/olcrtc
 install -m 0755 "$TMPDIR/olcrtc-admin" /usr/local/bin/olcrtc-admin
@@ -276,15 +308,21 @@ install -m 0755 "$TMPDIR/olcrtc-admin" /usr/local/bin/olcrtc-admin
 echo "Reloading systemd..."
 systemctl daemon-reload
 
+write_state "starting_server" "Запуск сервера..." 75
 echo "Starting services..."
 systemctl start olcrtc-server.service
 sleep 2
+
+write_state "starting_admin" "Запуск админки..." 88
 systemctl start olcrtc-admin.service
 sleep 1
 %s
 
+write_state "completed" "Обновление завершено" 100
 echo "=== Update Completed at $(date) ==="
 `,
+		version,
+		version,
 		version,
 		arch,
 		repoURL, arch,
@@ -302,6 +340,10 @@ echo "=== Update Completed at $(date) ==="
 		})
 		return
 	}
+
+	// Seed initial state so frontend sees progress immediately, before script runs.
+	initial := fmt.Sprintf(`{"phase":"queued","message":"Запуск процесса обновления...","percent":1,"target_version":"%s","updated_at":%d}`, version, time.Now().Unix())
+	_ = os.WriteFile(updateStateFile, []byte(initial), 0644)
 
 	// Send response BEFORE starting update
 	writeJSON(w, http.StatusOK, map[string]string{
@@ -356,4 +398,33 @@ func buildStopCommands(services []string) string {
 		cmds += fmt.Sprintf("systemctl stop %s || true\n", svc)
 	}
 	return cmds
+}
+
+const updateStateFile = "/tmp/olcrtc-update-state.json"
+
+func (s *Server) handleUpdateProgress(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	data, err := os.ReadFile(updateStateFile)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"phase":   "idle",
+			"message": "Обновление не запущено",
+			"percent": 0,
+		})
+		return
+	}
+	var state map[string]any
+	if err := json.Unmarshal(data, &state); err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"phase":   "unknown",
+			"message": "Не удалось прочитать состояние",
+			"percent": 0,
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, state)
 }

@@ -1701,8 +1701,22 @@ function showImportSubModal() {
 }
 
 // ── Update overlay ───────────────────────────────────────────────────────────
+const UPDATE_STEPS = [
+  { id: 'download',    label: 'Скачивание бинарников',  phases: ['queued', 'starting', 'downloading_server', 'downloading_admin', 'verifying'] },
+  { id: 'stopping',    label: 'Остановка сервисов',     phases: ['stopping'] },
+  { id: 'replacing',   label: 'Замена бинарников',      phases: ['replacing'] },
+  { id: 'starting',    label: 'Запуск сервера и админки', phases: ['starting_server', 'starting_admin'] },
+  { id: 'ready',       label: 'Готовность к работе',    phases: ['completed'] },
+];
+
+function phaseToStepIndex(phase) {
+  for (let i = 0; i < UPDATE_STEPS.length; i++) {
+    if (UPDATE_STEPS[i].phases.includes(phase)) return i;
+  }
+  return -1;
+}
+
 function showUpdateOverlay(targetVersion) {
-  // Remove any existing overlay
   const existing = document.getElementById('update-overlay');
   if (existing) existing.remove();
 
@@ -1711,124 +1725,231 @@ function showUpdateOverlay(targetVersion) {
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(1,1,2,0.95);backdrop-filter:blur(12px);display:flex;align-items:center;justify-content:center;z-index:9999;animation:fadeIn 0.3s ease-out;';
 
   const content = el('div', '');
-  content.style.cssText = 'text-align:center;max-width:480px;padding:48px 32px;';
+  content.style.cssText = 'text-align:center;max-width:520px;padding:48px 32px;width:100%;';
 
   const spinnerWrap = el('div', '');
-  spinnerWrap.style.cssText = 'margin-bottom:32px;display:flex;justify-content:center;';
-  spinnerWrap.innerHTML = '<div style="width:64px;height:64px;border:4px solid var(--color-hairline);border-top-color:var(--color-primary);border-radius:50%;animation:spin 1s linear infinite;"></div>';
+  spinnerWrap.style.cssText = 'margin-bottom:28px;display:flex;justify-content:center;';
+  spinnerWrap.innerHTML = '<div id="update-spinner" style="width:64px;height:64px;border:4px solid var(--color-hairline);border-top-color:var(--color-primary);border-radius:50%;animation:spin 1s linear infinite;"></div>';
 
   const title = el('h2', '');
-  title.style.cssText = 'font-size:28px;font-weight:600;letter-spacing:-0.6px;color:var(--color-ink);margin-bottom:12px;';
-  title.textContent = 'Обновление сервера...';
+  title.style.cssText = 'font-size:28px;font-weight:600;letter-spacing:-0.6px;color:var(--color-ink);margin-bottom:10px;';
+  title.textContent = 'Обновление сервера';
 
   const subtitle = el('p', '');
-  subtitle.style.cssText = 'font-size:16px;color:var(--color-ink-muted);margin-bottom:24px;line-height:1.5;';
+  subtitle.style.cssText = 'font-size:15px;color:var(--color-ink-muted);margin-bottom:28px;line-height:1.5;';
   subtitle.textContent = 'Устанавливается версия v' + targetVersion;
+
+  const stepsList = el('div', '');
+  stepsList.id = 'update-steps';
+  stepsList.style.cssText = 'text-align:left;background:rgba(255,255,255,0.03);border:1px solid var(--color-hairline);border-radius:12px;padding:16px 20px;margin-bottom:20px;';
+  UPDATE_STEPS.forEach((step, idx) => {
+    const row = el('div', '');
+    row.id = 'update-step-' + step.id;
+    row.style.cssText = 'display:flex;align-items:center;gap:12px;padding:8px 0;font-size:14px;color:var(--color-ink-subtle);';
+    const marker = el('div', '');
+    marker.className = 'update-step-marker';
+    marker.style.cssText = 'width:20px;height:20px;border-radius:50%;border:2px solid var(--color-hairline);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--color-ink-tertiary);transition:all 0.3s;';
+    marker.textContent = String(idx + 1);
+    const label = el('span', '');
+    label.className = 'update-step-label';
+    label.textContent = step.label;
+    row.appendChild(marker);
+    row.appendChild(label);
+    stepsList.appendChild(row);
+  });
 
   const status = el('div', '');
   status.id = 'update-status';
-  status.style.cssText = 'font-size:14px;color:var(--color-ink-subtle);margin-bottom:8px;font-family:ui-monospace,monospace;';
-  status.textContent = 'Скачивание бинарников...';
+  status.style.cssText = 'font-size:13px;color:var(--color-ink-subtle);margin-bottom:8px;font-family:ui-monospace,monospace;min-height:18px;';
+  status.textContent = 'Подготовка...';
 
   const progressBar = el('div', '');
-  progressBar.style.cssText = 'width:100%;height:4px;background:var(--color-hairline);border-radius:2px;margin-top:24px;overflow:hidden;';
+  progressBar.style.cssText = 'width:100%;height:4px;background:var(--color-hairline);border-radius:2px;margin-top:8px;overflow:hidden;';
   const progressFill = el('div', '');
   progressFill.id = 'update-progress';
-  progressFill.style.cssText = 'height:100%;background:var(--color-primary);width:10%;transition:width 0.5s ease;';
+  progressFill.style.cssText = 'height:100%;background:var(--color-primary);width:1%;transition:width 0.6s ease;';
   progressBar.appendChild(progressFill);
 
-  const elapsedEl = el('div', '');
-  elapsedEl.id = 'update-elapsed';
-  elapsedEl.style.cssText = 'font-size:13px;color:var(--color-ink-tertiary);margin-top:16px;';
-  elapsedEl.textContent = 'Прошло: 0s';
+  const meta = el('div', '');
+  meta.style.cssText = 'display:flex;justify-content:space-between;font-size:12px;color:var(--color-ink-tertiary);margin-top:12px;';
+  const elapsedEl = el('span', ''); elapsedEl.id = 'update-elapsed'; elapsedEl.textContent = 'Прошло: 0s';
+  const percentEl = el('span', ''); percentEl.id = 'update-percent'; percentEl.textContent = '1%';
+  meta.appendChild(elapsedEl);
+  meta.appendChild(percentEl);
 
   content.appendChild(spinnerWrap);
   content.appendChild(title);
   content.appendChild(subtitle);
+  content.appendChild(stepsList);
   content.appendChild(status);
   content.appendChild(progressBar);
-  content.appendChild(elapsedEl);
+  content.appendChild(meta);
   overlay.appendChild(content);
   document.body.appendChild(overlay);
 
   const startTime = Date.now();
-  let attemptCount = 0;
-  let serverWentDown = false;
+  let lastPhase = 'queued';
+  let lastMessage = 'Подготовка обновления...';
+  let lastPercent = 1;
+  let adminWentDown = false;
+  let finishing = false;
 
-  // Status messages timeline
-  const statusMessages = [
-    { time: 0, text: 'Скачивание бинарников...', progress: 15 },
-    { time: 10, text: 'Остановка сервисов...', progress: 30 },
-    { time: 20, text: 'Замена бинарников...', progress: 50 },
-    { time: 30, text: 'Запуск сервисов...', progress: 70 },
-    { time: 45, text: 'Ожидание готовности сервера...', progress: 85 },
-  ];
+  function applyStepIndex(activeIdx) {
+    UPDATE_STEPS.forEach((step, idx) => {
+      const row = document.getElementById('update-step-' + step.id);
+      if (!row) return;
+      const marker = row.querySelector('.update-step-marker');
+      if (idx < activeIdx) {
+        marker.style.borderColor = 'var(--color-success, #22c55e)';
+        marker.style.background = 'var(--color-success, #22c55e)';
+        marker.style.color = '#fff';
+        marker.textContent = '✓';
+        row.style.color = 'var(--color-ink)';
+      } else if (idx === activeIdx) {
+        marker.style.borderColor = 'var(--color-primary)';
+        marker.style.background = 'var(--color-primary)';
+        marker.style.color = '#fff';
+        marker.textContent = String(idx + 1);
+        row.style.color = 'var(--color-ink)';
+      } else {
+        marker.style.borderColor = 'var(--color-hairline)';
+        marker.style.background = 'transparent';
+        marker.style.color = 'var(--color-ink-tertiary)';
+        marker.textContent = String(idx + 1);
+        row.style.color = 'var(--color-ink-subtle)';
+      }
+    });
+  }
 
-  // Update elapsed time every second
+  function applyState(phase, message, percent, adminDown) {
+    const stepIdx = phaseToStepIndex(phase);
+    if (stepIdx >= 0) applyStepIndex(stepIdx);
+    if (typeof percent === 'number' && percent >= lastPercent) {
+      lastPercent = percent;
+      progressFill.style.width = percent + '%';
+      percentEl.textContent = percent + '%';
+    }
+    if (adminDown) {
+      status.textContent = (message || lastMessage) + ' (админка перезапускается...)';
+    } else {
+      status.textContent = message || lastMessage;
+    }
+  }
+
+  function fail(msg) {
+    finishing = true;
+    clearInterval(elapsedInterval);
+    clearInterval(pollInterval);
+    const spinner = document.getElementById('update-spinner');
+    if (spinner) {
+      spinner.style.animation = 'none';
+      spinner.style.borderColor = 'var(--color-danger, #ef4444)';
+      spinner.style.borderTopColor = 'var(--color-danger, #ef4444)';
+    }
+    title.textContent = 'Ошибка обновления';
+    status.textContent = msg;
+    status.style.color = 'var(--color-danger, #ef4444)';
+    const closeBtn = el('button', 'btn btn-secondary');
+    closeBtn.textContent = 'Закрыть';
+    closeBtn.style.cssText = 'margin-top:20px;';
+    closeBtn.onclick = () => overlay.remove();
+    content.appendChild(closeBtn);
+  }
+
+  function complete() {
+    if (finishing) return;
+    finishing = true;
+    applyStepIndex(UPDATE_STEPS.length); // all checked
+    progressFill.style.width = '100%';
+    percentEl.textContent = '100%';
+    status.textContent = 'Обновление завершено! Перезагрузка...';
+    clearInterval(elapsedInterval);
+    clearInterval(pollInterval);
+    setTimeout(() => { location.reload(); }, 1500);
+  }
+
   const elapsedInterval = setInterval(() => {
     const elapsed = Math.floor((Date.now() - startTime) / 1000);
     elapsedEl.textContent = 'Прошло: ' + elapsed + 's';
-
-    // Update status message based on time
-    const msg = statusMessages.filter(m => elapsed >= m.time).pop();
-    if (msg) {
-      status.textContent = msg.text;
-      progressFill.style.width = msg.progress + '%';
-    }
   }, 1000);
 
-  // Poll server every 3 seconds to check if it's back online
-  const pollInterval = setInterval(async () => {
-    attemptCount++;
+  async function pollOnce() {
+    if (finishing) return;
     const elapsed = Math.floor((Date.now() - startTime) / 1000);
 
-    // Don't even try to poll for first 15 seconds (server is being stopped)
-    if (elapsed < 15) return;
-
+    // Try to read real progress from admin
+    let progressData = null;
+    let adminReachable = false;
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2000);
-
-      const res = await fetch(API + '/system/status', {
+      const timeoutId = setTimeout(() => controller.abort(), 2500);
+      const res = await fetch(API + '/system/update-progress', {
         headers: creds ? { 'Authorization': 'Basic ' + btoa(creds.username + ':' + creds.password) } : {},
         signal: controller.signal,
       });
-
       clearTimeout(timeoutId);
-
       if (res.ok) {
-        const data = await res.json();
-        // Server is back! Check if version updated
-        if (data.version && (data.version === targetVersion || data.version === 'v' + targetVersion)) {
-          // Update successful!
-          status.textContent = 'Обновление завершено! Перезагрузка...';
-          progressFill.style.width = '100%';
-          clearInterval(elapsedInterval);
-          clearInterval(pollInterval);
-          setTimeout(() => { location.reload(); }, 1500);
-        } else if (serverWentDown && elapsed > 30) {
-          // Server is back but version didn't update - still reload after a while
-          status.textContent = 'Сервер запущен. Проверка версии...';
-          if (elapsed > 60) {
-            clearInterval(elapsedInterval);
-            clearInterval(pollInterval);
-            setTimeout(() => { location.reload(); }, 1500);
-          }
-        }
+        progressData = await res.json();
+        adminReachable = true;
       }
     } catch (e) {
-      // Server is down (expected during update)
-      serverWentDown = true;
+      adminWentDown = true;
     }
 
-    // Safety: reload after 3 minutes regardless
+    if (progressData) {
+      lastPhase = progressData.phase || lastPhase;
+      lastMessage = progressData.message || lastMessage;
+      const percent = typeof progressData.percent === 'number' ? progressData.percent : lastPercent;
+      applyState(lastPhase, lastMessage, percent, false);
+
+      if (lastPhase === 'error') {
+        fail(lastMessage || 'Произошла ошибка во время обновления');
+        return;
+      }
+
+      // Real "completed" from script — verify admin actually serves new version before reload
+      if (lastPhase === 'completed') {
+        try {
+          const sres = await fetch(API + '/system/status', {
+            headers: creds ? { 'Authorization': 'Basic ' + btoa(creds.username + ':' + creds.password) } : {},
+          });
+          if (sres.ok) {
+            const sd = await sres.json();
+            const v = (sd.version || '').replace(/^v/, '');
+            const t = (targetVersion || '').replace(/^v/, '');
+            if (v && v === t) { complete(); return; }
+            // version still old — admin is up but binary not yet swapped from its perspective
+            status.textContent = 'Завершение обновления... (версия: ' + (sd.version || 'неизвестно') + ')';
+          }
+        } catch (e) { /* ignore */ }
+      }
+    } else {
+      // Admin is unreachable — we're in stop/replace/restart window. Show last known phase.
+      // If we haven't seen any phase past "verifying", assume we just hit "stopping".
+      const lastIdx = phaseToStepIndex(lastPhase);
+      if (lastIdx <= 0 && elapsed > 5) {
+        // No state file yet but admin is down — assume stopping
+        applyState('stopping', 'Остановка сервисов...', Math.max(lastPercent, 45), true);
+      } else if (lastIdx === 1) {
+        // We were at "stopping", now admin is gone — likely "replacing"
+        applyState('replacing', 'Замена бинарников...', Math.max(lastPercent, 60), true);
+      } else {
+        applyState(lastPhase, lastMessage, lastPercent, true);
+      }
+    }
+
+    // Safety net: reload after 3 minutes regardless
     if (elapsed > 180) {
       status.textContent = 'Время ожидания истекло. Перезагрузка...';
       clearInterval(elapsedInterval);
       clearInterval(pollInterval);
       setTimeout(() => { location.reload(); }, 1500);
     }
-  }, 3000);
+  }
+
+  // Initial poll immediately, then every 1.5s
+  pollOnce();
+  const pollInterval = setInterval(pollOnce, 1500);
 }
 
 // ── Init ─────────────────────────────────────────────────────────────────────
