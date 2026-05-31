@@ -300,10 +300,11 @@ func (s *Session) Connect(ctx context.Context) error {
 
 	logger.Infof("jitsi: joining MUC %s/%s as %s …", s.host, s.room, s.name)
 	jSess, err := j.JoinMUC(ctx, j.Config{
-		Host:  s.host,
-		Room:  s.room,
-		Nick:  s.name,
-		Debug: logger.IsVerbose(),
+		Host:     s.host,
+		Room:     s.room,
+		Nick:     s.name,
+		Debug:    logger.IsVerbose(),
+		Insecure: s.insecure,
 	})
 	if err != nil {
 		return fmt.Errorf("jitsi join muc: %w", err)
