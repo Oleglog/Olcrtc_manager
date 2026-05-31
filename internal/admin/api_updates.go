@@ -2,11 +2,13 @@ package admin
 
 import (
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -17,6 +19,10 @@ import (
 
 // Version is set via ldflags at build time.
 var Version = "1.8.20"
+
+// MinUpdatableVersion is the floor for the version dropdown — versions below
+// this lack the auto-update endpoint, so installing them would brick the flow.
+const MinUpdatableVersion = "1.8.27"
 
 // Update check cache: stored after each successful GitHub fetch, served only
 // as a stale fallback when both GitHub paths (redirect + API) fail.
@@ -454,4 +460,180 @@ func (s *Server) handleUpdateProgress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, state)
+}
+
+// releaseInfo is one entry in the version dropdown.
+type releaseInfo struct {
+	Tag         string `json:"tag"`
+	Version     string `json:"version"`
+	URL         string `json:"url"`
+	PublishedAt string `json:"published_at"`
+}
+
+func (s *Server) handleListReleases(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	releases, source, err := fetchReleases()
+	if err != nil {
+		logger.Errorf("list releases: %v", err)
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+			"error":   "github_unreachable",
+			"message": "Не удалось получить список версий с GitHub.",
+		})
+		return
+	}
+	floor := MinUpdatableVersion
+	filtered := make([]releaseInfo, 0, len(releases))
+	for _, rel := range releases {
+		if compareSemver(strings.TrimPrefix(rel.Version, "v"), floor) >= 0 {
+			filtered = append(filtered, rel)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"releases":    filtered,
+		"min_version": "v" + floor,
+		"source":      source,
+	})
+}
+
+// fetchReleases tries the rate-limit-free atom feed first, then GitHub API.
+func fetchReleases() ([]releaseInfo, string, error) {
+	rels, err := fetchReleasesViaAtom()
+	if err == nil {
+		return rels, "atom", nil
+	}
+	atomErr := err
+	rels, err = fetchReleasesViaAPI()
+	if err == nil {
+		return rels, "api", nil
+	}
+	return nil, "", fmt.Errorf("atom: %v; api: %w", atomErr, err)
+}
+
+func fetchReleasesViaAtom() ([]releaseInfo, error) {
+	const url = "https://github.com/Oleglog/Olcrtc_manager/releases.atom"
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "olcrtc-admin/"+Version)
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("atom returned %d", resp.StatusCode)
+	}
+	var feed struct {
+		Entries []struct {
+			ID      string `xml:"id"`
+			Title   string `xml:"title"`
+			Updated string `xml:"updated"`
+			Link    []struct {
+				Rel  string `xml:"rel,attr"`
+				Href string `xml:"href,attr"`
+			} `xml:"link"`
+		} `xml:"entry"`
+	}
+	if err := xml.NewDecoder(resp.Body).Decode(&feed); err != nil {
+		return nil, err
+	}
+	out := make([]releaseInfo, 0, len(feed.Entries))
+	for _, e := range feed.Entries {
+		// id format: tag:github.com,2008:Repository/<id>/<tag>
+		idx := strings.LastIndex(e.ID, "/")
+		if idx < 0 {
+			continue
+		}
+		tag := e.ID[idx+1:]
+		if !strings.HasPrefix(tag, "server-v") {
+			continue
+		}
+		version := strings.TrimPrefix(tag, "server-")
+		htmlURL := ""
+		for _, l := range e.Link {
+			if l.Rel == "alternate" || l.Rel == "" {
+				htmlURL = l.Href
+				break
+			}
+		}
+		out = append(out, releaseInfo{
+			Tag:         tag,
+			Version:     version,
+			URL:         htmlURL,
+			PublishedAt: e.Updated,
+		})
+	}
+	return out, nil
+}
+
+func fetchReleasesViaAPI() ([]releaseInfo, error) {
+	req, err := http.NewRequest("GET", "https://api.github.com/repos/Oleglog/Olcrtc_manager/releases?per_page=30", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "olcrtc-admin/"+Version)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("github API returned %d", resp.StatusCode)
+	}
+	var raw []struct {
+		TagName     string `json:"tag_name"`
+		HTMLURL     string `json:"html_url"`
+		PublishedAt string `json:"published_at"`
+		Draft       bool   `json:"draft"`
+		Prerelease  bool   `json:"prerelease"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return nil, err
+	}
+	out := make([]releaseInfo, 0, len(raw))
+	for _, r := range raw {
+		if r.Draft {
+			continue
+		}
+		if !strings.HasPrefix(r.TagName, "server-v") {
+			continue
+		}
+		out = append(out, releaseInfo{
+			Tag:         r.TagName,
+			Version:     strings.TrimPrefix(r.TagName, "server-"),
+			URL:         r.HTMLURL,
+			PublishedAt: r.PublishedAt,
+		})
+	}
+	return out, nil
+}
+
+// compareSemver compares two "X.Y.Z" strings (ignoring leading "v"). Returns
+// negative if a<b, 0 if equal, positive if a>b. Non-numeric segments compare
+// as 0.
+func compareSemver(a, b string) int {
+	a = strings.TrimPrefix(a, "v")
+	b = strings.TrimPrefix(b, "v")
+	aParts := strings.Split(a, ".")
+	bParts := strings.Split(b, ".")
+	for i := 0; i < 3; i++ {
+		var ai, bi int
+		if i < len(aParts) {
+			ai, _ = strconv.Atoi(aParts[i])
+		}
+		if i < len(bParts) {
+			bi, _ = strconv.Atoi(bParts[i])
+		}
+		if ai != bi {
+			return ai - bi
+		}
+	}
+	return 0
 }

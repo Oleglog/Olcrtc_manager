@@ -52,6 +52,16 @@ function el(type, cls, text) {
   return e;
 }
 
+function compareSemverJS(a, b) {
+  const ap = (a || '').replace(/^v/, '').split('.').map(n => parseInt(n, 10) || 0);
+  const bp = (b || '').replace(/^v/, '').split('.').map(n => parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    const av = ap[i] || 0, bv = bp[i] || 0;
+    if (av !== bv) return av - bv;
+  }
+  return 0;
+}
+
 const ICONS = {
   'settings': '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
   'log-out': '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>',
@@ -682,11 +692,99 @@ async function renderSettings(app) {
   const updateBlock = el('div', '');
   updateBlock.innerHTML = '<h3 class="font-semibold mb-2 inline-flex items-center gap-2">' + icon('download', 16) + '<span>Обновления</span></h3>';
   const versionInfo = el('div', 'text-sm mb-3');
-  versionInfo.innerHTML = '<div class="text-gray-300">Текущая версия: <span class="copyable">' + (sys.version || '-') + '</span></div>';
+  const currentSysVersion = (sys.version || '').toString();
+  versionInfo.innerHTML = '<div class="text-gray-300">Текущая версия: <span class="copyable">' + (currentSysVersion || '-') + '</span></div>';
   updateBlock.appendChild(versionInfo);
-  const updateRow = el('div', 'flex gap-2 flex-wrap');
+
+  const updateRow = el('div', 'flex gap-2 flex-wrap items-center');
   const checkBtn = el('button', 'btn btn-secondary');
   checkBtn.innerHTML = icon('refresh-cw') + '<span>Проверить обновления</span>';
+
+  // Version selector + install button row (rendered after check succeeds)
+  const selectorRow = el('div', 'flex gap-2 flex-wrap items-center mt-3');
+  selectorRow.style.display = 'none';
+  const selectorLabel = el('span', 'text-sm text-gray-300');
+  selectorLabel.textContent = 'Установить версию:';
+  const versionSelect = el('select', 'bg-gray-800 text-white text-sm border border-gray-700 rounded px-2 py-1');
+  versionSelect.style.cssText = 'min-width:160px;';
+  const installBtn = el('button', 'btn btn-primary');
+
+  function normVer(v) { return ('' + (v || '')).replace(/^v/, ''); }
+
+  function refreshInstallBtn() {
+    const target = versionSelect.value;
+    const isCurrent = normVer(target) === normVer(currentSysVersion);
+    installBtn.disabled = !target || isCurrent;
+    installBtn.style.opacity = installBtn.disabled ? '0.5' : '1';
+    installBtn.style.cursor = installBtn.disabled ? 'not-allowed' : 'pointer';
+    if (!target) {
+      installBtn.innerHTML = icon('download') + '<span>Установить</span>';
+    } else if (isCurrent) {
+      installBtn.innerHTML = icon('check-circle') + '<span>Версия установлена</span>';
+    } else {
+      installBtn.innerHTML = icon('download') + '<span>Установить ' + target + '</span>';
+    }
+  }
+  versionSelect.onchange = refreshInstallBtn;
+  installBtn.onclick = async () => {
+    const target = versionSelect.value;
+    if (!target || normVer(target) === normVer(currentSysVersion)) return;
+    const isDowngrade = compareSemverJS(normVer(target), normVer(currentSysVersion)) < 0;
+    const ok = await showConfirm({
+      title: isDowngrade ? 'Откатить версию?' : 'Обновить сервер?',
+      message: (isDowngrade ? 'Будет установлена более старая версия ' : 'Будет установлена версия ') + target +
+        '. Сервер и админка будут остановлены, заменены и перезапущены. Это займёт 1-2 минуты.',
+      confirmText: isDowngrade ? 'Откатить' : 'Установить',
+    });
+    if (!ok) return;
+    showUpdateOverlay(target);
+    try {
+      await api('/system/update', { method: 'POST', body: JSON.stringify({ version: target }) });
+    } catch (e) {
+      // expected during admin restart
+    }
+  };
+
+  selectorRow.appendChild(selectorLabel);
+  selectorRow.appendChild(versionSelect);
+  selectorRow.appendChild(installBtn);
+
+  async function loadReleasesIntoSelect(latestVersion) {
+    try {
+      const rel = await api('/system/releases');
+      const list = (rel && rel.releases) || [];
+      versionSelect.innerHTML = '';
+      if (!list.length) {
+        const opt = el('option', '');
+        opt.value = '';
+        opt.textContent = 'Нет доступных версий';
+        versionSelect.appendChild(opt);
+        return;
+      }
+      // Sort newest-first by semver desc
+      list.sort((a, b) => compareSemverJS(normVer(b.version), normVer(a.version)));
+      list.forEach((r) => {
+        const opt = el('option', '');
+        opt.value = r.version;
+        let label = r.version;
+        if (normVer(r.version) === normVer(currentSysVersion)) label += ' (текущая)';
+        else if (latestVersion && normVer(r.version) === normVer(latestVersion)) label += ' (последняя)';
+        opt.textContent = label;
+        versionSelect.appendChild(opt);
+      });
+      // Default selection: latest if newer than current, else current
+      const newest = list[0].version;
+      versionSelect.value = (compareSemverJS(normVer(newest), normVer(currentSysVersion)) > 0) ? newest : currentSysVersion;
+      refreshInstallBtn();
+    } catch (e) {
+      versionSelect.innerHTML = '';
+      const opt = el('option', '');
+      opt.value = '';
+      opt.textContent = 'Не удалось загрузить список версий';
+      versionSelect.appendChild(opt);
+    }
+  }
+
   checkBtn.onclick = async () => {
     await withLoading(checkBtn, async () => {
       try {
@@ -695,51 +793,27 @@ async function renderSettings(app) {
           let toastMsg = 'Доступна новая версия: ' + res.latest_version;
           if (res.stale) toastMsg = 'GitHub недоступен. Последние известные данные: ' + res.latest_version;
           showToast(toastMsg, 'info');
-          const updateBtn = el('button', 'btn btn-primary');
-          updateBtn.innerHTML = icon('download') + '<span>Обновить до ' + res.latest_version + '</span>';
-          updateBtn.onclick = async () => {
-            const ok = await showConfirm({
-              title: 'Обновить сервер?',
-              message: 'Сервер и админка будут остановлены, обновлены и перезапущены. Это займёт 1-2 минуты. Все инстансы будут перезапущены автоматически.',
-              confirmText: 'Обновить',
-            });
-            if (!ok) return;
-            // Show overlay BEFORE the request — admin server may kill itself
-            // before responding, causing fetch to throw. Overlay must already be up.
-            showUpdateOverlay(res.latest_version);
-            try {
-              await api('/system/update', { method: 'POST', body: JSON.stringify({ version: res.latest_version }) });
-            } catch (e) {
-              // Network errors expected (admin restarts itself); overlay polls for recovery
-            }
-          };
-          updateRow.innerHTML = '';
-          updateRow.appendChild(checkBtn);
-          updateRow.appendChild(updateBtn);
         } else {
           let msg = 'У вас установлена последняя версия';
           if (res.stale) msg = 'GitHub недоступен, проверка по последним известным данным: версия актуальна';
           showToast(msg, 'success');
         }
+        await loadReleasesIntoSelect(res.latest_version);
+        selectorRow.style.display = '';
       } catch (e) {
-        // Parse error message for friendly display
         let errMsg = e.message;
         try {
           const parsed = JSON.parse(e.message);
-          if (parsed.error === 'rate_limited') {
-            errMsg = parsed.message || 'GitHub API лимит запросов исчерпан. Попробуйте через несколько минут.';
-          } else if (parsed.error === 'github_api_error') {
-            errMsg = 'GitHub недоступен. Попробуйте позже.';
-          } else if (parsed.message) {
-            errMsg = parsed.message;
-          }
+          if (parsed.message) errMsg = parsed.message;
         } catch {}
         showToast('Ошибка проверки: ' + errMsg, 'error');
       }
     });
   };
+
   updateRow.appendChild(checkBtn);
   updateBlock.appendChild(updateRow);
+  updateBlock.appendChild(selectorRow);
   card.appendChild(updateBlock);
 
   // Security
