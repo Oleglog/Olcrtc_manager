@@ -289,22 +289,92 @@ func (s *Session) Capabilities() engine.Capabilities {
 	return engine.Capabilities{ByteStream: true, VideoTrack: true}
 }
 
-// Connect joins the Jitsi conference, optionally opens the bridge channel,
-// and (if video tracks are pending or a remote handler is set) negotiates a
-// pion PeerConnection.
+// Connect joins the Jitsi MUC (non-blocking) and waits for the Jingle
+// session-initiate asynchronously. This avoids blocking on the timeout when
+// no second participant is present — Jicofo only sends session-initiate once
+// another peer joins the room.
 func (s *Session) Connect(ctx context.Context) error {
 	if s.closed.Load() {
 		return ErrSessionClosed
 	}
 
-	jSess, err := s.joinAndOpenBridge(ctx)
+	logger.Infof("jitsi: joining MUC %s/%s as %s …", s.host, s.room, s.name)
+	jSess, err := j.JoinMUC(ctx, j.Config{
+		Host:  s.host,
+		Room:  s.room,
+		Nick:  s.name,
+		Debug: logger.IsVerbose(),
+	})
 	if err != nil {
-		return err
+		return fmt.Errorf("jitsi join muc: %w", err)
 	}
 	s.jSess.Store(jSess)
+	logger.Infof("jitsi: MUC joined %s/%s; waiting for peer …", s.host, s.room)
 
-	s.wg.Add(2)
+	s.wg.Add(3)
 	go s.sendLoop()
+	go s.recvLoop()
+	go s.waitForJingle()
+	return nil
+}
+
+// waitForJingle waits for Jicofo to send session-initiate (when a peer joins)
+// and then opens the bridge channel and negotiates the PeerConnection.
+func (s *Session) waitForJingle() {
+	defer s.wg.Done()
+
+	jSess := s.jSess.Load()
+	if jSess == nil {
+		return
+	}
+
+	stanza, err := jSess.Conn.WaitJingle(s.runCtx)
+	if err != nil {
+		if s.closed.Load() || s.runCtx.Err() != nil {
+			return
+		}
+		logger.Warnf("jitsi: wait jingle failed: %v", err)
+		return
+	}
+	_ = stanza // parsed below via joinAndOpenBridge path
+
+	// Now do the full join (which will get the already-received jingle from LastJingleStanza).
+	if err := s.completeJingleSetup(s.runCtx, jSess); err != nil {
+		if !s.closed.Load() {
+			logger.Warnf("jitsi: jingle setup failed: %v", err)
+			s.requestReconnect("jingle setup failed")
+		}
+	}
+}
+
+// completeJingleSetup opens the bridge and negotiates the PeerConnection after
+// receiving session-initiate from Jicofo.
+func (s *Session) completeJingleSetup(ctx context.Context, jSess *j.Session) error {
+	logger.Infof("jitsi: session-initiate received; colibri-ws=%s", jSess.ColibriWS)
+
+	needBridge := s.onData != nil || s.onPeerData != nil
+	sctpBridge := needBridge && jSess.ColibriWS == ""
+
+	if needBridge && !sctpBridge {
+		if err := s.openBridgeWS(ctx, jSess); err != nil {
+			return err
+		}
+	}
+
+	if s.shouldNegotiatePC() {
+		if err := s.negotiatePC(ctx, jSess, sctpBridge); err != nil {
+			return err
+		}
+	}
+
+	if sctpBridge {
+		if err := s.openBridgeSCTP(ctx, jSess); err != nil {
+			return err
+		}
+	}
+
+	// Restart recvLoop now that bridge is ready.
+	s.wg.Add(1)
 	go s.recvLoop()
 	return nil
 }
