@@ -312,10 +312,11 @@ func (s *Session) Connect(ctx context.Context) error {
 	s.jSess.Store(jSess)
 	logger.Infof("jitsi: MUC joined %s/%s; waiting for peer …", s.host, s.room)
 
-	s.wg.Add(3)
+	s.wg.Add(4)
 	go s.sendLoop()
 	go s.recvLoop()
 	go s.waitForJingle()
+	go s.bridgeKeepalive()
 	return nil
 }
 
@@ -709,6 +710,36 @@ func (s *Session) rtcpKeepalive(pc *webrtc.PeerConnection) {
 			} else {
 				errCount = 0
 			}
+		}
+	}
+}
+
+// bridgeKeepalive sends a lightweight colibri-ws message every 10 seconds so
+// JVB updates its endpoint lastActivity timestamp. Without this, JVB expires
+// the endpoint after its inactivity timeout (~30-60s) when the ICE/DTLS path
+// is routed through a TURN relay whose allocation silently dies.
+func (s *Session) bridgeKeepalive() {
+	defer s.wg.Done()
+	const interval = 10 * time.Second
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-ticker.C:
+			jSess := s.jSess.Load()
+			if jSess == nil {
+				continue
+			}
+			br := jSess.Bridge()
+			if br == nil {
+				continue
+			}
+			_ = br.SendJSON(map[string]any{
+				"colibriClass":    "PinnedEndpointsChangedEvent",
+				"pinnedEndpoints": []string{},
+			})
 		}
 	}
 }
