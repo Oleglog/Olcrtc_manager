@@ -693,8 +693,7 @@ async function renderSettings(app) {
         const res = await api('/system/check-updates');
         if (res.update_available) {
           let toastMsg = 'Доступна новая версия: ' + res.latest_version;
-          if (res.cached) toastMsg += ' (из кеша)';
-          if (res.stale) toastMsg = 'GitHub API лимит. Показаны последние данные: ' + res.latest_version;
+          if (res.stale) toastMsg = 'GitHub недоступен. Последние известные данные: ' + res.latest_version;
           showToast(toastMsg, 'info');
           const updateBtn = el('button', 'btn btn-primary');
           updateBtn.innerHTML = icon('download') + '<span>Обновить до ' + res.latest_version + '</span>';
@@ -719,7 +718,7 @@ async function renderSettings(app) {
           updateRow.appendChild(updateBtn);
         } else {
           let msg = 'У вас установлена последняя версия';
-          if (res.cached) msg += ' (из кеша)';
+          if (res.stale) msg = 'GitHub недоступен, проверка по последним известным данным: версия актуальна';
           showToast(msg, 'success');
         }
       } catch (e) {
