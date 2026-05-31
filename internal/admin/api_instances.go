@@ -205,14 +205,20 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
 	roomID := ""
 	vp8FPS := 120
 	vp8Batch := 64
+	dns := ""
+	socksProxy := ""
+	warpProxy := ""
 	if r.Body != nil {
 		var req struct {
-			Carrier   string `json:"carrier"`
-			Transport string `json:"transport"`
-			Name      string `json:"name"`
-			RoomID    string `json:"room_id"`
-			VP8FPS    int    `json:"vp8_fps"`
-			VP8Batch  int    `json:"vp8_batch"`
+			Carrier    string `json:"carrier"`
+			Transport  string `json:"transport"`
+			Name       string `json:"name"`
+			RoomID     string `json:"room_id"`
+			VP8FPS     int    `json:"vp8_fps"`
+			VP8Batch   int    `json:"vp8_batch"`
+			DNS        string `json:"dns"`
+			SocksProxy string `json:"socks_proxy"`
+			WarpProxy  string `json:"warp_proxy"`
 		}
 		if err := readJSON(r, &req); err == nil {
 			if req.Carrier != "" {
@@ -231,6 +237,9 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
 			if req.VP8Batch > 0 {
 				vp8Batch = req.VP8Batch
 			}
+			dns = strings.TrimSpace(req.DNS)
+			socksProxy = strings.TrimSpace(req.SocksProxy)
+			warpProxy = strings.TrimSpace(req.WarpProxy)
 		}
 	}
 
@@ -247,6 +256,15 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
 	vals["OLCRTC_CLIENT_ID"] = uuid.NewString()
 	vals["OLCRTC_VP8_FPS"] = strconv.Itoa(vp8FPS)
 	vals["OLCRTC_VP8_BATCH"] = strconv.Itoa(vp8Batch)
+	if dns != "" {
+		vals["OLCRTC_DNS"] = dns
+	}
+	if socksProxy != "" {
+		vals["OLCRTC_SOCKS_PROXY"] = socksProxy
+	}
+	if warpProxy != "" {
+		vals["OLCRTC_WARP_PROXY"] = warpProxy
+	}
 	delete(vals, "OLCRTC_ROOM_PASSWORD")
 	if err := WriteInstanceEnv(envPath, vals); err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)

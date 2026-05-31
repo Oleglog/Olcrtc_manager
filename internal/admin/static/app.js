@@ -1056,6 +1056,21 @@ function showCreateInstanceModal() {
   vp8Block.appendChild(vp8Grid);
   div.appendChild(vp8Block);
 
+  // Network section: DNS / SOCKS / WARP
+  const netSec = el('div', 'section mb-3');
+  const netTitle = el('div', 'section-title flex items-center gap-1.5');
+  netTitle.innerHTML = icon('shield', 12) + '<span>Сеть</span>';
+  netSec.appendChild(netTitle);
+  const netGrid = el('div', 'grid grid-cols-1 md:grid-cols-3 gap-3');
+  const dnsField = makeInputField('DNS', icon('wifi', 14), '', { placeholder: '8.8.8.8:53' });
+  const socksField = makeInputField('SOCKS proxy', icon('shield', 14), '', { placeholder: 'socks5://user:pass@host:port' });
+  const warpField = makeInputField('WARP proxy', icon('shield', 14), '', { placeholder: '127.0.0.1:40000' });
+  netGrid.appendChild(dnsField.field);
+  netGrid.appendChild(socksField.field);
+  netGrid.appendChild(warpField.field);
+  netSec.appendChild(netGrid);
+  div.appendChild(netSec);
+
   function getTransportOptionsForCreate(carrier) {
     // Всегда возвращаем все транспорты
     return ['datachannel', 'vp8channel', 'seichannel', 'videochannel'];
@@ -1139,6 +1154,9 @@ function showCreateInstanceModal() {
       room_id: room,
       vp8_fps: parseInt(vp8FpsInp.value, 10) || 120,
       vp8_batch: parseInt(vp8BatchInp.value, 10) || 64,
+      dns: dnsField.input.value.trim(),
+      socks_proxy: socksField.input.value.trim(),
+      warp_proxy: warpField.input.value.trim(),
     };
     await withLoading(createBtn, async () => {
       try {
