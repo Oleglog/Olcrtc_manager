@@ -1,15 +1,20 @@
 package admin
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
@@ -593,7 +598,6 @@ func (s *Server) buildURIWith(vals map[string]string, clientID string) string {
 }
 
 func (s *Server) pingInstance(w http.ResponseWriter, id int) {
-	// Check if instance is running
 	st, err := SystemctlStatusInfo(InstanceService(id))
 	if err != nil {
 		logger.Errorf("ping instance %d: %v", id, err)
@@ -603,19 +607,115 @@ func (s *Server) pingInstance(w http.ResponseWriter, id int) {
 		})
 		return
 	}
+	instanceStatus := "unknown"
+	if st != nil {
+		instanceStatus = st.State
+	}
 
-	if st == nil || st.State != "running" {
+	envPath := InstanceEnvPath(s.cfg.ConfigDir, id)
+	vals := ReadInstanceEnv(envPath)
+
+	target, kind := pickPingTarget(vals)
+
+	rtt, loss, err := runPing(target)
+	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{
-			"ok":      false,
-			"message": "Инстанс не запущен",
+			"ok":              false,
+			"instance_status": instanceStatus,
+			"target":          target,
+			"target_kind":     kind,
+			"message":         "Не удалось пинговать " + target + ": " + err.Error(),
 		})
 		return
 	}
 
-	// Instance is running - assume connected
-	// TODO: Add actual connection check via control protocol
+	ok := loss < 100 && instanceStatus == "running"
+	msg := fmt.Sprintf("%s · %.1f ms · потери %d%%", target, rtt, loss)
+	if instanceStatus != "running" {
+		msg = "Инстанс не запущен (" + instanceStatus + "). Цель: " + msg
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":      true,
-		"message": "Инстанс запущен",
+		"ok":              ok,
+		"instance_status": instanceStatus,
+		"target":          target,
+		"target_kind":     kind,
+		"rtt_ms":          rtt,
+		"packet_loss":     loss,
+		"message":         msg,
 	})
+}
+
+// pickPingTarget chooses what to ping for an instance:
+//  1. Host of OLCRTC_SOCKS_PROXY (the actual upstream the instance routes through)
+//  2. Host of OLCRTC_WARP_PROXY
+//  3. 1.1.1.1 as a generic internet-reachability probe
+func pickPingTarget(vals map[string]string) (host, kind string) {
+	if v := strings.TrimSpace(vals["OLCRTC_SOCKS_PROXY"]); v != "" {
+		if h := extractHost(v); h != "" {
+			return h, "socks_proxy"
+		}
+	}
+	if v := strings.TrimSpace(vals["OLCRTC_WARP_PROXY"]); v != "" {
+		if h := extractHost(v); h != "" {
+			return h, "warp_proxy"
+		}
+	}
+	return "1.1.1.1", "internet"
+}
+
+// extractHost pulls the host portion out of either a URL ("scheme://[user:pass@]host:port")
+// or a plain "host:port" / "host" string.
+func extractHost(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	if strings.Contains(s, "://") {
+		if u, err := url.Parse(s); err == nil && u.Host != "" {
+			if h, _, err := net.SplitHostPort(u.Host); err == nil {
+				return h
+			}
+			return u.Host
+		}
+	}
+	if h, _, err := net.SplitHostPort(s); err == nil {
+		return h
+	}
+	return s
+}
+
+var pingAvgRTT = regexp.MustCompile(`(?:rtt|round-trip)\s+min/avg/max(?:/m?dev)?\s*=\s*[\d.]+/([\d.]+)/`)
+var pingLoss = regexp.MustCompile(`(\d+)% packet loss`)
+
+// runPing shells out to `ping -c 3 -W 2 <host>` and returns the average RTT
+// (ms) and packet loss percentage.
+func runPing(host string) (avgMs float64, lossPct int, err error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "ping", "-c", "3", "-W", "2", host)
+	out, err := cmd.CombinedOutput()
+	output := string(out)
+	// ping returns non-zero on 100% loss but still prints stats — parse before
+	// surfacing the error.
+	lossPct = 100
+	if m := pingLoss.FindStringSubmatch(output); len(m) == 2 {
+		if n, perr := strconv.Atoi(m[1]); perr == nil {
+			lossPct = n
+		}
+	}
+	if m := pingAvgRTT.FindStringSubmatch(output); len(m) == 2 {
+		if v, perr := strconv.ParseFloat(m[1], 64); perr == nil {
+			avgMs = v
+		}
+	}
+	if lossPct < 100 {
+		return avgMs, lossPct, nil
+	}
+	if err == nil {
+		err = fmt.Errorf("100%% packet loss")
+	} else if ctx.Err() == context.DeadlineExceeded {
+		err = fmt.Errorf("таймаут")
+	}
+	return avgMs, lossPct, err
 }

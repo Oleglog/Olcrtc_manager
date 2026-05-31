@@ -488,10 +488,17 @@ function renderInstanceCard(inst) {
     await withLoading(pingBtn, async () => {
       try {
         const res = await api('/instances/' + inst.id + '/ping', { method: 'POST' });
+        const targetLabel = ({
+          socks_proxy: 'SOCKS',
+          warp_proxy: 'WARP',
+          internet: 'интернет',
+        })[res.target_kind] || res.target_kind || 'цель';
         if (res && res.ok) {
-          showToast('Инстанс подключён к руме ✓', 'success');
+          const rtt = (res.rtt_ms != null) ? res.rtt_ms.toFixed(1) + ' мс' : '';
+          const loss = (res.packet_loss != null && res.packet_loss > 0) ? ` · потери ${res.packet_loss}%` : '';
+          showToast(`${targetLabel} ${res.target} · ${rtt}${loss}`, 'success');
         } else {
-          showToast(res.message || 'Инстанс не подключён', 'error');
+          showToast(res.message || `Не удалось пинговать ${targetLabel}`, 'error');
         }
       } catch (e) {
         showToast('Ошибка пинга: ' + e.message, 'error');
