@@ -57,93 +57,49 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
 	}
 	updateCacheMu.RUnlock()
 
-	// Query GitHub API for latest release with proper User-Agent
-	req, err := http.NewRequest("GET", "https://api.github.com/repos/Oleglog/Olcrtc_manager/releases/latest", nil)
+	currentVersion := "v" + Version
+	tagName, releaseURL, err := fetchLatestTagViaRedirect()
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{
-			"error":   "request_creation_failed",
-			"message": err.Error(),
-		})
-		return
-	}
-	req.Header.Set("User-Agent", "olcrtc-admin/"+Version)
-	req.Header.Set("Accept", "application/vnd.github+json")
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		logger.Errorf("check updates: %v", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{
-			"error":   "failed_to_check_updates",
-			"message": err.Error(),
-		})
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == 403 {
-		// Rate limited - return cached value if any, even if stale
-		updateCacheMu.RLock()
-		if cachedUpdate != nil {
-			cached := cachedUpdate
+		// Fallback to GitHub API
+		tagName, releaseURL, err = fetchLatestTagViaAPI()
+		if err != nil {
+			// Rate limited or unreachable — return stale cache if any
+			updateCacheMu.RLock()
+			if cachedUpdate != nil {
+				cached := cachedUpdate
+				updateCacheMu.RUnlock()
+				writeJSON(w, http.StatusOK, map[string]any{
+					"current_version":  cached.currentVersion,
+					"latest_version":   cached.latestVersion,
+					"update_available": cached.updateAvailable,
+					"release_url":      cached.releaseURL,
+					"tag_name":         cached.tagName,
+					"cached":           true,
+					"stale":            true,
+				})
+				return
+			}
 			updateCacheMu.RUnlock()
-			writeJSON(w, http.StatusOK, map[string]any{
-				"current_version":  cached.currentVersion,
-				"latest_version":   cached.latestVersion,
-				"update_available": cached.updateAvailable,
-				"release_url":      cached.releaseURL,
-				"tag_name":         cached.tagName,
-				"cached":           true,
-				"stale":            true,
+			logger.Errorf("check updates: %v", err)
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+				"error":   "github_unreachable",
+				"message": "GitHub недоступен. Попробуйте позже.",
 			})
 			return
 		}
-		updateCacheMu.RUnlock()
-
-		writeJSON(w, http.StatusTooManyRequests, map[string]string{
-			"error":   "rate_limited",
-			"message": "GitHub API лимит запросов исчерпан. Попробуйте через несколько минут.",
-		})
-		return
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{
-			"error":   "github_api_error",
-			"message": fmt.Sprintf("GitHub API returned %d", resp.StatusCode),
-		})
-		return
-	}
+	latestVersion := strings.TrimPrefix(tagName, "server-")
+	updateAvailable := latestVersion != currentVersion && tagName != ""
 
-	var release struct {
-		TagName string `json:"tag_name"`
-		HTMLURL string `json:"html_url"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		logger.Errorf("decode release: %v", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{
-			"error":   "failed_to_parse_response",
-			"message": err.Error(),
-		})
-		return
-	}
-
-	// Compare versions
-	currentVersion := "v" + Version
-	latestVersion := strings.TrimPrefix(release.TagName, "server-")
-
-	updateAvailable := latestVersion != currentVersion && release.TagName != ""
-
-	// Update cache
 	updateCacheMu.Lock()
 	cachedUpdate = &updateCache{
 		timestamp:       time.Now(),
 		currentVersion:  currentVersion,
 		latestVersion:   latestVersion,
 		updateAvailable: updateAvailable,
-		releaseURL:      release.HTMLURL,
-		tagName:         release.TagName,
+		releaseURL:      releaseURL,
+		tagName:         tagName,
 	}
 	updateCacheMu.Unlock()
 
@@ -151,9 +107,85 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
 		"current_version":  currentVersion,
 		"latest_version":   latestVersion,
 		"update_available": updateAvailable,
-		"release_url":      release.HTMLURL,
-		"tag_name":         release.TagName,
+		"release_url":      releaseURL,
+		"tag_name":         tagName,
 	})
+}
+
+// fetchLatestTagViaRedirect resolves the latest release by reading the Location
+// header GitHub returns from the public /releases/latest URL. This is a normal
+// HTML endpoint, not the API, so it is not subject to the 60 req/hour anonymous
+// API limit.
+func fetchLatestTagViaRedirect() (tagName, releaseURL string, err error) {
+	const url = "https://github.com/Oleglog/Olcrtc_manager/releases/latest"
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return "", "", err
+	}
+	req.Header.Set("User-Agent", "olcrtc-admin/"+Version)
+
+	client := &http.Client{
+		Timeout: 8 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusFound && resp.StatusCode != http.StatusMovedPermanently && resp.StatusCode != http.StatusSeeOther && resp.StatusCode != http.StatusTemporaryRedirect && resp.StatusCode != http.StatusPermanentRedirect {
+		return "", "", fmt.Errorf("unexpected status %d", resp.StatusCode)
+	}
+	loc := resp.Header.Get("Location")
+	if loc == "" {
+		return "", "", fmt.Errorf("missing Location header")
+	}
+	// Expected: https://github.com/Oleglog/Olcrtc_manager/releases/tag/server-vX.Y.Z
+	idx := strings.LastIndex(loc, "/tag/")
+	if idx < 0 {
+		return "", "", fmt.Errorf("unexpected Location: %s", loc)
+	}
+	tag := loc[idx+len("/tag/"):]
+	tag = strings.TrimSpace(tag)
+	if tag == "" {
+		return "", "", fmt.Errorf("empty tag in Location: %s", loc)
+	}
+	if !strings.HasPrefix(loc, "http") {
+		loc = "https://github.com" + loc
+	}
+	return tag, loc, nil
+}
+
+func fetchLatestTagViaAPI() (tagName, releaseURL string, err error) {
+	req, err := http.NewRequest("GET", "https://api.github.com/repos/Oleglog/Olcrtc_manager/releases/latest", nil)
+	if err != nil {
+		return "", "", err
+	}
+	req.Header.Set("User-Agent", "olcrtc-admin/"+Version)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("github API returned %d", resp.StatusCode)
+	}
+
+	var release struct {
+		TagName string `json:"tag_name"`
+		HTMLURL string `json:"html_url"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return "", "", err
+	}
+	return release.TagName, release.HTMLURL, nil
 }
 
 func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
