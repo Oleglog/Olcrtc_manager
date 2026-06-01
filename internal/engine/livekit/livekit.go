@@ -48,6 +48,7 @@ var (
 type roomHandle interface {
 	publishData(data []byte) error
 	publishTrack(track webrtc.TrackLocal) error
+	subscribeToVideoTracks()
 	unpublishLocalTracks()
 	disconnect()
 	connectionState() lksdk.ConnectionState
@@ -74,6 +75,18 @@ func (r *sdkRoom) publishTrack(track webrtc.TrackLocal) error {
 		return fmt.Errorf("publish track: %w", err)
 	}
 	return nil
+}
+
+func (r *sdkRoom) subscribeToVideoTracks() {
+	for _, rp := range r.room.GetRemoteParticipants() {
+		for _, t := range rp.TrackPublications() {
+			if rpub, ok := t.(*lksdk.RemoteTrackPublication); ok {
+				if rpub.Kind() == lksdk.TrackKindVideo {
+					rpub.SetSubscribed(true)
+				}
+			}
+		}
+	}
 }
 
 func (r *sdkRoom) unpublishLocalTracks() {
@@ -110,7 +123,7 @@ func connectSDKRoom(url, token string, callback *lksdk.RoomCallback) (roomHandle
 		url,
 		token,
 		callback,
-		lksdk.WithAutoSubscribe(true),
+		lksdk.WithAutoSubscribe(false),
 		lksdk.WithLogger(protoLogger.GetDiscardLogger()),
 	)
 	if err != nil {
@@ -196,6 +209,11 @@ func (s *Session) connectSession(_ context.Context) error {
 					s.onData(data)
 				}
 			},
+			OnTrackPublished: func(pub *lksdk.RemoteTrackPublication, _ *lksdk.RemoteParticipant) {
+				if pub.Kind() == lksdk.TrackKindVideo {
+					pub.SetSubscribed(true)
+				}
+			},
 			OnTrackSubscribed: func(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, _ *lksdk.RemoteParticipant) {
 				if track.Kind() != webrtc.RTPCodecTypeVideo {
 					pub.SetSubscribed(false)
@@ -225,6 +243,7 @@ func (s *Session) connectSession(_ context.Context) error {
 	}
 
 	s.setRoom(room)
+	room.subscribeToVideoTracks()
 	if err := s.publishPendingTracks(); err != nil {
 		return err
 	}

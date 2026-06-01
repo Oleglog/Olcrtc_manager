@@ -59,6 +59,8 @@ func (r *fakeRoom) disconnect() {
 	r.state = lksdk.ConnectionStateDisconnected
 }
 
+func (r *fakeRoom) subscribeToVideoTracks() {}
+
 func (r *fakeRoom) connectionState() lksdk.ConnectionState {
 	r.mu.Lock()
 	defer r.mu.Unlock()
