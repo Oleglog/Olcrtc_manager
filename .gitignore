@@ -247,3 +247,11 @@ code/package-lock.json
 !cmd/olcrtc/main_test.go
 !pkg/
 cpu.prof
+
+# Temp files
+temp-files/
+temp-files/*
+prompt.md
+docs/plan-client-fix.md
+docs/plan-server-fix.md
+docs/upstream-commit-analysis.md

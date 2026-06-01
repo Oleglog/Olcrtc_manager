@@ -110,7 +110,7 @@ func connectSDKRoom(url, token string, callback *lksdk.RoomCallback) (roomHandle
 		url,
 		token,
 		callback,
-		lksdk.WithAutoSubscribe(false),
+		lksdk.WithAutoSubscribe(true),
 		lksdk.WithLogger(protoLogger.GetDiscardLogger()),
 	)
 	if err != nil {
@@ -194,11 +194,6 @@ func (s *Session) connectSession(_ context.Context) error {
 			OnDataReceived: func(data []byte, _ lksdk.DataReceiveParams) {
 				if s.onData != nil {
 					s.onData(data)
-				}
-			},
-			OnTrackPublished: func(pub *lksdk.RemoteTrackPublication, _ *lksdk.RemoteParticipant) {
-				if pub.Kind() == lksdk.TrackKindVideo {
-					pub.SetSubscribed(true)
 				}
 			},
 			OnTrackSubscribed: func(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, _ *lksdk.RemoteParticipant) {
