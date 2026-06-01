@@ -16,8 +16,8 @@ github.com/Microsoft/go-winio v0.6.2 h1:F2VQgta7ecxGYO8k3ZZz3RS8fVIXVxONVUPlNERo
 github.com/Microsoft/go-winio v0.6.2/go.mod h1:yd8OoFMLzJbo9gZq8j5qaps8bJ9aShtEA8Ipt1oGCvU=
 github.com/Nvveen/Gotty v0.0.0-20120604004816-cd527374f1e5 h1:TngWCqHvy9oXAN6lEVMRuU21PR1EtLVZJmdB18Gu3Rw=
 github.com/Nvveen/Gotty v0.0.0-20120604004816-cd527374f1e5/go.mod h1:lmUJ/7eu/Q8D7ML55dXQrVaamCz2vxCfdQBasLZfHKk=
-github.com/Oleglog/j v0.0.0-20260526160704-bd5f2e9299be h1:C6cwm1G69rrHkqwq0bGcqmVkfHyY2KS3dXXOoao5BU8=
-github.com/Oleglog/j v0.0.0-20260526160704-bd5f2e9299be/go.mod h1:7/ypJTenOIPx23fpo5uF7l4u+rxZqg9cFbTL/N77Ktc=
+github.com/Oleglog/j v0.0.0-20260530000013-1e4e663285ad h1:81kIUbmU2Sb5s0x0Lfnx/3r0O44iGPcCV7zKJTy/WD4=
+github.com/Oleglog/j v0.0.0-20260530000013-1e4e663285ad/go.mod h1:7/ypJTenOIPx23fpo5uF7l4u+rxZqg9cFbTL/N77Ktc=
 github.com/antlr4-go/antlr/v4 v4.13.1 h1:SqQKkuVZ+zWkMMNkjy5FZe5mr5WURWnlpmOuzYWrPrQ=
 github.com/antlr4-go/antlr/v4 v4.13.1/go.mod h1:GKmUxMtwp6ZgGwZSva4eWPC5mS6vUAmOABFgjdkM7Nw=
 github.com/benbjohnson/clock v1.3.5 h1:VvXlSJBzZpA/zum6Sj74hxwYI2DIxRWuNIoXAzHZz5o=
