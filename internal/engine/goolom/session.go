@@ -131,7 +131,6 @@ type Session struct {
 	subscriberConn  chan struct{}
 	publisherConn   chan struct{}
 	wg              sync.WaitGroup
-	subscriptionKey atomic.Int32
 	httpClient      *http.Client
 }
 
