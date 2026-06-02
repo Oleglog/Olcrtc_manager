@@ -35,10 +35,10 @@ const (
 	wsReadTimeout      = 60 * time.Second
 	wsHandshakeTimeout = 15 * time.Second
 
-	keyUID         = "uid"
-	keyDescription = "description"
-	keyPcSeq       = "pcSeq"
-	keyName        = "name"
+	keyUID          = "uid"
+	keyDescription  = "description"
+	keyPcSeq        = "pcSeq"
+	keyName         = "name"
 	stateTerminated = "terminated"
 
 	credentialKeyRoomID           = "roomID"
@@ -123,16 +123,17 @@ type Session struct {
 
 	trafficShape TrafficShape
 
-	videoTrackMu    sync.RWMutex
-	videoTracks     []webrtc.TrackLocal
-	onVideoTrack    func(*webrtc.TrackRemote, *webrtc.RTPReceiver)
-	subscriberReady atomic.Bool
-	publisherReady  atomic.Bool
-	subscriberConn  chan struct{}
-	publisherConn   chan struct{}
-	wg              sync.WaitGroup
-
-	httpClient *http.Client
+	videoTrackMu          sync.RWMutex
+	videoTracks           []webrtc.TrackLocal
+	onVideoTrack          func(*webrtc.TrackRemote, *webrtc.RTPReceiver)
+	subscriberReady       atomic.Bool
+	publisherReady        atomic.Bool
+	subscriberConn        chan struct{}
+	publisherConn         chan struct{}
+	subscriptionWatchStop chan struct{}
+	wg                    sync.WaitGroup
+	subscriptionKey       atomic.Int32
+	httpClient            *http.Client
 }
 
 // New creates a new Goolom engine session.

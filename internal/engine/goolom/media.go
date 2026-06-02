@@ -201,7 +201,7 @@ func (s *Session) sendSetSlots() error {
 		"setSlots": map[string]any{
 			"slots":              slots,
 			"audioSlotsCount":    0,
-			"key":                1,
+			"key":                int(s.subscriptionKey.Add(1)),
 			"shutdownAllVideo":   nil,
 			"withSelfView":       false,
 			"selfViewVisibility": "ON_LOADING_THEN_SHOW",

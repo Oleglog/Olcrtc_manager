@@ -51,6 +51,7 @@ func (s *Session) Connect(ctx context.Context) error {
 	if s.onData != nil {
 		select {
 		case <-dcReady:
+			s.startSubscriptionWatcher(ctx)
 			return nil
 		case <-time.After(15 * time.Second):
 			return ErrDataChannelTimeout
@@ -58,8 +59,11 @@ func (s *Session) Connect(ctx context.Context) error {
 			return fmt.Errorf("connect context cancelled: %w", ctx.Err())
 		}
 	}
-
-	return s.waitForMediaReady(ctx, 20*time.Second)
+	if err := s.waitForMediaReady(ctx, 20*time.Second); err != nil {
+		return err
+	}
+	s.startSubscriptionWatcher(ctx)
+	return nil
 }
 
 func (s *Session) waitForMediaReady(ctx context.Context, timeout time.Duration) error {
@@ -190,6 +194,7 @@ func (s *Session) onPublisherConnectionStateChange(state webrtc.PeerConnectionSt
 
 // Close terminates the session and releases resources.
 func (s *Session) Close() error {
+	s.stopSubscriptionWatcher()
 	alreadyClosing := s.closed.Swap(true)
 	s.sendQueueClosed.Store(true)
 
@@ -425,6 +430,55 @@ func (s *Session) resetMediaState() {
 	s.publisherReady.Store(false)
 	s.subscriberConn = make(chan struct{})
 	s.publisherConn = make(chan struct{})
+}
+
+// startSubscriptionWatcher runs a background goroutine that periodically
+// sends setSlots to the SFU, ensuring VP8 video tracks are re-subscribed
+// after room-state changes that may alter SFU routing.
+func (s *Session) startSubscriptionWatcher(ctx context.Context) {
+	s.stopSubscriptionWatcher() // prevent duplicate goroutines
+
+	s.subscriptionWatchStop = make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-s.subscriptionWatchStop:
+				return
+			case <-s.closeCh:
+				return
+			case <-ticker.C:
+				if !s.subscriberReady.Load() {
+					continue
+				}
+				if s.onData != nil {
+					// data-channel mode: no video tracks to subscribe
+					continue
+				}
+				if err := s.sendSetSlots(); err != nil {
+					logger.Debugf("subscription watcher setSlots error: %v", err)
+				} else {
+					logger.Verbosef("subscription watcher: setSlots sent")
+				}
+			}
+		}
+	}()
+}
+
+func (s *Session) stopSubscriptionWatcher() {
+	if s.subscriptionWatchStop != nil {
+		select {
+		case <-s.subscriptionWatchStop:
+			// already closed
+		default:
+			close(s.subscriptionWatchStop)
+		}
+		s.subscriptionWatchStop = nil
+	}
 }
 
 func (s *Session) signalEnded(reason string) {
