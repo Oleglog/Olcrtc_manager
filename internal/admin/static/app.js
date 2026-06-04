@@ -1000,7 +1000,7 @@ function showCreateInstanceModal() {
   const carrierField = makeSelectField('Провайдер', icon('tag', 14), 'jitsi', ['jitsi', 'telemost', 'wbstream']);
   const transportField = makeSelectField('Транспорт', icon('wifi', 14), 'datachannel', ['datachannel', 'vp8channel', 'seichannel', 'videochannel']);
   const nameField = makeInputField('Имя', icon('tag', 14), 'jitsi_olcrtc', { placeholder: 'имя инстанса' });
-  const roomIDField = makeInputField('Room ID', icon('tag', 14), '', { placeholder: 'jitsi: https://meet1.arbitr.ru/yourroom · wbstream: создать на stream.wb.ru' });
+  const roomIDField = makeInputField('Room ID', icon('tag', 14), '', { placeholder: 'jitsi: https://meet.small-dm.ru/yourroom · wbstream: создать на stream.wb.ru' });
 
   connGrid.appendChild(carrierField.field);
   connGrid.appendChild(transportField.field);
@@ -1018,8 +1018,9 @@ function showCreateInstanceModal() {
 
   const jitsiPresets = el('div', 'mb-3 text-xs text-gray-400 hidden flex flex-wrap items-center gap-2');
   jitsiPresets.innerHTML = '<span>Jitsi server:</span>'
+    + '<button type="button" data-host="meet.small-dm.ru" class="px-2 py-0.5 rounded border" style="border-color: var(--color-hairline); transition: all 0.15s;">meet.small-dm.ru</button>'
     + '<button type="button" data-host="meet1.arbitr.ru" class="px-2 py-0.5 rounded border" style="border-color: var(--color-hairline); transition: all 0.15s;">meet1.arbitr.ru</button>'
-    + '<button type="button" data-host="meet.jit.si" class="px-2 py-0.5 rounded border" style="border-color: var(--color-hairline); transition: all 0.15s;">meet.jit.si</button>'
+    + '<button type="button" data-host="meet.handyweb.org" class="px-2 py-0.5 rounded border" style="border-color: var(--color-hairline); transition: all 0.15s;">meet.handyweb.org</button>'
     + '<button type="button" data-host="meet.cryptopro.ru" class="px-2 py-0.5 rounded border" style="border-color: var(--color-hairline); transition: all 0.15s;">meet.cryptopro.ru</button>'
     + '<span class="text-gray-500">(клик подставит/заменит хост в Room ID)</span>';
   jitsiPresets.querySelectorAll('button[data-host]').forEach((btn) => {
@@ -1193,7 +1194,7 @@ function showConfigModal(inst) {
   const carrierField = makeSelectField('Провайдер', icon('tag', 14), inst.carrier || 'jitsi', ['jitsi', 'telemost', 'wbstream']);
   const transportField = makeSelectField('Транспорт', icon('wifi', 14), inst.transport || 'vp8channel', getTransportOptions(inst.carrier || 'jitsi'));
   const nameField = makeInputField('Имя', icon('tag', 14), inst.name || '', { placeholder: 'имя инстанса' });
-  const roomIDField = makeInputField('Room ID', icon('tag', 14), inst.room_id || '', { placeholder: 'jitsi: https://meet1.arbitr.ru/yourroom · wbstream: создать на stream.wb.ru' });
+  const roomIDField = makeInputField('Room ID', icon('tag', 14), inst.room_id || '', { placeholder: 'jitsi: https://meet.small-dm.ru/yourroom · wbstream: создать на stream.wb.ru' });
   const clientIDWrap = makeReadonlyWithRotate('Client ID', icon('shield', 14), inst.client_id || '(не задан)', async (rotateBtn) => {
     const ok = await showConfirm({
       title: 'Ротация Client ID?',
@@ -1344,8 +1345,9 @@ function showConfigModal(inst) {
   // Jitsi server presets (shown only when carrier=jitsi)
   const jitsiPresets = el('div', 'mb-3 text-xs text-gray-400 hidden flex flex-wrap items-center gap-2');
   jitsiPresets.innerHTML = '<span>Jitsi server:</span>'
+    + '<button type="button" data-host="meet.small-dm.ru" class="px-2 py-0.5 rounded border" style="border-color: var(--color-hairline); transition: all 0.15s;">meet.small-dm.ru</button>'
     + '<button type="button" data-host="meet1.arbitr.ru" class="px-2 py-0.5 rounded border" style="border-color: var(--color-hairline); transition: all 0.15s;">meet1.arbitr.ru</button>'
-    + '<button type="button" data-host="meet.jit.si" class="px-2 py-0.5 rounded border" style="border-color: var(--color-hairline); transition: all 0.15s;">meet.jit.si</button>'
+    + '<button type="button" data-host="meet.handyweb.org" class="px-2 py-0.5 rounded border" style="border-color: var(--color-hairline); transition: all 0.15s;">meet.handyweb.org</button>'
     + '<button type="button" data-host="meet.cryptopro.ru" class="px-2 py-0.5 rounded border" style="border-color: var(--color-hairline); transition: all 0.15s;">meet.cryptopro.ru</button>'
     + '<span class="text-gray-500">(клик меняет хост в Room ID)</span>';
   jitsiPresets.querySelectorAll('button[data-host]').forEach((btn) => {
