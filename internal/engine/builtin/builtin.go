@@ -31,14 +31,15 @@ var ErrAuthFailed = errors.New("carrier auth failed")
 // Config holds the inputs to [Open]. The fields mirror the subset of
 // transport.Config that engines consume.
 type Config struct {
-	RoomURL    string
-	Name       string
-	OnData     func([]byte)
-	OnPeerData func(peerID string, data []byte)
-	DNSServer  string
-	ProxyAddr  string
-	ProxyPort  int
-	Insecure   bool
+	RoomURL             string
+	Name                string
+	OnData              func([]byte)
+	OnPeerData          func(peerID string, data []byte)
+	DNSServer           string
+	ProxyAddr           string
+	ProxyPort           int
+	Insecure            bool
+	RequireTargetedPeer bool
 	// Engine, URL, Token are honoured only for the "none" carrier (direct
 	// engine access); other carriers derive them from their auth provider.
 	Engine string
@@ -92,14 +93,15 @@ func registerDirect(name string) {
 			engineName = "livekit"
 		}
 		sess, err := engine.New(ctx, engineName, engine.Config{
-			URL:        cfg.URL,
-			Token:      cfg.Token,
-			Name:       cfg.Name,
-			OnData:     cfg.OnData,
-			OnPeerData: cfg.OnPeerData,
-			DNSServer:  cfg.DNSServer,
-			ProxyAddr:  cfg.ProxyAddr,
-			ProxyPort:  cfg.ProxyPort,
+			URL:                 cfg.URL,
+			Token:               cfg.Token,
+			Name:                cfg.Name,
+			OnData:              cfg.OnData,
+			OnPeerData:          cfg.OnPeerData,
+			DNSServer:           cfg.DNSServer,
+			ProxyAddr:           cfg.ProxyAddr,
+			ProxyPort:           cfg.ProxyPort,
+			RequireTargetedPeer: cfg.RequireTargetedPeer,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("engine new: %w", err)
@@ -125,15 +127,16 @@ func registerEngineAuth(name string, provider auth.Provider) {
 			return nil, fmt.Errorf("%w: %w", ErrAuthFailed, err)
 		}
 		sess, err := engine.New(ctx, provider.Engine(), engine.Config{
-			URL:        creds.URL,
-			Token:      creds.Token,
-			Name:       cfg.Name,
-			Extra:      creds.Extra,
-			OnData:     cfg.OnData,
-			OnPeerData: cfg.OnPeerData,
-			DNSServer:  cfg.DNSServer,
-			ProxyAddr:  cfg.ProxyAddr,
-			ProxyPort:  cfg.ProxyPort,
+			URL:                 creds.URL,
+			Token:               creds.Token,
+			Name:                cfg.Name,
+			Extra:               creds.Extra,
+			OnData:              cfg.OnData,
+			OnPeerData:          cfg.OnPeerData,
+			DNSServer:           cfg.DNSServer,
+			ProxyAddr:           cfg.ProxyAddr,
+			ProxyPort:           cfg.ProxyPort,
+			RequireTargetedPeer: cfg.RequireTargetedPeer,
 			Refresh: func(ctx context.Context) (engine.Credentials, error) {
 				fresh, err := provider.Issue(ctx, authCfg)
 				if err != nil {

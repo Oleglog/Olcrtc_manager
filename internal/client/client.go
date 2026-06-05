@@ -176,19 +176,20 @@ func (c *Client) bringUpLink(
 	cancel context.CancelFunc,
 ) error {
 	ln, err := transport.New(ctx, cfg.Transport, transport.Config{
-		Carrier:   cfg.Carrier,
-		RoomURL:   cfg.RoomURL,
-		Engine:    cfg.Engine,
-		URL:       cfg.URL,
-		Token:     cfg.Token,
-		ChannelID: cfg.ChannelID,
-		DeviceID:  c.deviceID,
-		Name:      names.Generate(),
-		OnData:    c.onData,
-		DNSServer: cfg.DNSServer,
-		Insecure:  cfg.Insecure,
-		Options:   cfg.TransportOptions,
-		Traffic:   cfg.Traffic,
+		Carrier:             cfg.Carrier,
+		RoomURL:             cfg.RoomURL,
+		Engine:              cfg.Engine,
+		URL:                 cfg.URL,
+		Token:               cfg.Token,
+		ChannelID:           cfg.ChannelID,
+		DeviceID:            c.deviceID,
+		Name:                names.Generate(),
+		OnData:              c.onData,
+		DNSServer:           cfg.DNSServer,
+		Insecure:            cfg.Insecure,
+		RequireTargetedPeer: true,
+		Options:             cfg.TransportOptions,
+		Traffic:             cfg.Traffic,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create link: %w", err)

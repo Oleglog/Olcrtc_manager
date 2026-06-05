@@ -134,11 +134,12 @@ type Session struct {
 	insecure   bool
 	bridgeMode string
 
-	onData          func([]byte)
-	onPeerData      func(peerID string, data []byte)
-	onReconnect     func(*webrtc.DataChannel)
-	shouldReconnect func() bool
-	onEnded         func(string)
+	onData              func([]byte)
+	onPeerData          func(peerID string, data []byte)
+	requireTargetedPeer bool
+	onReconnect         func(*webrtc.DataChannel)
+	shouldReconnect     func() bool
+	onEnded             func(string)
 
 	jSess atomic.Pointer[j.Session]
 
@@ -226,20 +227,21 @@ func New(_ context.Context, cfg engine.Config) (engine.Session, error) {
 
 	runCtx, cancel := context.WithCancel(context.Background())
 	s := &Session{
-		host:          host,
-		room:          room,
-		name:          name,
-		insecure:      insecure,
-		bridgeMode:    bridgeMode,
-		onData:        cfg.OnData,
-		onPeerData:    cfg.OnPeerData,
-		sendQueue:     make(chan []byte, defaultSendQueueSize),
-		peerSendQueue: make(chan bridgeOutbound, defaultSendQueueSize),
-		peerEpochs:    make(map[string]uint32),
-		reconnectCh:   make(chan struct{}, 1),
-		done:          make(chan struct{}),
-		cancel:        cancel,
-		runCtx:        runCtx,
+		host:                host,
+		room:                room,
+		name:                name,
+		insecure:            insecure,
+		bridgeMode:          bridgeMode,
+		onData:              cfg.OnData,
+		onPeerData:          cfg.OnPeerData,
+		requireTargetedPeer: cfg.RequireTargetedPeer,
+		sendQueue:           make(chan []byte, defaultSendQueueSize),
+		peerSendQueue:       make(chan bridgeOutbound, defaultSendQueueSize),
+		peerEpochs:          make(map[string]uint32),
+		reconnectCh:         make(chan struct{}, 1),
+		done:                make(chan struct{}),
+		cancel:              cancel,
+		runCtx:              runCtx,
 	}
 	s.localEpoch.Store(randomEpoch())
 	return s, nil
@@ -1436,11 +1438,11 @@ func (s *Session) deliverBridgeMessage(msg j.BridgeMessage, ok bool) bool {
 	if s.onPeerData != nil && msg.From != "" {
 		return s.deliverPeerBridgePayload(msg.From, payload)
 	}
-	if !s.peerLatchAccepts(msg.From) {
-		return true
-	}
 	data, ok := s.acceptEpochFrame(payload)
 	if !ok {
+		return true
+	}
+	if !s.peerLatchAccepts(msg.From) {
 		return true
 	}
 	if len(data) == 0 {
@@ -1474,11 +1476,14 @@ func (s *Session) deliverRawBridgeFrame(frame []byte, ok bool) bool {
 	if s.onPeerData != nil && msg.From != "" {
 		return s.deliverPeerBridgePayload(msg.From, payload)
 	}
+	data, ok := s.acceptEpochFrame(payload)
+	if !ok {
+		return true
+	}
 	if !s.peerLatchAccepts(msg.From) {
 		return true
 	}
-	data, ok := s.acceptEpochFrame(payload)
-	if !ok || len(data) == 0 {
+	if len(data) == 0 {
 		return true
 	}
 	s.onData(data)
@@ -1544,6 +1549,11 @@ func (s *Session) acceptEpochFrame(payload []byte) ([]byte, bool) {
 	if receiverEpoch != 0 && receiverEpoch != s.localEpoch.Load() {
 		logger.Debugf("jitsi: drop stale bridge frame peerEpoch=0x%08x localEpoch=0x%08x",
 			receiverEpoch, s.localEpoch.Load())
+		return nil, false
+	}
+	if s.requireTargetedPeer && s.onPeerData == nil && receiverEpoch != s.localEpoch.Load() {
+		logger.Debugf("jitsi: drop untargeted bridge frame senderEpoch=0x%08x localEpoch=0x%08x",
+			senderEpoch, s.localEpoch.Load())
 		return nil, false
 	}
 	// Epoch is a deduplication marker for stale frames during reconnect, not
