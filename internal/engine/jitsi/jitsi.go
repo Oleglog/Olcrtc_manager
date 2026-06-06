@@ -25,6 +25,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -57,6 +58,9 @@ const (
 	defaultNick          = "olcrtc"
 	credentialKeyRoom    = "room"
 	videoTrackName       = "videochannel"
+	bridgeModeAuto       = "auto"
+	bridgeModeColibriWS  = "colibri-ws"
+	bridgeModeSCTP       = "sctp"
 	maxReconnects        = 50
 	reconnectWindow      = 5 * time.Minute
 	// reconnectGrace is the window after a successful self-reconnect during
@@ -94,6 +98,9 @@ var (
 	ErrHostRequired = errors.New("jitsi host required")
 	// ErrRoomRequired is returned when no Jitsi room was supplied.
 	ErrRoomRequired = errors.New("jitsi room required")
+	// ErrColibriWSRequired is returned when bridge_mode=colibri-ws but Jicofo/JVB
+	// did not advertise a colibri-ws URL in the Jingle offer.
+	ErrColibriWSRequired = errors.New("jitsi colibri-ws required but not advertised")
 	// errNoPeer is returned by reconnectFull when the WaitJingle timeout
 	// fires because no peer has joined the room yet. This is not a real
 	// reconnect failure; the session can keep waiting for a peer.
@@ -102,10 +109,11 @@ var (
 
 // Session is the Jitsi engine handle.
 type Session struct {
-	host     string
-	room     string
-	name     string
-	insecure bool
+	host       string
+	room       string
+	name       string
+	insecure   bool
+	bridgeMode string
 
 	onData          func([]byte)
 	onPeerData      func(peerID string, data []byte)
@@ -193,6 +201,8 @@ func New(_ context.Context, cfg engine.Config) (engine.Session, error) {
 			insecure = v == "true" || v == "1" || v == "yes"
 		}
 	}
+	bridgeMode := resolveBridgeMode(cfg.Extra)
+	logger.Infof("jitsi: config host=%s room=%s bridge_mode=%s insecure=%t", host, room, bridgeMode, insecure)
 
 	runCtx, cancel := context.WithCancel(context.Background())
 	s := &Session{
@@ -200,6 +210,7 @@ func New(_ context.Context, cfg engine.Config) (engine.Session, error) {
 		room:          room,
 		name:          name,
 		insecure:      insecure,
+		bridgeMode:    bridgeMode,
 		onData:        cfg.OnData,
 		onPeerData:    cfg.OnPeerData,
 		sendQueue:     make(chan []byte, defaultSendQueueSize),
@@ -371,10 +382,13 @@ func (s *Session) waitForJingle() {
 // completeJingleSetup opens the bridge and negotiates the PeerConnection after
 // receiving session-initiate from Jicofo.
 func (s *Session) completeJingleSetup(ctx context.Context, jSess *j.Session) error {
-	logger.Infof("jitsi: session-initiate received; colibri-ws=%s", jSess.ColibriWS)
+	s.logSessionDiagnostics("session-initiate", jSess)
 
 	needBridge := s.onData != nil || s.onPeerData != nil
-	sctpBridge := needBridge && jSess.ColibriWS == ""
+	sctpBridge, err := s.decideBridgePath("initial", needBridge, jSess)
+	if err != nil {
+		return err
+	}
 
 	if needBridge && !sctpBridge {
 		if err := s.openBridgeWS(ctx, jSess); err != nil {
@@ -412,10 +426,14 @@ func (s *Session) joinAndOpenBridge(ctx context.Context) (*j.Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("jitsi join: %w", err)
 	}
-	logger.Infof("jitsi: joined %s/%s; colibri-ws=%s", s.host, s.room, jSess.ColibriWS)
+	s.logSessionDiagnostics("joined", jSess)
 
 	needBridge := s.onData != nil || s.onPeerData != nil
-	sctpBridge := needBridge && jSess.ColibriWS == ""
+	sctpBridge, err := s.decideBridgePath("join", needBridge, jSess)
+	if err != nil {
+		_ = jSess.Close()
+		return nil, err
+	}
 
 	if needBridge && !sctpBridge {
 		if err := s.openBridgeWS(ctx, jSess); err != nil {
@@ -442,11 +460,12 @@ func (s *Session) joinAndOpenBridge(ctx context.Context) (*j.Session, error) {
 }
 
 func (s *Session) openBridgeWS(ctx context.Context, jSess *j.Session) error {
+	start := time.Now()
 	bctx, bcancel := context.WithTimeout(ctx, bridgeOpenTimeout)
 	err := jSess.OpenBridge(bctx)
 	bcancel()
 	if err != nil {
-		return fmt.Errorf("open bridge: %w", err)
+		return fmt.Errorf("open bridge colibri-ws url=%q: %w", jSess.ColibriWS, err)
 	}
 	if br := jSess.Bridge(); br != nil {
 		br.EnableRawMode()
@@ -454,11 +473,13 @@ func (s *Session) openBridgeWS(ctx context.Context, jSess *j.Session) error {
 	s.peerEndpoint.Store(nil)
 	s.peerVideoSSRC.Store(0)
 	s.bridgeReady.Store(true)
-	logger.Infof("jitsi: bridge open colibri-ws (endpoints=%v)", jSess.Endpoints())
+	logger.Infof("jitsi: bridge path=colibri-ws open_ms=%d host=%s room=%s url=%q endpoints=%v",
+		time.Since(start).Milliseconds(), s.host, s.room, jSess.ColibriWS, jSess.Endpoints())
 	return nil
 }
 
 func (s *Session) openBridgeSCTP(ctx context.Context, jSess *j.Session) error {
+	start := time.Now()
 	bctx, bcancel := context.WithTimeout(ctx, bridgeOpenTimeout)
 	err := jSess.WaitBridgeSCTP(bctx)
 	bcancel()
@@ -471,8 +492,84 @@ func (s *Session) openBridgeSCTP(ctx context.Context, jSess *j.Session) error {
 	s.peerEndpoint.Store(nil)
 	s.peerVideoSSRC.Store(0)
 	s.bridgeReady.Store(true)
-	logger.Infof("jitsi: bridge open sctp (endpoints=%v)", jSess.Endpoints())
+	logger.Infof("jitsi: bridge path=sctp open_ms=%d host=%s room=%s colibri_ws_advertised=%t endpoints=%v",
+		time.Since(start).Milliseconds(), s.host, s.room, jSess.ColibriWS != "", jSess.Endpoints())
 	return nil
+}
+
+func resolveBridgeMode(extra map[string]string) string {
+	mode := strings.TrimSpace(strings.ToLower(os.Getenv("OLCRTC_JITSI_BRIDGE_MODE")))
+	if mode == "" && extra != nil {
+		mode = strings.TrimSpace(strings.ToLower(extra["jitsi_bridge_mode"]))
+	}
+	if mode == "" && truthy(os.Getenv("OLCRTC_JITSI_REQUIRE_COLIBRI_WS")) {
+		mode = bridgeModeColibriWS
+	}
+	if mode == "" && truthy(os.Getenv("OLCRTC_JITSI_FORCE_SCTP_BRIDGE")) {
+		mode = bridgeModeSCTP
+	}
+	switch mode {
+	case "", bridgeModeAuto:
+		return bridgeModeAuto
+	case bridgeModeColibriWS, "colibri", "ws", "websocket":
+		return bridgeModeColibriWS
+	case bridgeModeSCTP, "datachannel", "dc":
+		return bridgeModeSCTP
+	default:
+		logger.Warnf("jitsi: unknown bridge_mode=%q, using auto", mode)
+		return bridgeModeAuto
+	}
+}
+
+func truthy(v string) bool {
+	switch strings.TrimSpace(strings.ToLower(v)) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Session) decideBridgePath(stage string, needBridge bool, jSess *j.Session) (bool, error) {
+	advertised := jSess.ColibriWS != ""
+	if !needBridge {
+		logger.Infof("jitsi: bridge decision stage=%s host=%s room=%s need_bridge=false pc_only=%t colibri_ws_advertised=%t",
+			stage, s.host, s.room, s.shouldNegotiatePC(), advertised)
+		return false, nil
+	}
+
+	switch s.bridgeMode {
+	case bridgeModeColibriWS:
+		if !advertised {
+			logger.Warnf("jitsi: bridge decision stage=%s path=fail mode=colibri-ws host=%s room=%s reason=no-colibri-ws-in-jingle",
+				stage, s.host, s.room)
+			return false, ErrColibriWSRequired
+		}
+		logger.Infof("jitsi: bridge decision stage=%s path=colibri-ws mode=colibri-ws host=%s room=%s reason=required url=%q",
+			stage, s.host, s.room, jSess.ColibriWS)
+		return false, nil
+	case bridgeModeSCTP:
+		logger.Infof("jitsi: bridge decision stage=%s path=sctp mode=sctp host=%s room=%s reason=forced colibri_ws_advertised=%t url=%q",
+			stage, s.host, s.room, advertised, jSess.ColibriWS)
+		return true, nil
+	default:
+		if advertised {
+			logger.Infof("jitsi: bridge decision stage=%s path=colibri-ws mode=auto host=%s room=%s reason=advertised url=%q",
+				stage, s.host, s.room, jSess.ColibriWS)
+			return false, nil
+		}
+		logger.Infof("jitsi: bridge decision stage=%s path=sctp mode=auto host=%s room=%s reason=no-colibri-ws-in-jingle",
+			stage, s.host, s.room)
+		return true, nil
+	}
+}
+
+func (s *Session) logSessionDiagnostics(stage string, jSess *j.Session) {
+	auth := jSess.ServerAuth
+	logger.Infof("jitsi: %s host=%s room=%s jid=%s room_jid=%s colibri_ws_advertised=%t colibri_ws_url=%q ice_servers=%d candidates=%d datachannel=%t focus_ready=%t auth_required=%t guest_access=%t anonymous_xmpp=%t external_auth=%t visitors_supported=%t",
+		stage, s.host, s.room, jSess.JID, jSess.RoomJID, jSess.ColibriWS != "", jSess.ColibriWS,
+		len(jSess.ICEServers), len(jSess.Candidates), jSess.DataChannel != nil, auth.Ready,
+		auth.AuthenticationRequired, auth.GuestAccess, auth.AnonymousXMPP, auth.ExternalAuth, auth.VisitorsSupported)
 }
 
 func (s *Session) shouldNegotiatePC() bool {
@@ -1658,7 +1755,11 @@ func (s *Session) teardownPC() {
 // (SCTP or WS depending on jSess.ColibriWS). On any failure falls back to a
 // full reconnect.
 func (s *Session) reinitiateBridge(ctx context.Context, jSess *j.Session) error {
-	sctpBridge := jSess.ColibriWS == ""
+	s.logSessionDiagnostics("reinitiate", jSess)
+	sctpBridge, err := s.decideBridgePath("reinitiate", true, jSess)
+	if err != nil {
+		return s.reconnectFull(ctx)
+	}
 	if err := s.negotiatePC(ctx, jSess, sctpBridge); err != nil {
 		logger.Warnf("jitsi: negotiate after reinitiate failed: %v — full reconnect", err)
 		return s.reconnectFull(ctx)

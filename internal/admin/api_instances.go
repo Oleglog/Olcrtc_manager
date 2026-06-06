@@ -259,6 +259,7 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
 	vals["OLCRTC_NAME"] = name
 	vals["OLCRTC_ROOM_ID"] = strings.TrimSpace(roomID)
 	vals["OLCRTC_CLIENT_ID"] = uuid.NewString()
+	vals["OLCRTC_JITSI_BRIDGE_MODE"] = "auto"
 	vals["OLCRTC_VP8_FPS"] = strconv.Itoa(vp8FPS)
 	vals["OLCRTC_VP8_BATCH"] = strconv.Itoa(vp8Batch)
 	if dns != "" {

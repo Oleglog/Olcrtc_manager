@@ -16,6 +16,7 @@
 #   OLCRTC_TRANSPORT         optional: datachannel | vp8channel | seichannel | videochannel (default: datachannel)
 #   OLCRTC_DNS               optional: DNS resolver (default 8.8.8.8:53)
 #   OLCRTC_DEBUG             optional: set to 1 to enable debug verbose logging
+#   OLCRTC_JITSI_BRIDGE_MODE optional: auto | colibri-ws | sctp (default auto)
 #   OLCRTC_VP8_FPS           optional: VP8 FPS (default 60, only for vp8channel)
 #   OLCRTC_VP8_BATCH         optional: VP8 batch size (default 64, only for vp8channel)
 #   OLCRTC_SEI_FPS           optional: SEI FPS (default 60)
