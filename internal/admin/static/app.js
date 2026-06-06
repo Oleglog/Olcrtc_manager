@@ -447,6 +447,12 @@ function renderInstanceCard(inst) {
   transportBadge.innerHTML = icon('wifi', 12) + '<span>' + (inst.transport || '-') + '</span>';
   badges.appendChild(carrierBadge);
   badges.appendChild(transportBadge);
+  if (inst.carrier === 'jitsi') {
+    const bridgeBadge = el('span', 'badge');
+    bridgeBadge.innerHTML = icon('sliders-horizontal', 12) + '<span>bridge: ' + (inst.jitsi_bridge_mode || 'auto') + '</span>';
+    bridgeBadge.title = 'Jitsi bridge mode: auto, colibri-ws или sctp';
+    badges.appendChild(bridgeBadge);
+  }
   if (inst.carrier === 'wbstream' && (!inst.room_id || inst.room_id === 'any')) {
     const noRoomBadge = el('span', 'badge badge-amber');
     noRoomBadge.innerHTML = icon('alert-triangle', 12) + '<span>Room ID required</span>';
@@ -1051,6 +1057,28 @@ function showCreateInstanceModal() {
   });
   connectionSec.appendChild(jitsiPresets);
 
+  const jitsiBlock = el('div', 'border border-gray-700 rounded-lg p-3 mb-3 hidden');
+  jitsiBlock.innerHTML = '<div class="text-xs text-gray-400 mb-2">Jitsi DataChannel / SCTP</div>';
+  const jitsiGrid = el('div', 'grid grid-cols-1 md:grid-cols-2 gap-2');
+  const bridgeModeField = makeSelectField('Bridge mode', icon('sliders-horizontal', 14), 'auto', ['auto', 'sctp', 'colibri-ws']);
+  const jitsiSCTPMaxMessageField = makeInputField('SCTP max message', icon('sliders-horizontal', 14), '', { placeholder: 'empty = 1200' });
+  const trafficPayloadField = makeInputField('Transport payload cap', icon('sliders-horizontal', 14), '', { placeholder: 'empty, 1188, 4096, 8192' });
+  const trafficMinDelayField = makeInputField('Min delay', icon('clock', 14), '', { placeholder: 'empty или 1ms' });
+  const trafficMaxDelayField = makeInputField('Max delay', icon('clock', 14), '', { placeholder: 'empty или 3ms' });
+  jitsiGrid.appendChild(bridgeModeField.field);
+  jitsiGrid.appendChild(jitsiSCTPMaxMessageField.field);
+  jitsiGrid.appendChild(trafficPayloadField.field);
+  jitsiGrid.appendChild(trafficMinDelayField.field);
+  jitsiGrid.appendChild(trafficMaxDelayField.field);
+  jitsiBlock.appendChild(jitsiGrid);
+  const jitsiHint = el('div', 'mt-2 text-xs text-gray-500 leading-relaxed');
+  jitsiHint.innerHTML = 'Для публичных Jitsi обычно надёжнее <b>SCTP</b>. ' +
+    '<b>auto</b> выбирает Colibri WS только если он advertised, иначе SCTP. ' +
+    '<b>colibri-ws</b> нужен для диагностики и завершит запуск, если WS не advertised. ' +
+    'Для SCTP новый дефолт держит bridge frame около MTU. Payload cap обычно оставляйте пустым или пробуйте <b>1188</b>; <b>4096</b>/<b>8192</b> только для диагностики.';
+  jitsiBlock.appendChild(jitsiHint);
+  connectionSec.appendChild(jitsiBlock);
+
   div.appendChild(connectionSec);
 
   // VP8 params
@@ -1124,6 +1152,7 @@ function showCreateInstanceModal() {
     const isCompatible = isTransportCompatibleForCreate(c, finalTransport);
 
     vp8Block.classList.toggle('hidden', finalTransport !== 'vp8channel');
+    jitsiBlock.classList.toggle('hidden', !(c === 'jitsi' && finalTransport === 'datachannel'));
     dcWarn.classList.toggle('hidden', isCompatible || finalTransport !== 'datachannel');
     wbHint.classList.toggle('hidden', c !== 'wbstream');
     jitsiPresets.classList.toggle('hidden', c !== 'jitsi');
@@ -1165,6 +1194,11 @@ function showCreateInstanceModal() {
       dns: dnsField.input.value.trim(),
       socks_proxy: socksField.input.value.trim(),
       warp_proxy: warpField.input.value.trim(),
+      jitsi_bridge_mode: bridgeModeField.input.value,
+      jitsi_sctp_max_message_size: jitsiSCTPMaxMessageField.input.value.trim(),
+      traffic_max_payload_size: trafficPayloadField.input.value.trim(),
+      traffic_min_delay: trafficMinDelayField.input.value.trim(),
+      traffic_max_delay: trafficMaxDelayField.input.value.trim(),
     };
     await withLoading(createBtn, async () => {
       try {
@@ -1303,6 +1337,28 @@ function showConfigModal(inst) {
   debugRow.appendChild(debugCb);
   debugRow.appendChild(el('span', '', 'Debug logging'));
   advBody.appendChild(debugRow);
+
+  const jitsiBlock = el('div', 'border border-gray-700 rounded-lg p-3 mb-3 hidden');
+  jitsiBlock.innerHTML = '<div class="text-xs text-gray-400 mb-2">Jitsi DataChannel / SCTP</div>';
+  const jitsiGrid = el('div', 'grid grid-cols-1 md:grid-cols-2 gap-2');
+  const bridgeModeField = makeSelectField('Bridge mode', icon('sliders-horizontal', 14), inst.jitsi_bridge_mode || 'auto', ['auto', 'sctp', 'colibri-ws']);
+  const jitsiSCTPMaxMessageField = makeInputField('SCTP max message', icon('sliders-horizontal', 14), inst.jitsi_sctp_max_message_size || '', { placeholder: 'empty = 1200' });
+  const trafficPayloadField = makeInputField('Transport payload cap', icon('sliders-horizontal', 14), inst.traffic_max_payload_size || '', { placeholder: 'empty, 1188, 4096, 8192' });
+  const trafficMinDelayField = makeInputField('Min delay', icon('clock', 14), inst.traffic_min_delay || '', { placeholder: 'empty или 1ms' });
+  const trafficMaxDelayField = makeInputField('Max delay', icon('clock', 14), inst.traffic_max_delay || '', { placeholder: 'empty или 3ms' });
+  jitsiGrid.appendChild(bridgeModeField.field);
+  jitsiGrid.appendChild(jitsiSCTPMaxMessageField.field);
+  jitsiGrid.appendChild(trafficPayloadField.field);
+  jitsiGrid.appendChild(trafficMinDelayField.field);
+  jitsiGrid.appendChild(trafficMaxDelayField.field);
+  jitsiBlock.appendChild(jitsiGrid);
+  const jitsiHint = el('div', 'mt-2 text-xs text-gray-500 leading-relaxed');
+  jitsiHint.innerHTML = 'Для проверенных публичных Jitsi обычно доступен только <b>SCTP</b>. ' +
+    '<b>auto</b> выбирает Colibri WS только если он advertised, иначе SCTP. ' +
+    '<b>colibri-ws</b> нужен только для диагностики и завершит запуск, если WS не advertised. ' +
+    'Для SCTP новый дефолт держит bridge frame около MTU. Payload cap обычно оставляйте пустым или пробуйте <b>1188</b>; <b>4096</b>/<b>8192</b> только для диагностики.';
+  jitsiBlock.appendChild(jitsiHint);
+  advBody.appendChild(jitsiBlock);
 
   const vp8Block = el('div', 'border border-gray-700 rounded-lg p-3 mb-3 hidden');
   vp8Block.innerHTML = '<div class="text-xs text-gray-400 mb-2">VP8 параметры</div>';
@@ -1447,6 +1503,7 @@ function showConfigModal(inst) {
     const c = carrierField.input.value;
     vp8Block.classList.toggle('hidden', t !== 'vp8channel');
     seiBlock.classList.toggle('hidden', t !== 'seichannel');
+    jitsiBlock.classList.toggle('hidden', !(c === 'jitsi' && t === 'datachannel'));
     wbHint.classList.toggle('hidden', c !== 'wbstream');
     jitsiPresets.classList.toggle('hidden', c !== 'jitsi');
     roomRotateBtn.disabled = (c === 'wbstream');
@@ -1486,6 +1543,11 @@ function showConfigModal(inst) {
       socks_proxy: socksField.input.value,
       warp_proxy: warpField.input.value,
       debug: debugCb.checked,
+      jitsi_bridge_mode: bridgeModeField.input.value,
+      jitsi_sctp_max_message_size: jitsiSCTPMaxMessageField.input.value.trim(),
+      traffic_max_payload_size: trafficPayloadField.input.value.trim(),
+      traffic_min_delay: trafficMinDelayField.input.value.trim(),
+      traffic_max_delay: trafficMaxDelayField.input.value.trim(),
     };
     if (!vp8Block.classList.contains('hidden')) {
       if (vp8FpsInp.value) body.vp8_fps = parseInt(vp8FpsInp.value, 10);

@@ -27,23 +27,26 @@ import (
 // signals presence and a separate authenticated endpoint exposes the raw
 // value when needed (e.g. /api/instances/{id}/room-password).
 type Instance struct {
-	ID        int    `json:"id"`
-	Label     string `json:"label"`
-	Carrier   string `json:"carrier"`
-	Transport string `json:"transport"`
-	RoomID    string `json:"room_id"`
-	ClientID  string `json:"client_id"`
-	Name      string `json:"name"`
-	Status    string `json:"status"`
-	Uptime    string `json:"uptime"`
-	URI       string `json:"uri"`
-	SocksProxy string `json:"socks_proxy"`
-	WarpProxy  string `json:"warp_proxy"`
-	DNS       string `json:"dns"`
-	Debug     bool   `json:"debug"`
+	ID                      int    `json:"id"`
+	Label                   string `json:"label"`
+	Carrier                 string `json:"carrier"`
+	Transport               string `json:"transport"`
+	RoomID                  string `json:"room_id"`
+	ClientID                string `json:"client_id"`
+	Name                    string `json:"name"`
+	Status                  string `json:"status"`
+	Uptime                  string `json:"uptime"`
+	URI                     string `json:"uri"`
+	SocksProxy              string `json:"socks_proxy"`
+	WarpProxy               string `json:"warp_proxy"`
+	DNS                     string `json:"dns"`
+	Debug                   bool   `json:"debug"`
+	JitsiBridgeMode         string `json:"jitsi_bridge_mode"`
+	JitsiSCTPMaxMessageSize string `json:"jitsi_sctp_max_message_size"`
+	TrafficMaxPayloadSize   string `json:"traffic_max_payload_size"`
+	TrafficMinDelay         string `json:"traffic_min_delay"`
+	TrafficMaxDelay         string `json:"traffic_max_delay"`
 }
-
-
 
 func (s *Server) handleInstancesList(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -213,17 +216,27 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
 	dns := ""
 	socksProxy := ""
 	warpProxy := ""
+	jitsiBridgeMode := "auto"
+	jitsiSCTPMaxMessageSize := ""
+	trafficMaxPayloadSize := ""
+	trafficMinDelay := ""
+	trafficMaxDelay := ""
 	if r.Body != nil {
 		var req struct {
-			Carrier    string `json:"carrier"`
-			Transport  string `json:"transport"`
-			Name       string `json:"name"`
-			RoomID     string `json:"room_id"`
-			VP8FPS     int    `json:"vp8_fps"`
-			VP8Batch   int    `json:"vp8_batch"`
-			DNS        string `json:"dns"`
-			SocksProxy string `json:"socks_proxy"`
-			WarpProxy  string `json:"warp_proxy"`
+			Carrier                 string `json:"carrier"`
+			Transport               string `json:"transport"`
+			Name                    string `json:"name"`
+			RoomID                  string `json:"room_id"`
+			VP8FPS                  int    `json:"vp8_fps"`
+			VP8Batch                int    `json:"vp8_batch"`
+			DNS                     string `json:"dns"`
+			SocksProxy              string `json:"socks_proxy"`
+			WarpProxy               string `json:"warp_proxy"`
+			JitsiBridgeMode         string `json:"jitsi_bridge_mode"`
+			JitsiSCTPMaxMessageSize string `json:"jitsi_sctp_max_message_size"`
+			TrafficMaxPayloadSize   string `json:"traffic_max_payload_size"`
+			TrafficMinDelay         string `json:"traffic_min_delay"`
+			TrafficMaxDelay         string `json:"traffic_max_delay"`
 		}
 		if err := readJSON(r, &req); err == nil {
 			if req.Carrier != "" {
@@ -245,6 +258,13 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
 			dns = strings.TrimSpace(req.DNS)
 			socksProxy = strings.TrimSpace(req.SocksProxy)
 			warpProxy = strings.TrimSpace(req.WarpProxy)
+			if req.JitsiBridgeMode != "" {
+				jitsiBridgeMode = normalizeJitsiBridgeMode(req.JitsiBridgeMode)
+			}
+			jitsiSCTPMaxMessageSize = sanitizeUnsignedString(req.JitsiSCTPMaxMessageSize)
+			trafficMaxPayloadSize = sanitizeUnsignedString(req.TrafficMaxPayloadSize)
+			trafficMinDelay = strings.TrimSpace(req.TrafficMinDelay)
+			trafficMaxDelay = strings.TrimSpace(req.TrafficMaxDelay)
 		}
 	}
 
@@ -259,7 +279,10 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
 	vals["OLCRTC_NAME"] = name
 	vals["OLCRTC_ROOM_ID"] = strings.TrimSpace(roomID)
 	vals["OLCRTC_CLIENT_ID"] = uuid.NewString()
-	vals["OLCRTC_JITSI_BRIDGE_MODE"] = "auto"
+	vals["OLCRTC_JITSI_BRIDGE_MODE"] = jitsiBridgeMode
+	if jitsiSCTPMaxMessageSize != "" {
+		vals["OLCRTC_JITSI_SCTP_MAX_MESSAGE_SIZE"] = jitsiSCTPMaxMessageSize
+	}
 	vals["OLCRTC_VP8_FPS"] = strconv.Itoa(vp8FPS)
 	vals["OLCRTC_VP8_BATCH"] = strconv.Itoa(vp8Batch)
 	if dns != "" {
@@ -270,6 +293,15 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
 	}
 	if warpProxy != "" {
 		vals["OLCRTC_WARP_PROXY"] = warpProxy
+	}
+	if trafficMaxPayloadSize != "" {
+		vals["OLCRTC_TRAFFIC_MAX_PAYLOAD"] = trafficMaxPayloadSize
+	}
+	if trafficMinDelay != "" {
+		vals["OLCRTC_TRAFFIC_MIN_DELAY"] = trafficMinDelay
+	}
+	if trafficMaxDelay != "" {
+		vals["OLCRTC_TRAFFIC_MAX_DELAY"] = trafficMaxDelay
 	}
 	delete(vals, "OLCRTC_ROOM_PASSWORD")
 	if err := WriteInstanceEnv(envPath, vals); err != nil {
@@ -336,6 +368,27 @@ func (s *Server) updateInstanceConfig(w http.ResponseWriter, r *http.Request, id
 	}
 	if v, ok := req["warp_proxy"].(string); ok {
 		updates["OLCRTC_WARP_PROXY"] = v
+	}
+	if v, ok := req["jitsi_bridge_mode"].(string); ok {
+		updates["OLCRTC_JITSI_BRIDGE_MODE"] = normalizeJitsiBridgeMode(v)
+	}
+	if v, ok := req["jitsi_sctp_max_message_size"].(string); ok {
+		updates["OLCRTC_JITSI_SCTP_MAX_MESSAGE_SIZE"] = sanitizeUnsignedString(v)
+	}
+	if v, ok := req["jitsi_sctp_max_message_size"].(float64); ok {
+		updates["OLCRTC_JITSI_SCTP_MAX_MESSAGE_SIZE"] = sanitizeUnsignedFloat(v)
+	}
+	if v, ok := req["traffic_max_payload_size"].(string); ok {
+		updates["OLCRTC_TRAFFIC_MAX_PAYLOAD"] = sanitizeUnsignedString(v)
+	}
+	if v, ok := req["traffic_max_payload_size"].(float64); ok {
+		updates["OLCRTC_TRAFFIC_MAX_PAYLOAD"] = sanitizeUnsignedFloat(v)
+	}
+	if v, ok := req["traffic_min_delay"].(string); ok {
+		updates["OLCRTC_TRAFFIC_MIN_DELAY"] = strings.TrimSpace(v)
+	}
+	if v, ok := req["traffic_max_delay"].(string); ok {
+		updates["OLCRTC_TRAFFIC_MAX_DELAY"] = strings.TrimSpace(v)
 	}
 	if v, ok := req["debug"].(bool); ok {
 		if v {
@@ -505,6 +558,43 @@ func (s *Server) ensureClientID(envPath string, current string) string {
 	return newID
 }
 
+func normalizeJitsiBridgeMode(v string) string {
+	switch strings.TrimSpace(strings.ToLower(v)) {
+	case "colibri-ws", "colibri", "ws", "websocket":
+		return "colibri-ws"
+	case "sctp", "datachannel", "dc":
+		return "sctp"
+	default:
+		return "auto"
+	}
+}
+
+func effectiveJitsiBridgeMode(v string) string {
+	if strings.TrimSpace(v) == "" {
+		return "auto"
+	}
+	return normalizeJitsiBridgeMode(v)
+}
+
+func sanitizeUnsignedString(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return ""
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return ""
+	}
+	return strconv.Itoa(n)
+}
+
+func sanitizeUnsignedFloat(v float64) string {
+	if v < 0 {
+		return ""
+	}
+	return fmt.Sprintf("%.0f", v)
+}
+
 func (s *Server) buildInstance(id int) Instance {
 	envPath := InstanceEnvPath(s.cfg.ConfigDir, id)
 	vals := ReadInstanceEnv(envPath)
@@ -538,20 +628,25 @@ func (s *Server) buildInstance(id int) Instance {
 	}
 
 	return Instance{
-		ID:         id,
-		Label:      label,
-		Carrier:    carrier,
-		Transport:  transport,
-		RoomID:     vals["OLCRTC_ROOM_ID"],
-		ClientID:   clientID,
-		Name:       name,
-		Status:     status,
-		Uptime:     uptime,
-		URI:        s.buildURIWith(vals, clientID),
-		SocksProxy: vals["OLCRTC_SOCKS_PROXY"],
-		WarpProxy:  vals["OLCRTC_WARP_PROXY"],
-		DNS:        vals["OLCRTC_DNS"],
-		Debug:      vals["OLCRTC_DEBUG"] == "1",
+		ID:                    id,
+		Label:                 label,
+		Carrier:               carrier,
+		Transport:             transport,
+		RoomID:                vals["OLCRTC_ROOM_ID"],
+		ClientID:              clientID,
+		Name:                  name,
+		Status:                status,
+		Uptime:                uptime,
+		URI:                   s.buildURIWith(vals, clientID),
+		SocksProxy:            vals["OLCRTC_SOCKS_PROXY"],
+		WarpProxy:             vals["OLCRTC_WARP_PROXY"],
+		DNS:                   vals["OLCRTC_DNS"],
+		Debug:                 vals["OLCRTC_DEBUG"] == "1",
+		JitsiBridgeMode:         effectiveJitsiBridgeMode(vals["OLCRTC_JITSI_BRIDGE_MODE"]),
+		JitsiSCTPMaxMessageSize: vals["OLCRTC_JITSI_SCTP_MAX_MESSAGE_SIZE"],
+		TrafficMaxPayloadSize:   vals["OLCRTC_TRAFFIC_MAX_PAYLOAD"],
+		TrafficMinDelay:         vals["OLCRTC_TRAFFIC_MIN_DELAY"],
+		TrafficMaxDelay:         vals["OLCRTC_TRAFFIC_MAX_DELAY"],
 	}
 }
 

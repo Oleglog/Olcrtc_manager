@@ -621,6 +621,10 @@ func Run(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return err
 	}
+	if traffic.MaxPayloadSize > 0 || traffic.MinDelay > 0 || traffic.MaxDelay > 0 {
+		logger.Infof("traffic shaping: max_payload=%d min_delay=%s max_delay=%s",
+			traffic.MaxPayloadSize, traffic.MinDelay, traffic.MaxDelay)
+	}
 
 	if cfg.SubEnabled {
 		if err := startSubscriptionServer(ctx, cfg); err != nil {

@@ -26,6 +26,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -41,13 +42,23 @@ import (
 
 const (
 	defaultSendQueueSize = 10000
-	// bridgeMaxMessageSize is the maximum payload for a single colibri-ws
+	// bridgeFrameHeaderLen is added by encodeBridgeFrame before the payload
+	// reaches the selected Jitsi bridge path: magic + local epoch + peer epoch.
+	bridgeFrameHeaderLen = 12
+	// bridgeMaxMessageSize is the maximum frame for a single colibri-ws
 	// EndpointMessage. The upstream j benchmark shows 8 KiB is stable at
 	// ~135 Mbit/s, while 16 KiB fluctuates. 12 KiB is a conservative
 	// compromise that increases effective throughput by ~50% per message
 	// compared to 8 KiB while staying well below the 16 KiB instability
 	// threshold. Revert to 8*1024 if JVB closes the bridge.
 	bridgeMaxMessageSize = 12 * 1024
+	// sctpBridgeMaxMessageSize keeps Jitsi fallback DataChannel messages below
+	// the typical path MTU. Large SCTP user messages are fragmented by the
+	// association and can suffer head-of-line stalls on public JVB deployments,
+	// which showed up as a ~5 Mbit/s plateau. Keeping the bridge frame near MTU
+	// lets smux pipeline more small messages instead of feeding SCTP jumbo
+	// fragments. Can be overridden with OLCRTC_JITSI_SCTP_MAX_MESSAGE_SIZE.
+	sctpBridgeMaxMessageSize = 1200
 	// sendBatchCap is the maximum number of frames collected in a single
 	// sendLoop drain pass before flushing them to the bridge. A larger batch
 	// reduces per-frame overhead (JSON serialisation, base64, WS write syscall)
@@ -131,6 +142,7 @@ type Session struct {
 	sendQueue     chan []byte
 	peerSendQueue chan bridgeOutbound
 	bridgeReady   atomic.Bool
+	sctpBridge    atomic.Bool
 	closed        atomic.Bool
 	reconnecting  atomic.Bool
 
@@ -476,9 +488,10 @@ func (s *Session) openBridgeWS(ctx context.Context, jSess *j.Session) error {
 	}
 	s.peerEndpoint.Store(nil)
 	s.peerVideoSSRC.Store(0)
+	s.sctpBridge.Store(false)
 	s.bridgeReady.Store(true)
-	logger.Infof("jitsi: bridge path=colibri-ws open_ms=%d host=%s room=%s url=%q endpoints=%v",
-		time.Since(start).Milliseconds(), s.host, s.room, jSess.ColibriWS, jSess.Endpoints())
+	logger.Infof("jitsi: bridge path=colibri-ws open_ms=%d host=%s room=%s max_message=%d max_payload=%d url=%q endpoints=%v",
+		time.Since(start).Milliseconds(), s.host, s.room, s.bridgeMaxMessageSize(), s.ByteStreamMaxPayloadSize(), jSess.ColibriWS, jSess.Endpoints())
 	return nil
 }
 
@@ -495,9 +508,10 @@ func (s *Session) openBridgeSCTP(ctx context.Context, jSess *j.Session) error {
 	}
 	s.peerEndpoint.Store(nil)
 	s.peerVideoSSRC.Store(0)
+	s.sctpBridge.Store(true)
 	s.bridgeReady.Store(true)
-	logger.Infof("jitsi: bridge path=sctp open_ms=%d host=%s room=%s colibri_ws_advertised=%t endpoints=%v",
-		time.Since(start).Milliseconds(), s.host, s.room, jSess.ColibriWS != "", jSess.Endpoints())
+	logger.Infof("jitsi: bridge path=sctp open_ms=%d host=%s room=%s max_message=%d max_payload=%d colibri_ws_advertised=%t endpoints=%v",
+		time.Since(start).Milliseconds(), s.host, s.room, s.bridgeMaxMessageSize(), s.ByteStreamMaxPayloadSize(), jSess.ColibriWS != "", jSess.Endpoints())
 	return nil
 }
 
@@ -532,6 +546,38 @@ func truthy(v string) bool {
 	default:
 		return false
 	}
+}
+
+// ByteStreamMaxPayloadSize reports the largest payload callers should pass to
+// Send before encodeBridgeFrame adds its bridge header. It is intentionally
+// lower for the SCTP fallback path to avoid SCTP user-message fragmentation on
+// public JVB deployments.
+func (s *Session) ByteStreamMaxPayloadSize() int {
+	maxMessage := s.bridgeMaxMessageSize()
+	if maxMessage <= bridgeFrameHeaderLen {
+		return 1
+	}
+	return maxMessage - bridgeFrameHeaderLen
+}
+
+func (s *Session) bridgeMaxMessageSize() int {
+	if !s.sctpBridge.Load() {
+		return bridgeMaxMessageSize
+	}
+	return sctpBridgeMaxMessageSizeFromEnv()
+}
+
+func sctpBridgeMaxMessageSizeFromEnv() int {
+	value := strings.TrimSpace(os.Getenv("OLCRTC_JITSI_SCTP_MAX_MESSAGE_SIZE"))
+	if value == "" {
+		return sctpBridgeMaxMessageSize
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil || n <= bridgeFrameHeaderLen {
+		logger.Warnf("jitsi: invalid OLCRTC_JITSI_SCTP_MAX_MESSAGE_SIZE=%q, using %d", value, sctpBridgeMaxMessageSize)
+		return sctpBridgeMaxMessageSize
+	}
+	return n
 }
 
 func (s *Session) decideBridgePath(stage string, needBridge bool, jSess *j.Session) (bool, error) {
@@ -1081,7 +1127,7 @@ func (s *Session) SendTo(peerID string, data []byte) error {
 
 func (s *Session) encodeBridgeFrame(data []byte, peerID string) ([]byte, error) {
 	const epochHeaderLen = 8
-	if len(data)+len(bridgeMagic)+epochHeaderLen > bridgeMaxMessageSize {
+	if len(data)+bridgeFrameHeaderLen > s.bridgeMaxMessageSize() {
 		return nil, ErrSendTooLarge
 	}
 	framed := make([]byte, len(bridgeMagic)+epochHeaderLen+len(data))
@@ -1109,7 +1155,7 @@ func (s *Session) enqueueBridgeFrame(framed []byte) error {
 	if !s.bridgeReady.Load() {
 		return ErrBridgeNotReady
 	}
-	if len(framed) > bridgeMaxMessageSize {
+	if len(framed) > s.bridgeMaxMessageSize() {
 		return ErrSendTooLarge
 	}
 	select {
@@ -1129,7 +1175,7 @@ func (s *Session) enqueuePeerBridgeFrame(peerID string, framed []byte) error {
 	if !s.bridgeReady.Load() {
 		return ErrBridgeNotReady
 	}
-	if len(framed) > bridgeMaxMessageSize {
+	if len(framed) > s.bridgeMaxMessageSize() {
 		return ErrSendTooLarge
 	}
 	select {
@@ -1911,7 +1957,7 @@ func (s *Session) GetBufferedAmount() uint64 {
 	if depth <= 0 {
 		return 0
 	}
-	return uint64(depth) * uint64(bridgeMaxMessageSize)
+	return uint64(depth) * uint64(s.bridgeMaxMessageSize())
 }
 
 // AddVideoTrack publishes a video track to the Jitsi conference.

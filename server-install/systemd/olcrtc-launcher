@@ -17,6 +17,11 @@
 #   OLCRTC_DNS               optional: DNS resolver (default 8.8.8.8:53)
 #   OLCRTC_DEBUG             optional: set to 1 to enable debug verbose logging
 #   OLCRTC_JITSI_BRIDGE_MODE optional: auto | colibri-ws | sctp (default auto)
+#   OLCRTC_JITSI_SCTP_MAX_MESSAGE_SIZE optional: full Jitsi SCTP bridge frame cap, default 1200.
+#   OLCRTC_TRAFFIC_MAX_PAYLOAD optional: cap encrypted transport payload bytes.
+#                                       For Jitsi SCTP/datachannel leave empty or try 1188; 4096/8192 only for diagnostics.
+#   OLCRTC_TRAFFIC_MIN_DELAY optional: send pacing min delay, Go duration (e.g. 1ms).
+#   OLCRTC_TRAFFIC_MAX_DELAY optional: send pacing max delay, Go duration (e.g. 3ms).
 #   OLCRTC_VP8_FPS           optional: VP8 FPS (default 60, only for vp8channel)
 #   OLCRTC_VP8_BATCH         optional: VP8 batch size (default 64, only for vp8channel)
 #   OLCRTC_SEI_FPS           optional: SEI FPS (default 60)
@@ -153,6 +158,19 @@ subscription:
   db_path: "${sub_db}"
   api_token: "${sub_token}"
 EOF
+
+# Optional traffic shaping. This is mostly useful for Jitsi SCTP fallback
+# experiments, where smaller smux frames can avoid SCTP fragmentation and
+# head-of-line stalls on some public JVB deployments. Empty values keep the
+# built-in transport defaults.
+if [ -n "${OLCRTC_TRAFFIC_MAX_PAYLOAD:-}" ] || [ -n "${OLCRTC_TRAFFIC_MIN_DELAY:-}" ] || [ -n "${OLCRTC_TRAFFIC_MAX_DELAY:-}" ]; then
+    cat >> "$CONFIG_FILE" <<EOF
+traffic:
+  max_payload_size: ${OLCRTC_TRAFFIC_MAX_PAYLOAD:-0}
+  min_delay: "${OLCRTC_TRAFFIC_MIN_DELAY:-}"
+  max_delay: "${OLCRTC_TRAFFIC_MAX_DELAY:-}"
+EOF
+fi
 
 # VP8 options
 if [ "$transport" = "vp8channel" ]; then

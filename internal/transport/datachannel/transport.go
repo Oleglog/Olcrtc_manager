@@ -21,6 +21,10 @@ type streamTransport struct {
 	session engine.Session
 }
 
+type byteStreamPayloadSizer interface {
+	ByteStreamMaxPayloadSize() int
+}
+
 // New creates a datachannel transport backed by a carrier engine.
 func New(ctx context.Context, cfg transport.Config) (transport.Transport, error) {
 	sess, err := enginebuiltin.Open(ctx, cfg.Carrier, enginebuiltin.Config{
@@ -131,10 +135,16 @@ func (p *streamTransport) CanSend() bool {
 
 // Features describes the current datachannel transport semantics.
 func (p *streamTransport) Features() transport.Features {
+	maxPayloadSize := defaultMaxPayloadSize
+	if sizer, ok := p.session.(byteStreamPayloadSizer); ok {
+		if v := sizer.ByteStreamMaxPayloadSize(); v > 0 {
+			maxPayloadSize = v
+		}
+	}
 	return transport.Features{
 		Reliable:        true,
 		Ordered:         true,
 		MessageOriented: true,
-		MaxPayloadSize:  defaultMaxPayloadSize,
+		MaxPayloadSize:  maxPayloadSize,
 	}
 }
