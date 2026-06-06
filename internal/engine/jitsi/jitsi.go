@@ -52,13 +52,11 @@ const (
 	// compared to 8 KiB while staying well below the 16 KiB instability
 	// threshold. Revert to 8*1024 if JVB closes the bridge.
 	bridgeMaxMessageSize = 12 * 1024
-	// sctpBridgeMaxMessageSize keeps Jitsi fallback DataChannel messages below
-	// the typical path MTU. Large SCTP user messages are fragmented by the
-	// association and can suffer head-of-line stalls on public JVB deployments,
-	// which showed up as a ~5 Mbit/s plateau. Keeping the bridge frame near MTU
-	// lets smux pipeline more small messages instead of feeding SCTP jumbo
-	// fragments. Can be overridden with OLCRTC_JITSI_SCTP_MAX_MESSAGE_SIZE.
-	sctpBridgeMaxMessageSize = 1200
+	// sctpBridgeMaxMessageSize keeps the legacy SCTP fallback behaviour unless
+	// OLCRTC_JITSI_SCTP_MAX_MESSAGE_SIZE is explicitly set. Lower values such as
+	// 1200 are useful for speed diagnostics, but changing the default alters the
+	// smux frame size seen by both peers and can break mixed-version clients.
+	sctpBridgeMaxMessageSize = bridgeMaxMessageSize
 	// sendBatchCap is the maximum number of frames collected in a single
 	// sendLoop drain pass before flushing them to the bridge. A larger batch
 	// reduces per-frame overhead (JSON serialisation, base64, WS write syscall)
@@ -549,9 +547,9 @@ func truthy(v string) bool {
 }
 
 // ByteStreamMaxPayloadSize reports the largest payload callers should pass to
-// Send before encodeBridgeFrame adds its bridge header. It is intentionally
-// lower for the SCTP fallback path to avoid SCTP user-message fragmentation on
-// public JVB deployments.
+// Send before encodeBridgeFrame adds its bridge header. The SCTP fallback keeps
+// the legacy 12 KiB bridge frame by default for mixed-version compatibility;
+// smaller SCTP frames are opt-in via OLCRTC_JITSI_SCTP_MAX_MESSAGE_SIZE.
 func (s *Session) ByteStreamMaxPayloadSize() int {
 	maxMessage := s.bridgeMaxMessageSize()
 	if maxMessage <= bridgeFrameHeaderLen {

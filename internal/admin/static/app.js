@@ -1061,7 +1061,7 @@ function showCreateInstanceModal() {
   jitsiBlock.innerHTML = '<div class="text-xs text-gray-400 mb-2">Jitsi DataChannel / SCTP</div>';
   const jitsiGrid = el('div', 'grid grid-cols-1 md:grid-cols-2 gap-2');
   const bridgeModeField = makeSelectField('Bridge mode', icon('sliders-horizontal', 14), 'auto', ['auto', 'sctp', 'colibri-ws']);
-  const jitsiSCTPMaxMessageField = makeInputField('SCTP max message', icon('sliders-horizontal', 14), '', { placeholder: 'empty = 1200' });
+  const jitsiSCTPMaxMessageField = makeInputField('SCTP max message', icon('sliders-horizontal', 14), '', { placeholder: 'empty = legacy 12288' });
   const trafficPayloadField = makeInputField('Transport payload cap', icon('sliders-horizontal', 14), '', { placeholder: 'empty, 1188, 4096, 8192' });
   const trafficMinDelayField = makeInputField('Min delay', icon('clock', 14), '', { placeholder: 'empty или 1ms' });
   const trafficMaxDelayField = makeInputField('Max delay', icon('clock', 14), '', { placeholder: 'empty или 3ms' });
@@ -1075,7 +1075,7 @@ function showCreateInstanceModal() {
   jitsiHint.innerHTML = 'Для публичных Jitsi обычно надёжнее <b>SCTP</b>. ' +
     '<b>auto</b> выбирает Colibri WS только если он advertised, иначе SCTP. ' +
     '<b>colibri-ws</b> нужен для диагностики и завершит запуск, если WS не advertised. ' +
-    'Для SCTP новый дефолт держит bridge frame около MTU. Payload cap обычно оставляйте пустым или пробуйте <b>1188</b>; <b>4096</b>/<b>8192</b> только для диагностики.';
+    'Пусто сохраняет legacy SCTP frame для совместимости. Для диагностики скорости можно явно поставить SCTP max message <b>1200</b> и payload cap <b>1188</b>, но только когда обе стороны обновлены.';
   jitsiBlock.appendChild(jitsiHint);
   connectionSec.appendChild(jitsiBlock);
 
@@ -1342,7 +1342,7 @@ function showConfigModal(inst) {
   jitsiBlock.innerHTML = '<div class="text-xs text-gray-400 mb-2">Jitsi DataChannel / SCTP</div>';
   const jitsiGrid = el('div', 'grid grid-cols-1 md:grid-cols-2 gap-2');
   const bridgeModeField = makeSelectField('Bridge mode', icon('sliders-horizontal', 14), inst.jitsi_bridge_mode || 'auto', ['auto', 'sctp', 'colibri-ws']);
-  const jitsiSCTPMaxMessageField = makeInputField('SCTP max message', icon('sliders-horizontal', 14), inst.jitsi_sctp_max_message_size || '', { placeholder: 'empty = 1200' });
+  const jitsiSCTPMaxMessageField = makeInputField('SCTP max message', icon('sliders-horizontal', 14), inst.jitsi_sctp_max_message_size || '', { placeholder: 'empty = legacy 12288' });
   const trafficPayloadField = makeInputField('Transport payload cap', icon('sliders-horizontal', 14), inst.traffic_max_payload_size || '', { placeholder: 'empty, 1188, 4096, 8192' });
   const trafficMinDelayField = makeInputField('Min delay', icon('clock', 14), inst.traffic_min_delay || '', { placeholder: 'empty или 1ms' });
   const trafficMaxDelayField = makeInputField('Max delay', icon('clock', 14), inst.traffic_max_delay || '', { placeholder: 'empty или 3ms' });
@@ -1356,7 +1356,7 @@ function showConfigModal(inst) {
   jitsiHint.innerHTML = 'Для проверенных публичных Jitsi обычно доступен только <b>SCTP</b>. ' +
     '<b>auto</b> выбирает Colibri WS только если он advertised, иначе SCTP. ' +
     '<b>colibri-ws</b> нужен только для диагностики и завершит запуск, если WS не advertised. ' +
-    'Для SCTP новый дефолт держит bridge frame около MTU. Payload cap обычно оставляйте пустым или пробуйте <b>1188</b>; <b>4096</b>/<b>8192</b> только для диагностики.';
+    'Пусто сохраняет legacy SCTP frame для совместимости. Для диагностики скорости можно явно поставить SCTP max message <b>1200</b> и payload cap <b>1188</b>, но только когда обе стороны обновлены.';
   jitsiBlock.appendChild(jitsiHint);
   advBody.appendChild(jitsiBlock);
 

@@ -17,9 +17,9 @@
 #   OLCRTC_DNS               optional: DNS resolver (default 8.8.8.8:53)
 #   OLCRTC_DEBUG             optional: set to 1 to enable debug verbose logging
 #   OLCRTC_JITSI_BRIDGE_MODE optional: auto | colibri-ws | sctp (default auto)
-#   OLCRTC_JITSI_SCTP_MAX_MESSAGE_SIZE optional: full Jitsi SCTP bridge frame cap, default 1200.
+#   OLCRTC_JITSI_SCTP_MAX_MESSAGE_SIZE optional: full Jitsi SCTP bridge frame cap, default legacy 12288.
 #   OLCRTC_TRAFFIC_MAX_PAYLOAD optional: cap encrypted transport payload bytes.
-#                                       For Jitsi SCTP/datachannel leave empty or try 1188; 4096/8192 only for diagnostics.
+#                                       Leave empty for compatibility; try 1188 with SCTP max message 1200 only for diagnostics.
 #   OLCRTC_TRAFFIC_MIN_DELAY optional: send pacing min delay, Go duration (e.g. 1ms).
 #   OLCRTC_TRAFFIC_MAX_DELAY optional: send pacing max delay, Go duration (e.g. 3ms).
 #   OLCRTC_VP8_FPS           optional: VP8 FPS (default 60, only for vp8channel)

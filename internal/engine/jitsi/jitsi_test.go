@@ -93,6 +93,45 @@ func TestNewSucceeds(t *testing.T) {
 	}
 }
 
+func TestSCTPBridgeKeepsLegacyMaxMessageSizeByDefault(t *testing.T) {
+	t.Setenv("OLCRTC_JITSI_SCTP_MAX_MESSAGE_SIZE", "")
+
+	var sess Session
+	sess.sctpBridge.Store(true)
+
+	if got := sess.bridgeMaxMessageSize(); got != bridgeMaxMessageSize {
+		t.Fatalf("bridgeMaxMessageSize() = %d, want legacy %d", got, bridgeMaxMessageSize)
+	}
+	if got, want := sess.ByteStreamMaxPayloadSize(), bridgeMaxMessageSize-bridgeFrameHeaderLen; got != want {
+		t.Fatalf("ByteStreamMaxPayloadSize() = %d, want %d", got, want)
+	}
+}
+
+func TestSCTPBridgeMaxMessageSizeEnvIsExplicitOptIn(t *testing.T) {
+	t.Setenv("OLCRTC_JITSI_SCTP_MAX_MESSAGE_SIZE", "1200")
+
+	var sess Session
+	sess.sctpBridge.Store(true)
+
+	if got := sess.bridgeMaxMessageSize(); got != 1200 {
+		t.Fatalf("bridgeMaxMessageSize() = %d, want explicit env override 1200", got)
+	}
+	if got, want := sess.ByteStreamMaxPayloadSize(), 1200-bridgeFrameHeaderLen; got != want {
+		t.Fatalf("ByteStreamMaxPayloadSize() = %d, want %d", got, want)
+	}
+}
+
+func TestSCTPBridgeInvalidEnvFallsBackToLegacyMaxMessageSize(t *testing.T) {
+	t.Setenv("OLCRTC_JITSI_SCTP_MAX_MESSAGE_SIZE", "8")
+
+	var sess Session
+	sess.sctpBridge.Store(true)
+
+	if got := sess.bridgeMaxMessageSize(); got != bridgeMaxMessageSize {
+		t.Fatalf("bridgeMaxMessageSize() = %d, want legacy %d", got, bridgeMaxMessageSize)
+	}
+}
+
 func TestByteStreamNegotiatesPeerConnectionWithoutRequestingVideo(t *testing.T) {
 	sess, err := New(context.Background(), engine.Config{
 		URL:    testHost,
