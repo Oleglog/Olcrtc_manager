@@ -374,6 +374,10 @@ func (s *Session) waitForJingle() {
 	if err := s.completeJingleSetup(s.runCtx, jSess); err != nil {
 		if !s.closed.Load() {
 			logger.Warnf("jitsi: jingle setup failed: %v", err)
+			if errors.Is(err, ErrColibriWSRequired) {
+				s.signalEnded(err.Error())
+				return
+			}
 			s.requestReconnect("jingle setup failed")
 		}
 	}
@@ -1633,6 +1637,13 @@ func (s *Session) handleReconnectAttempt(ctx context.Context) bool {
 			return false
 		}
 
+		if errors.Is(err, ErrColibriWSRequired) {
+			logger.Warnf("jitsi: non-retriable bridge configuration error: %v", err)
+			s.signalEnded(err.Error())
+			s.drainReconnectQueue()
+			return true
+		}
+
 		if errors.Is(err, errNoPeer) {
 			logger.Infof("jitsi: waiting for peer in room (not a failure)")
 			s.reconnectMu.Lock()
@@ -1758,7 +1769,7 @@ func (s *Session) reinitiateBridge(ctx context.Context, jSess *j.Session) error 
 	s.logSessionDiagnostics("reinitiate", jSess)
 	sctpBridge, err := s.decideBridgePath("reinitiate", true, jSess)
 	if err != nil {
-		return s.reconnectFull(ctx)
+		return err
 	}
 	if err := s.negotiatePC(ctx, jSess, sctpBridge); err != nil {
 		logger.Warnf("jitsi: negotiate after reinitiate failed: %v — full reconnect", err)
