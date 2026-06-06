@@ -46,6 +46,8 @@ type Instance struct {
 	TrafficMaxPayloadSize   string `json:"traffic_max_payload_size"`
 	TrafficMinDelay         string `json:"traffic_min_delay"`
 	TrafficMaxDelay         string `json:"traffic_max_delay"`
+	VP8FPS                  string `json:"vp8_fps"`
+	VP8Batch                string `json:"vp8_batch"`
 }
 
 func (s *Server) handleInstancesList(w http.ResponseWriter, r *http.Request) {
@@ -211,8 +213,8 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
 	transport := "vp8channel"
 	name := ""
 	roomID := ""
-	vp8FPS := 120
-	vp8Batch := 64
+	vp8FPS := "120"
+	vp8Batch := "64"
 	dns := ""
 	socksProxy := ""
 	warpProxy := ""
@@ -227,8 +229,8 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
 			Transport               string `json:"transport"`
 			Name                    string `json:"name"`
 			RoomID                  string `json:"room_id"`
-			VP8FPS                  int    `json:"vp8_fps"`
-			VP8Batch                int    `json:"vp8_batch"`
+			VP8FPS                  any    `json:"vp8_fps"`
+			VP8Batch                any    `json:"vp8_batch"`
 			DNS                     string `json:"dns"`
 			SocksProxy              string `json:"socks_proxy"`
 			WarpProxy               string `json:"warp_proxy"`
@@ -249,11 +251,11 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
 				name = req.Name
 			}
 			roomID = req.RoomID
-			if req.VP8FPS > 0 {
-				vp8FPS = req.VP8FPS
+			if req.VP8FPS != nil {
+				vp8FPS = sanitizeUnsignedAny(req.VP8FPS)
 			}
-			if req.VP8Batch > 0 {
-				vp8Batch = req.VP8Batch
+			if req.VP8Batch != nil {
+				vp8Batch = sanitizeUnsignedAny(req.VP8Batch)
 			}
 			dns = strings.TrimSpace(req.DNS)
 			socksProxy = strings.TrimSpace(req.SocksProxy)
@@ -283,8 +285,8 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
 	if jitsiSCTPMaxMessageSize != "" {
 		vals["OLCRTC_JITSI_SCTP_MAX_MESSAGE_SIZE"] = jitsiSCTPMaxMessageSize
 	}
-	vals["OLCRTC_VP8_FPS"] = strconv.Itoa(vp8FPS)
-	vals["OLCRTC_VP8_BATCH"] = strconv.Itoa(vp8Batch)
+	vals["OLCRTC_VP8_FPS"] = vp8FPS
+	vals["OLCRTC_VP8_BATCH"] = vp8Batch
 	if dns != "" {
 		vals["OLCRTC_DNS"] = dns
 	}
@@ -397,11 +399,17 @@ func (s *Server) updateInstanceConfig(w http.ResponseWriter, r *http.Request, id
 			updates["OLCRTC_DEBUG"] = ""
 		}
 	}
+	if v, ok := req["vp8_fps"].(string); ok {
+		updates["OLCRTC_VP8_FPS"] = sanitizeUnsignedString(v)
+	}
 	if v, ok := req["vp8_fps"].(float64); ok {
-		updates["OLCRTC_VP8_FPS"] = fmt.Sprintf("%.0f", v)
+		updates["OLCRTC_VP8_FPS"] = sanitizeUnsignedFloat(v)
+	}
+	if v, ok := req["vp8_batch"].(string); ok {
+		updates["OLCRTC_VP8_BATCH"] = sanitizeUnsignedString(v)
 	}
 	if v, ok := req["vp8_batch"].(float64); ok {
-		updates["OLCRTC_VP8_BATCH"] = fmt.Sprintf("%.0f", v)
+		updates["OLCRTC_VP8_BATCH"] = sanitizeUnsignedFloat(v)
 	}
 	if v, ok := req["sei_fps"].(float64); ok {
 		updates["OLCRTC_SEI_FPS"] = fmt.Sprintf("%.0f", v)
@@ -595,6 +603,17 @@ func sanitizeUnsignedFloat(v float64) string {
 	return fmt.Sprintf("%.0f", v)
 }
 
+func sanitizeUnsignedAny(v any) string {
+	switch t := v.(type) {
+	case string:
+		return sanitizeUnsignedString(t)
+	case float64:
+		return sanitizeUnsignedFloat(t)
+	default:
+		return ""
+	}
+}
+
 func (s *Server) buildInstance(id int) Instance {
 	envPath := InstanceEnvPath(s.cfg.ConfigDir, id)
 	vals := ReadInstanceEnv(envPath)
@@ -647,6 +666,8 @@ func (s *Server) buildInstance(id int) Instance {
 		TrafficMaxPayloadSize:   vals["OLCRTC_TRAFFIC_MAX_PAYLOAD"],
 		TrafficMinDelay:         vals["OLCRTC_TRAFFIC_MIN_DELAY"],
 		TrafficMaxDelay:         vals["OLCRTC_TRAFFIC_MAX_DELAY"],
+		VP8FPS:                  vals["OLCRTC_VP8_FPS"],
+		VP8Batch:                vals["OLCRTC_VP8_BATCH"],
 	}
 }
 

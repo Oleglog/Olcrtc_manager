@@ -1085,8 +1085,8 @@ function showCreateInstanceModal() {
   const vp8Block = el('div', 'border border-gray-700 rounded-lg p-3 mb-3');
   vp8Block.innerHTML = '<div class="text-xs text-gray-400 mb-2">VP8 параметры</div>';
   const vp8Grid = el('div', 'grid grid-cols-2 gap-2');
-  const vp8FpsInp = el('input', ''); vp8FpsInp.placeholder = 'FPS (120)'; vp8FpsInp.value = '120';
-  const vp8BatchInp = el('input', ''); vp8BatchInp.placeholder = 'Batch (64)'; vp8BatchInp.value = '64';
+  const vp8FpsInp = el('input', ''); vp8FpsInp.type = 'number'; vp8FpsInp.min = '0'; vp8FpsInp.step = '1'; vp8FpsInp.placeholder = 'FPS (empty=120, 0=core default)'; vp8FpsInp.value = '120';
+  const vp8BatchInp = el('input', ''); vp8BatchInp.type = 'number'; vp8BatchInp.min = '0'; vp8BatchInp.step = '1'; vp8BatchInp.placeholder = 'Batch (empty=64, 0=core default)'; vp8BatchInp.value = '64';
   vp8Grid.appendChild(vp8FpsInp);
   vp8Grid.appendChild(vp8BatchInp);
   vp8Block.appendChild(vp8Grid);
@@ -1189,8 +1189,8 @@ function showCreateInstanceModal() {
       transport: transportField.input.value,
       name: nameField.input.value,
       room_id: room,
-      vp8_fps: parseInt(vp8FpsInp.value, 10) || 120,
-      vp8_batch: parseInt(vp8BatchInp.value, 10) || 64,
+      vp8_fps: vp8FpsInp.value.trim(),
+      vp8_batch: vp8BatchInp.value.trim(),
       dns: dnsField.input.value.trim(),
       socks_proxy: socksField.input.value.trim(),
       warp_proxy: warpField.input.value.trim(),
@@ -1363,8 +1363,8 @@ function showConfigModal(inst) {
   const vp8Block = el('div', 'border border-gray-700 rounded-lg p-3 mb-3 hidden');
   vp8Block.innerHTML = '<div class="text-xs text-gray-400 mb-2">VP8 параметры</div>';
   const vp8Grid = el('div', 'grid grid-cols-2 gap-2');
-  const vp8FpsInp = el('input', ''); vp8FpsInp.placeholder = 'FPS (120)'; vp8FpsInp.value = inst.vp8_fps || '120';
-  const vp8BatchInp = el('input', ''); vp8BatchInp.placeholder = 'Batch (64)'; vp8BatchInp.value = inst.vp8_batch || '64';
+  const vp8FpsInp = el('input', ''); vp8FpsInp.type = 'number'; vp8FpsInp.min = '0'; vp8FpsInp.step = '1'; vp8FpsInp.placeholder = 'FPS (empty=120, 0=core default)'; vp8FpsInp.value = inst.vp8_fps || '';
+  const vp8BatchInp = el('input', ''); vp8BatchInp.type = 'number'; vp8BatchInp.min = '0'; vp8BatchInp.step = '1'; vp8BatchInp.placeholder = 'Batch (empty=64, 0=core default)'; vp8BatchInp.value = inst.vp8_batch || '';
   vp8Grid.appendChild(vp8FpsInp);
   vp8Grid.appendChild(vp8BatchInp);
   vp8Block.appendChild(vp8Grid);
@@ -1550,8 +1550,8 @@ function showConfigModal(inst) {
       traffic_max_delay: trafficMaxDelayField.input.value.trim(),
     };
     if (!vp8Block.classList.contains('hidden')) {
-      if (vp8FpsInp.value) body.vp8_fps = parseInt(vp8FpsInp.value, 10);
-      if (vp8BatchInp.value) body.vp8_batch = parseInt(vp8BatchInp.value, 10);
+      body.vp8_fps = vp8FpsInp.value.trim();
+      body.vp8_batch = vp8BatchInp.value.trim();
     }
     if (!seiBlock.classList.contains('hidden')) {
       if (seiFpsInp.value) body.sei_fps = parseInt(seiFpsInp.value, 10);
