@@ -666,3 +666,67 @@ func TestDispatchFiresOnTraffic(t *testing.T) {
 		t.Fatalf("bytesOut = %d, want >= %d", rec.out, len(greeting))
 	}
 }
+
+func TestReinstallSessionClosesOldConnBeforeSwap(t *testing.T) {
+	// Regression test: after carrier reconnect, a client that reconnects
+	// faster can push smux frames into the server's old muxconn before
+	// reinstallSession swaps it out. This corrupts the old smux session
+	// and manifests as "frame too large" on the control stream.
+	// The fix closes the old muxconn at the very start of reinstallSession
+	// so Push calls during the swap window are discarded.
+	cipher, err := cryptopkg.NewCipher("01234567890123456789012345678901")
+	if err != nil {
+		t.Fatalf("NewCipher() error = %v", err)
+	}
+	ln := &serverLinkStub{}
+	conn := muxconn.New(ln, cipher)
+	sess, err := smux.Server(conn, smuxConfig(0))
+	if err != nil {
+		t.Fatalf("smux.Server() error = %v", err)
+	}
+	s := &Server{
+		ln:           ln,
+		cipher:       cipher,
+		conn:         conn,
+		session:      sess,
+		onClose:      func(string, string) {},
+		health:       runtime.NewHealthTracker(nil),
+		peerSessions: make(map[string]*peerSession),
+	}
+
+	// Simulate the race: push data into old conn WHILE reinstallSession
+	// is running (in a separate goroutine).
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.reinstallSession(sess)
+	}()
+
+	// Give reinstallSession a moment to close the old conn.
+	time.Sleep(5 * time.Millisecond)
+
+	// This simulates data arriving from a new bridge (fast-reconnecting client).
+	// With the fix, Push should be a no-op (conn is already closed).
+	// Without the fix, this would feed into the dying smux session.
+	conn.Push([]byte("stale encrypted garbage"))
+
+	<-done
+
+	// Verify old conn is closed and new conn is installed.
+	s.sessMu.RLock()
+	newConn := s.conn
+	newSess := s.session
+	s.sessMu.RUnlock()
+
+	if newConn == conn {
+		t.Fatal("reinstallSession did not swap conn")
+	}
+	if newSess == sess {
+		t.Fatal("reinstallSession did not swap session")
+	}
+	if newConn == nil || newSess == nil {
+		t.Fatal("reinstallSession left nil conn or session")
+	}
+	_ = newSess.Close()
+	_ = newConn.Close()
+}

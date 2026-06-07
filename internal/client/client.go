@@ -336,6 +336,16 @@ func (c *Client) handleReconnect(ctx context.Context, cfg Config, cancel context
 	logger.Infof("client reconnect reason=%s - tearing down smux session", reason)
 	c.resetLinkPeer()
 
+	// Close the old muxconn immediately so any in-flight Push from data
+	// arriving on the new bridge is discarded. Without this, the server
+	// side that reconnected faster can push frames into our old muxconn,
+	// corrupting the dying smux session.
+	c.sessMu.RLock()
+	if c.conn != nil {
+		_ = c.conn.Close()
+	}
+	c.sessMu.RUnlock()
+
 	// Install a fresh muxconn immediately so onData never hits nil while
 	// the old session is being torn down. tryReopenSession will swap it
 	// again with its own conn on each attempt.
@@ -345,7 +355,6 @@ func (c *Client) handleReconnect(ctx context.Context, cfg Config, cancel context
 	oldControl := c.controlStrm
 	oldControlStop := c.controlStop
 	oldSess := c.session
-	oldConn := c.conn
 	c.conn = newConn
 	c.session = nil
 	c.controlStrm = nil
@@ -358,9 +367,6 @@ func (c *Client) handleReconnect(ctx context.Context, cfg Config, cancel context
 	}
 	if oldSess != nil {
 		_ = oldSess.Close()
-	}
-	if oldConn != nil {
-		_ = oldConn.Close()
 	}
 	if oldControl != nil {
 		_ = oldControl.Close()

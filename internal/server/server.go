@@ -328,6 +328,19 @@ func (s *Server) reinstallSession(dead *smux.Session) {
 	s.reinstallMu.Lock()
 	defer s.reinstallMu.Unlock()
 
+	// Close the old muxconn immediately so that any in-flight Push calls
+	// (from data arriving on a new bridge before this reinstall completes)
+	// are discarded rather than feeding stale frames into the dying smux
+	// session. Without this, a client that reconnects faster than the
+	// server can push new-session smux frames into the old muxconn,
+	// corrupting the old smux session's stream state (manifests as
+	// "frame too large" on the control stream).
+	s.sessMu.RLock()
+	if s.conn != nil {
+		_ = s.conn.Close()
+	}
+	s.sessMu.RUnlock()
+
 	// Pre-build the replacement so we can swap atomically below.
 	newConn := muxconn.New(s.ln, s.cipher)
 	newSess, err := smux.Server(newConn, smuxConfig(linkMaxPayload(s.ln)))
@@ -346,7 +359,6 @@ func (s *Server) reinstallSession(dead *smux.Session) {
 		return
 	}
 	oldSess := s.session
-	oldConn := s.conn
 	oldControl := s.controlStrm
 	oldControlStop := s.controlStop
 	oldSID := s.sessionID
@@ -363,9 +375,6 @@ func (s *Server) reinstallSession(dead *smux.Session) {
 	}
 	if oldSess != nil {
 		_ = oldSess.Close()
-	}
-	if oldConn != nil {
-		_ = oldConn.Close()
 	}
 	if oldControl != nil {
 		_ = oldControl.Close()
