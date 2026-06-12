@@ -934,7 +934,7 @@ func (s *Session) addVideoOrKeepaliveTrack(pc *webrtc.PeerConnection) (*webrtc.T
 	}
 	kaTrack, err := newKeepaliveTrack()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create keepalive track: %w", err)
 	}
 	if _, addErr := pc.AddTrack(kaTrack); addErr != nil {
 		return nil, fmt.Errorf("add keepalive track: %w", addErr)

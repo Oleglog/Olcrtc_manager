@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/openlibrecommunity/olcrtc/internal/control"
 	"github.com/openlibrecommunity/olcrtc/internal/crypto"
+	"github.com/openlibrecommunity/olcrtc/internal/framing"
 	"github.com/openlibrecommunity/olcrtc/internal/handshake"
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 	"github.com/openlibrecommunity/olcrtc/internal/muxconn"
@@ -587,37 +588,51 @@ func (s *Server) handshakeReady() bool {
 }
 
 func (s *Server) acceptHandshake(ctx context.Context, sess *smux.Session) bool {
-	stream, err := sess.AcceptStream()
-	if err != nil {
-		select {
-		case <-ctx.Done():
+	// Retry loop: after a session reinstall, stale control frames from the
+	// old client smux session may arrive on the new smux session with a
+	// matching stream ID. These raw JSON bytes (e.g. CONTROL_PING) are
+	// interpreted by the framing layer as an impossibly large length prefix,
+	// triggering ErrFrameTooLarge. We close the polluted stream and accept
+	// the next one (the real handshake).
+	const maxStaleRetries = 3
+	for retry := 0; retry <= maxStaleRetries; retry++ {
+		stream, err := sess.AcceptStream()
+		if err != nil {
+			select {
+			case <-ctx.Done():
+				return false
+			default:
+			}
+			logger.Debugf("AcceptStream(control) returned %v - reinstalling session", err)
+			s.resetLinkPeer()
+			s.reinstallSession(sess)
 			return false
-		default:
 		}
-		logger.Debugf("AcceptStream(control) returned %v - reinstalling session", err)
-		s.resetLinkPeer()
-		s.reinstallSession(sess)
-		return false
+		_ = stream.SetDeadline(time.Now().Add(handshake.DefaultTimeout))
+		hello, sid, err := handshake.Server(stream, s.authHook)
+		_ = stream.SetDeadline(time.Time{})
+		if err != nil {
+			_ = stream.Close()
+			if errors.Is(err, framing.ErrFrameTooLarge) && retry < maxStaleRetries {
+				logger.Debugf("handshake: discarding stale stream (attempt %d): %v", retry+1, err)
+				continue
+			}
+			logger.Warnf("handshake failed: %v", err)
+			s.resetLinkPeer()
+			s.reinstallSession(sess)
+			return false
+		}
+		s.sessMu.Lock()
+		s.deviceID = hello.DeviceID
+		s.sessionID = sid
+		s.sessMu.Unlock()
+		s.recordSession(sid)
+		s.onOpen(sid, hello.DeviceID, hello.Claims)
+		logger.Infof("session %s opened (device=%s)", sid, hello.DeviceID)
+		s.startControlLoop(ctx, sess, stream)
+		return true
 	}
-	_ = stream.SetDeadline(time.Now().Add(handshake.DefaultTimeout))
-	hello, sid, err := handshake.Server(stream, s.authHook)
-	_ = stream.SetDeadline(time.Time{})
-	if err != nil {
-		logger.Warnf("handshake failed: %v", err)
-		_ = stream.Close()
-		s.resetLinkPeer()
-		s.reinstallSession(sess)
-		return false
-	}
-	s.sessMu.Lock()
-	s.deviceID = hello.DeviceID
-	s.sessionID = sid
-	s.sessMu.Unlock()
-	s.recordSession(sid)
-	s.onOpen(sid, hello.DeviceID, hello.Claims)
-	logger.Infof("session %s opened (device=%s)", sid, hello.DeviceID)
-	s.startControlLoop(ctx, sess, stream)
-	return true
+	return false
 }
 
 func (s *Server) servePeer(ps *peerSession) {
@@ -647,29 +662,37 @@ func (s *Server) servePeer(ps *peerSession) {
 }
 
 func (s *Server) acceptPeerHandshake(ps *peerSession) bool {
-	stream, err := ps.session.AcceptStream()
-	if err != nil {
-		if !s.stopping() {
-			logger.Debugf("AcceptStream(control peer=%s) returned %v", ps.peerID, err)
+	const maxStaleRetries = 3
+	for retry := 0; retry <= maxStaleRetries; retry++ {
+		stream, err := ps.session.AcceptStream()
+		if err != nil {
+			if !s.stopping() {
+				logger.Debugf("AcceptStream(control peer=%s) returned %v", ps.peerID, err)
+			}
+			return false
 		}
-		return false
+		_ = stream.SetDeadline(time.Now().Add(handshake.DefaultTimeout))
+		hello, sid, err := handshake.Server(stream, s.authHook)
+		_ = stream.SetDeadline(time.Time{})
+		if err != nil {
+			_ = stream.Close()
+			if errors.Is(err, framing.ErrFrameTooLarge) && retry < maxStaleRetries {
+				logger.Debugf("handshake failed peer=%s: discarding stale stream (attempt %d): %v", ps.peerID, retry+1, err)
+				continue
+			}
+			logger.Warnf("handshake failed peer=%s: %v", ps.peerID, err)
+			return false
+		}
+		ps.controlStrm = stream
+		ps.deviceID = hello.DeviceID
+		ps.sessionID = sid
+		s.recordSession(sid)
+		s.onOpen(sid, hello.DeviceID, hello.Claims)
+		logger.Infof("session %s opened (device=%s peer=%s)", sid, hello.DeviceID, ps.peerID)
+		s.startPeerControlLoop(ps, stream)
+		return true
 	}
-	_ = stream.SetDeadline(time.Now().Add(handshake.DefaultTimeout))
-	hello, sid, err := handshake.Server(stream, s.authHook)
-	_ = stream.SetDeadline(time.Time{})
-	if err != nil {
-		logger.Warnf("handshake failed peer=%s: %v", ps.peerID, err)
-		_ = stream.Close()
-		return false
-	}
-	ps.controlStrm = stream
-	ps.deviceID = hello.DeviceID
-	ps.sessionID = sid
-	s.recordSession(sid)
-	s.onOpen(sid, hello.DeviceID, hello.Claims)
-	logger.Infof("session %s opened (device=%s peer=%s)", sid, hello.DeviceID, ps.peerID)
-	s.startPeerControlLoop(ps, stream)
-	return true
+	return false
 }
 
 func (s *Server) resetLinkPeer() {
