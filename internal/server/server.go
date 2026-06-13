@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -66,6 +68,8 @@ type Server struct {
 	controlStop    context.CancelFunc
 	sessMu         sync.RWMutex
 	peerSessions   map[string]*peerSession
+	peersMu        sync.Mutex
+	peerStats      map[string]peerStat
 	reinstallMu    sync.Mutex
 	wg             sync.WaitGroup
 	authHook       handshake.AuthFunc
@@ -86,6 +90,13 @@ type Server struct {
 	health         *runtime.HealthTracker
 	done           chan struct{}
 	doneOnce       sync.Once
+}
+
+// peerStat holds the per-session info needed to report the live peer count
+// and a disconnect summary.
+type peerStat struct {
+	deviceID string
+	openedAt time.Time
 }
 
 type peerSession struct {
@@ -186,6 +197,7 @@ func Run(ctx context.Context, cfg Config) error {
 		liveness:       cfg.Liveness,
 		health:         runtime.NewHealthTracker(cfg.OnHealth),
 		peerSessions:   make(map[string]*peerSession),
+		peerStats:      make(map[string]peerStat),
 		done:           make(chan struct{}),
 	}
 	s.setupResolver()
@@ -294,6 +306,7 @@ func (s *Server) bringUpLink(
 		return fmt.Errorf("failed to connect link: %w", err)
 	}
 	logger.Infof("Link connected")
+	s.logPeersLine()
 
 	s.wg.Add(1)
 	go func() {
@@ -382,6 +395,7 @@ func (s *Server) reinstallSession(dead *smux.Session) {
 	}
 	if oldSID != "" {
 		s.onClose(oldSID, "reconnect")
+		s.trackPeerClose(oldSID, "reconnect")
 	}
 }
 
@@ -414,6 +428,7 @@ func (s *Server) closeSession() {
 	}
 	if oldSID != "" {
 		s.onClose(oldSID, "closed")
+		s.trackPeerClose(oldSID, "closed")
 	}
 	for _, ps := range peers {
 		s.closePeerSession(ps, "closed")
@@ -446,7 +461,54 @@ func (s *Server) closePeerSession(ps *peerSession, reason string) {
 	}
 	if ps.sessionID != "" {
 		s.onClose(ps.sessionID, reason)
+		s.trackPeerClose(ps.sessionID, reason)
 	}
+}
+
+// trackPeerOpen records a newly opened session and logs the live peer summary.
+func (s *Server) trackPeerOpen(sessionID, deviceID string) {
+	s.peersMu.Lock()
+	s.peerStats[sessionID] = peerStat{deviceID: deviceID, openedAt: time.Now()}
+	line := s.peersLineLocked()
+	s.peersMu.Unlock()
+	logger.Infof("peer connected: device=%s session=%s", deviceID, sessionID)
+	logger.Infof("%s", line)
+}
+
+// trackPeerClose drops a closed session and logs a disconnect summary plus the
+// live peer summary.
+func (s *Server) trackPeerClose(sessionID, reason string) {
+	s.peersMu.Lock()
+	st, ok := s.peerStats[sessionID]
+	if !ok {
+		s.peersMu.Unlock()
+		return // session was never tracked (or already removed) - avoid double count
+	}
+	delete(s.peerStats, sessionID)
+	line := s.peersLineLocked()
+	s.peersMu.Unlock()
+	logger.Infof("peer disconnected: device=%s session=%s reason=%s duration=%s",
+		st.deviceID, sessionID, reason, time.Since(st.openedAt).Round(time.Second))
+	logger.Infof("%s", line)
+}
+
+// peersLineLocked builds the "Current peers count: N, Devices: [...]" summary
+// line from the live sessions. The caller must hold peersMu.
+func (s *Server) peersLineLocked() string {
+	devices := make([]string, 0, len(s.peerStats))
+	for _, st := range s.peerStats {
+		devices = append(devices, st.deviceID)
+	}
+	sort.Strings(devices)
+	return fmt.Sprintf("Current peers count: %d, Devices: [%s]", len(s.peerStats), strings.Join(devices, ", "))
+}
+
+// logPeersLine logs the current peer summary line (count + device list).
+func (s *Server) logPeersLine() {
+	s.peersMu.Lock()
+	line := s.peersLineLocked()
+	s.peersMu.Unlock()
+	logger.Infof("%s", line)
 }
 
 func notifyControlClose(stream *smux.Stream) {
@@ -628,6 +690,7 @@ func (s *Server) acceptHandshake(ctx context.Context, sess *smux.Session) bool {
 		s.sessMu.Unlock()
 		s.recordSession(sid)
 		s.onOpen(sid, hello.DeviceID, hello.Claims)
+		s.trackPeerOpen(sid, hello.DeviceID)
 		logger.Infof("session %s opened (device=%s)", sid, hello.DeviceID)
 		s.startControlLoop(ctx, sess, stream)
 		return true
@@ -688,6 +751,7 @@ func (s *Server) acceptPeerHandshake(ps *peerSession) bool {
 		ps.sessionID = sid
 		s.recordSession(sid)
 		s.onOpen(sid, hello.DeviceID, hello.Claims)
+		s.trackPeerOpen(sid, hello.DeviceID)
 		logger.Infof("session %s opened (device=%s peer=%s)", sid, hello.DeviceID, ps.peerID)
 		s.startPeerControlLoop(ps, stream)
 		return true
