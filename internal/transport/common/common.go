@@ -60,6 +60,9 @@ type InboundMessage struct {
 	CRC      uint32
 	frags    [][]byte
 	remain   int
+	// added is the monotonic insertion counter used to evict the oldest
+	// incomplete message when the pending set exceeds its cap.
+	added uint64
 }
 
 // Reassembler holds inbound message state and a sliding window of recently
@@ -70,6 +73,12 @@ type Reassembler struct {
 	inbound   map[uint32]*InboundMessage
 	delivered map[uint32]uint32
 	maxRecent int
+	// maxPending bounds the number of incomplete messages held at once.
+	// Lost fragments (routine on video transports behind an SFU) would
+	// otherwise leak these entries forever; once the cap is hit we evict
+	// the oldest incomplete message to make room.
+	maxPending int
+	addCounter uint64
 }
 
 // NewReassembler creates a reassembler with the given recent-delivery cap.
@@ -80,9 +89,10 @@ func NewReassembler(maxRecent int) *Reassembler {
 		maxRecent = 256
 	}
 	return &Reassembler{
-		inbound:   make(map[uint32]*InboundMessage),
-		delivered: make(map[uint32]uint32),
-		maxRecent: maxRecent,
+		inbound:    make(map[uint32]*InboundMessage),
+		delivered:  make(map[uint32]uint32),
+		maxRecent:  maxRecent,
+		maxPending: maxRecent,
 	}
 }
 
@@ -133,14 +143,43 @@ func (r *Reassembler) upsert(fragment Fragment) *InboundMessage {
 		len(msg.frags) == int(fragment.FragTotal) {
 		return msg
 	}
+	r.addCounter++
 	msg = &InboundMessage{
 		TotalLen: fragment.TotalLen,
 		CRC:      fragment.CRC,
 		frags:    make([][]byte, fragment.FragTotal),
 		remain:   int(fragment.FragTotal),
+		added:    r.addCounter,
 	}
 	r.inbound[fragment.Seq] = msg
+	r.evictOldestIfFull(fragment.Seq)
 	return msg
+}
+
+// evictOldestIfFull drops the oldest incomplete message when the pending set
+// exceeds its cap, preventing unbounded memory growth from messages whose
+// fragments are never fully received. keep is never evicted - it is the entry
+// the current Push is about to populate.
+func (r *Reassembler) evictOldestIfFull(keep uint32) {
+	if r.maxPending <= 0 || len(r.inbound) <= r.maxPending {
+		return
+	}
+	var (
+		oldestSeq   uint32
+		oldestAdded uint64
+		found       bool
+	)
+	for seq, m := range r.inbound {
+		if seq == keep {
+			continue
+		}
+		if !found || m.added < oldestAdded {
+			oldestSeq, oldestAdded, found = seq, m.added, true
+		}
+	}
+	if found {
+		delete(r.inbound, oldestSeq)
+	}
 }
 
 func (r *Reassembler) storeChunk(msg *InboundMessage, fragment Fragment) {
