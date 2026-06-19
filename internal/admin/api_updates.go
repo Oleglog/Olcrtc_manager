@@ -119,7 +119,7 @@ func fetchLatestTag() (tag, url, source string, err error) {
 // API limit.
 func fetchLatestTagViaRedirect() (tagName, releaseURL string, err error) {
 	const url = "https://github.com/Oleglog/Olcrtc_manager/releases/latest"
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return "", "", err
 	}
@@ -161,7 +161,7 @@ func fetchLatestTagViaRedirect() (tagName, releaseURL string, err error) {
 }
 
 func fetchLatestTagViaAPI() (tagName, releaseURL string, err error) {
-	req, err := http.NewRequest("GET", "https://api.github.com/repos/Oleglog/Olcrtc_manager/releases/latest", nil)
+	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/Oleglog/Olcrtc_manager/releases/latest", nil)
 	if err != nil {
 		return "", "", err
 	}
@@ -514,7 +514,7 @@ func fetchReleases() ([]releaseInfo, string, error) {
 
 func fetchReleasesViaAtom() ([]releaseInfo, error) {
 	const url = "https://github.com/Oleglog/Olcrtc_manager/releases.atom"
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -572,7 +572,7 @@ func fetchReleasesViaAtom() ([]releaseInfo, error) {
 }
 
 func fetchReleasesViaAPI() ([]releaseInfo, error) {
-	req, err := http.NewRequest("GET", "https://api.github.com/repos/Oleglog/Olcrtc_manager/releases?per_page=30", nil)
+	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/Oleglog/Olcrtc_manager/releases?per_page=30", nil)
 	if err != nil {
 		return nil, err
 	}

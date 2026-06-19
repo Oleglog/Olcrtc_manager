@@ -438,51 +438,6 @@ func (s *Session) completeJingleSetup(ctx context.Context, jSess *j.Session) err
 	return nil
 }
 
-func (s *Session) joinAndOpenBridge(ctx context.Context) (*j.Session, error) {
-	logger.Infof("jitsi: joining %s/%s as %s …", s.host, s.room, s.name)
-	jSess, err := j.Join(ctx, j.Config{
-		Host:     s.host,
-		Room:     s.room,
-		Nick:     s.name,
-		Debug:    logger.IsVerbose(),
-		Insecure: s.insecure,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("jitsi join: %w", err)
-	}
-	s.logSessionDiagnostics("joined", jSess)
-
-	needBridge := s.onData != nil || s.onPeerData != nil
-	sctpBridge, err := s.decideBridgePath("join", needBridge, jSess)
-	if err != nil {
-		_ = jSess.Close()
-		return nil, err
-	}
-
-	if needBridge && !sctpBridge {
-		if err := s.openBridgeWS(ctx, jSess); err != nil {
-			_ = jSess.Close()
-			return nil, err
-		}
-	}
-
-	if s.shouldNegotiatePC() {
-		if err := s.negotiatePC(ctx, jSess, sctpBridge); err != nil {
-			_ = jSess.Close()
-			return nil, err
-		}
-	}
-
-	if sctpBridge {
-		if err := s.openBridgeSCTP(ctx, jSess); err != nil {
-			_ = jSess.Close()
-			return nil, err
-		}
-	}
-
-	return jSess, nil
-}
-
 func (s *Session) openBridgeWS(ctx context.Context, jSess *j.Session) error {
 	start := time.Now()
 	bctx, bcancel := context.WithTimeout(ctx, bridgeOpenTimeout)
