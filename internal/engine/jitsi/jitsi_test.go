@@ -355,52 +355,6 @@ func TestReconnectEpochAnnounceWithZeroPeerEpochIsAccepted(t *testing.T) {
 	}
 }
 
-func TestRequireTargetedPeerDropsOtherClientBroadcastBeforeLatch(t *testing.T) {
-	var received [][]byte
-	sess, err := New(context.Background(), engine.Config{
-		URL:                 testHost,
-		Extra:               map[string]string{credentialKeyRoom: testRoom},
-		RequireTargetedPeer: true,
-		OnData: func(b []byte) {
-			received = append(received, append([]byte(nil), b...))
-		},
-	})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	defer func() { _ = sess.Close() }()
-
-	js, ok := sess.(*Session)
-	if !ok {
-		t.Fatal("sess is not *Session")
-	}
-	js.localEpoch.Store(0x3333)
-
-	otherClient := makeBridgeFrameForEpoch(t, 0x2222, 0, []byte("CLIENT_HELLO"))
-	js.deliverBridgeMessage(makeBridgeMessageFrom("clientB", map[string]any{rawFieldKey: otherClient}), true)
-	if len(received) != 0 {
-		t.Fatalf("received other client broadcast = %q, want none", received)
-	}
-	if got := js.peerEpoch.Load(); got != 0 {
-		t.Fatalf("peerEpoch after other client broadcast = 0x%08x, want 0", got)
-	}
-	if got := js.peerEndpoint.Load(); got != nil {
-		t.Fatalf("peerEndpoint after other client broadcast = %q, want nil", *got)
-	}
-
-	serverWelcome := makeBridgeFrameForEpoch(t, 0x1111, 0x3333, []byte("SERVER_WELCOME"))
-	js.deliverBridgeMessage(makeBridgeMessageFrom("server", map[string]any{rawFieldKey: serverWelcome}), true)
-	if len(received) != 1 || string(received[0]) != "SERVER_WELCOME" {
-		t.Fatalf("received = %q, want targeted server welcome", received)
-	}
-	if got := js.peerEpoch.Load(); got != 0x1111 {
-		t.Fatalf("peerEpoch = 0x%08x, want server epoch", got)
-	}
-	if got := js.peerEndpoint.Load(); got == nil || *got != "server" {
-		t.Fatalf("peerEndpoint = %v, want server", got)
-	}
-}
-
 func TestDeliverBridgeMessagePeerEpochChangeRequestsReconnect(t *testing.T) {
 	sess, err := New(context.Background(), engine.Config{
 		URL:   testHost,

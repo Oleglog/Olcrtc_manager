@@ -57,11 +57,7 @@ type Config struct {
 	DNSServer  string
 	ProxyAddr  string
 	ProxyPort  int
-	// RequireTargetedPeer asks engines that multiplex room-wide messages to
-	// ignore single-peer broadcast frames until the remote has addressed this
-	// session's local epoch.
-	RequireTargetedPeer bool
-	Refresh             func(ctx context.Context) (Credentials, error)
+	Refresh    func(ctx context.Context) (Credentials, error)
 }
 
 // Session is the engine-level runtime handle. It is shaped to match what

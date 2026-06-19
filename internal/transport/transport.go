@@ -89,12 +89,6 @@ type Config struct {
 	ProxyPort  int
 	Insecure   bool
 
-	// RequireTargetedPeer makes single-peer engines ignore broadcast frames
-	// from unrelated olcrtc clients until a peer sends a frame addressed to
-	// this session's local epoch. Server-side transports leave this disabled
-	// so they can accept initial broadcast CLIENT_HELLO frames.
-	RequireTargetedPeer bool
-
 	// Options carries transport-specific tuning. Type is per-transport-package.
 	Options Options
 
