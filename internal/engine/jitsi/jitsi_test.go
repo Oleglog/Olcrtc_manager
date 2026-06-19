@@ -355,7 +355,12 @@ func TestReconnectEpochAnnounceWithZeroPeerEpochIsAccepted(t *testing.T) {
 	}
 }
 
-func TestDeliverBridgeMessagePeerEpochChangeRequestsReconnect(t *testing.T) {
+// TestDeliverBridgeMessagePeerEpochChangeAcceptsFreshPeer locks in the 1.9.8
+// design (149a521): a changed peer epoch is a deduplication marker, not a
+// reconnect trigger. When the peer emits a fresh epoch, acceptEpochFrame must
+// adopt it in place (peerEpoch updated) without signaling reconnect — the old
+// "request reconnect on epoch change" behavior caused a reconnect ping-pong.
+func TestDeliverBridgeMessagePeerEpochChangeAcceptsFreshPeer(t *testing.T) {
 	sess, err := New(context.Background(), engine.Config{
 		URL:   testHost,
 		Extra: map[string]string{credentialKeyRoom: testRoom},
@@ -384,10 +389,13 @@ func TestDeliverBridgeMessagePeerEpochChangeRequestsReconnect(t *testing.T) {
 	if len(received) != 1 || string(received[0]) != "first" {
 		t.Fatalf("received = %q, want only first payload", received)
 	}
+	if got := js.peerEpoch.Load(); got != 0x2222 {
+		t.Fatalf("peerEpoch = 0x%08x, want fresh epoch 0x2222", got)
+	}
 	select {
 	case <-js.reconnectCh:
-	case <-time.After(time.Second):
-		t.Fatal("peer epoch change did not request reconnect")
+		t.Fatal("peer epoch change must not request reconnect (1.9.8 design)")
+	case <-time.After(100 * time.Millisecond):
 	}
 }
 
