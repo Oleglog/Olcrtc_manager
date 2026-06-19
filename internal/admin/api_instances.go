@@ -344,8 +344,44 @@ func (s *Server) updateInstanceConfig(w http.ResponseWriter, r *http.Request, id
 	}
 
 	envPath := InstanceEnvPath(s.cfg.ConfigDir, id)
-	updates := make(map[string]string)
+	updates := buildInstanceConfigUpdates(req)
 
+	// Validate that wbstream has a non-empty Room ID. WB Stream no longer
+	// auto-creates rooms; the server would otherwise refuse to start with
+	// ErrRoomIDRequired.
+	effective := ReadInstanceEnv(envPath)
+	for k, v := range updates {
+		effective[k] = v
+	}
+	carrier := effective["OLCRTC_CARRIER"]
+	if carrier == "" {
+		carrier = effective["OLCRTC_PROVIDER"]
+	}
+	room := effective["OLCRTC_ROOM_ID"]
+	if carrier == "wbstream" && (room == "" || room == "any") {
+		http.Error(w, "wbstream requires a Room ID — WB Stream no longer auto-creates rooms; create one at https://stream.wb.ru and paste it into Room ID", http.StatusBadRequest)
+		return
+	}
+
+	if err := WriteInstanceEnv(envPath, updates); err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	// Restart service.
+	svc := InstanceService(id)
+	_ = SystemctlRestart(svc)
+
+	writeJSON(w, http.StatusOK, s.buildInstance(id))
+}
+
+// buildInstanceConfigUpdates maps a parsed config request body to the
+// OLCRTC_* env keys WriteInstanceEnv expects. client_id is intentionally NOT
+// accepted from the request body to prevent typos / accidental overrides; it
+// is rotated only via the dedicated /rotate-client-id endpoint and seeded by
+// createInstance / buildInstance lazy-migration.
+func buildInstanceConfigUpdates(req map[string]any) map[string]string {
+	updates := make(map[string]string)
 	if v, ok := req["carrier"].(string); ok {
 		updates["OLCRTC_CARRIER"] = v
 	}
@@ -358,10 +394,6 @@ func (s *Server) updateInstanceConfig(w http.ResponseWriter, r *http.Request, id
 	if v, ok := req["room_id"].(string); ok {
 		updates["OLCRTC_ROOM_ID"] = strings.TrimSpace(v)
 	}
-	// client_id is intentionally NOT accepted from the request body to
-	// prevent typos / accidental overrides. It is rotated only via the
-	// dedicated /rotate-client-id endpoint and seeded by createInstance /
-	// buildInstance lazy-migration.
 	if v, ok := req["dns"].(string); ok {
 		updates["OLCRTC_DNS"] = v
 	}
@@ -399,6 +431,13 @@ func (s *Server) updateInstanceConfig(w http.ResponseWriter, r *http.Request, id
 			updates["OLCRTC_DEBUG"] = ""
 		}
 	}
+	addInstanceTuningUpdates(req, updates)
+	return updates
+}
+
+// addInstanceTuningUpdates handles the numeric VP8/SEI tuning knobs, split out
+// of buildInstanceConfigUpdates to keep each function's branch count low.
+func addInstanceTuningUpdates(req map[string]any, updates map[string]string) {
 	if v, ok := req["vp8_fps"].(string); ok {
 		updates["OLCRTC_VP8_FPS"] = sanitizeUnsignedString(v)
 	}
@@ -423,34 +462,6 @@ func (s *Server) updateInstanceConfig(w http.ResponseWriter, r *http.Request, id
 	if v, ok := req["sei_ack_ms"].(float64); ok {
 		updates["OLCRTC_SEI_ACK"] = fmt.Sprintf("%.0f", v)
 	}
-
-	// Validate that wbstream has a non-empty Room ID. WB Stream no longer
-	// auto-creates rooms; the server would otherwise refuse to start with
-	// ErrRoomIDRequired.
-	effective := ReadInstanceEnv(envPath)
-	for k, v := range updates {
-		effective[k] = v
-	}
-	carrier := effective["OLCRTC_CARRIER"]
-	if carrier == "" {
-		carrier = effective["OLCRTC_PROVIDER"]
-	}
-	room := effective["OLCRTC_ROOM_ID"]
-	if carrier == "wbstream" && (room == "" || room == "any") {
-		http.Error(w, "wbstream requires a Room ID — WB Stream no longer auto-creates rooms; create one at https://stream.wb.ru and paste it into Room ID", http.StatusBadRequest)
-		return
-	}
-
-	if err := WriteInstanceEnv(envPath, updates); err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-
-	// Restart service.
-	svc := InstanceService(id)
-	_ = SystemctlRestart(svc)
-
-	writeJSON(w, http.StatusOK, s.buildInstance(id))
 }
 
 func (s *Server) getInstanceURI(w http.ResponseWriter, id int) {

@@ -773,6 +773,11 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session, sctpBridge 
 			})
 		case webrtc.PeerConnectionStateConnected:
 			failedAt.Store(0)
+		case webrtc.PeerConnectionStateUnknown,
+			webrtc.PeerConnectionStateNew,
+			webrtc.PeerConnectionStateConnecting,
+			webrtc.PeerConnectionStateDisconnected,
+			webrtc.PeerConnectionStateClosed:
 		}
 	})
 
@@ -1029,7 +1034,7 @@ func (s *Session) xmppKeepalive() {
 			}
 			id := conn.NextID()
 			ping := fmt.Sprintf(
-				`<iq type="get" to="%s" id="%s" xmlns="jabber:client"><ping xmlns="urn:xmpp:ping"/></iq>`,
+				`<iq type="get" to=%q id=%q xmlns="jabber:client"><ping xmlns="urn:xmpp:ping"/></iq>`,
 				conn.Host(), id,
 			)
 			if err := conn.Send(ping); err != nil {
@@ -1745,7 +1750,7 @@ func (s *Session) handleReconnectAttempt(ctx context.Context) bool {
 		s.reconnectMu.Lock()
 		failures := s.reconnectCount
 		s.reconnectMu.Unlock()
-		if failures > maxReconnects {
+		if failures >= maxReconnects {
 			s.signalEnded("jitsi reconnect limit reached")
 			return true
 		}

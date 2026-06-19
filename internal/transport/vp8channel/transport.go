@@ -770,7 +770,7 @@ func (p *streamTransport) getOrCreatePeerKCP(epoch uint32) *kcpRuntime {
 	defer p.peersMu.Unlock()
 
 	// Double-check after acquiring write lock.
-	if rt = p.peers[epoch]; rt != nil {
+	if rt := p.peers[epoch]; rt != nil {
 		return rt
 	}
 

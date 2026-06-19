@@ -82,7 +82,9 @@ func (r *sdkRoom) subscribeToVideoTracks() {
 		for _, t := range rp.TrackPublications() {
 			if rpub, ok := t.(*lksdk.RemoteTrackPublication); ok {
 				if rpub.Kind() == lksdk.TrackKindVideo {
-					rpub.SetSubscribed(true)
+					if err := rpub.SetSubscribed(true); err != nil {
+						logger.Debugf("livekit: SetSubscribed(true): %v", err)
+					}
 				}
 			}
 		}
@@ -211,12 +213,16 @@ func (s *Session) connectSession(_ context.Context) error {
 			},
 			OnTrackPublished: func(pub *lksdk.RemoteTrackPublication, _ *lksdk.RemoteParticipant) {
 				if pub.Kind() == lksdk.TrackKindVideo {
-					pub.SetSubscribed(true)
+					if err := pub.SetSubscribed(true); err != nil {
+						logger.Debugf("livekit: SetSubscribed(true): %v", err)
+					}
 				}
 			},
 			OnTrackSubscribed: func(track *webrtc.TrackRemote, pub *lksdk.RemoteTrackPublication, _ *lksdk.RemoteParticipant) {
 				if track.Kind() != webrtc.RTPCodecTypeVideo {
-					pub.SetSubscribed(false)
+					if err := pub.SetSubscribed(false); err != nil {
+						logger.Debugf("livekit: SetSubscribed(false): %v", err)
+					}
 					return
 				}
 				s.videoTrackMu.RLock()
