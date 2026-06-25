@@ -250,8 +250,15 @@ func smuxConfig(maxWirePayload int) *smux.Config {
 	return runtime.SmuxConfig(maxWirePayload)
 }
 
-func linkMaxPayload(tr transport.Transport) int {
-	return runtime.MaxPayload(tr)
+// dataSmuxConfig returns the data-plane smux config for the server's transport,
+// mirroring the client. Control-plane transports (vp8channel) get the relaxed
+// keep-alive window so a legitimately silent carrier (publisher-PC reconnect /
+// SFU renegotiation) is not torn down at the conservative 30s timeout. Keeping
+// this in lockstep with the client avoids the asymmetric teardown where the
+// server drops its peer data session first, surfacing as "closed pipe" on the
+// client and a reconnect storm (issue #95).
+func dataSmuxConfig(tr transport.Transport) *smux.Config {
+	return runtime.SmuxConfigFor(tr)
 }
 
 func (s *Server) bringUpLink(
@@ -318,7 +325,7 @@ func (s *Server) bringUpLink(
 
 func (s *Server) installSession() {
 	conn := muxconn.New(s.ln, s.cipher)
-	sess, err := smux.Server(conn, smuxConfig(linkMaxPayload(s.ln)))
+	sess, err := smux.Server(conn, dataSmuxConfig(s.ln))
 	if err != nil {
 		logger.Warnf("smux server init failed: %v", err)
 		return
@@ -357,7 +364,7 @@ func (s *Server) reinstallSession(dead *smux.Session) {
 
 	// Pre-build the replacement so we can swap atomically below.
 	newConn := muxconn.New(s.ln, s.cipher)
-	newSess, err := smux.Server(newConn, smuxConfig(linkMaxPayload(s.ln)))
+	newSess, err := smux.Server(newConn, dataSmuxConfig(s.ln))
 	if err != nil {
 		logger.Warnf("smux server init failed: %v", err)
 		_ = newConn.Close()
@@ -550,7 +557,7 @@ func (s *Server) getPeerSession(peerID string) *peerSession {
 		return ps
 	}
 	conn := muxconn.NewPeer(s.peerLn, s.cipher, peerID)
-	sess, err := smux.Server(conn, smuxConfig(linkMaxPayload(s.ln)))
+	sess, err := smux.Server(conn, dataSmuxConfig(s.ln))
 	if err != nil {
 		s.sessMu.Unlock()
 		logger.Warnf("smux server init failed for peer %s: %v", peerID, err)

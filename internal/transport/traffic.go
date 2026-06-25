@@ -78,6 +78,14 @@ func (t *trafficTransport) SupportsPeerRouting() bool {
 	return ok && peer.SupportsPeerRouting()
 }
 
+// UseRelaxedLiveness forwards the inner transport's RelaxedLiveness opt-in so
+// the traffic wrapper does not mask a vp8channel control plane from runtime
+// liveness gating.
+func (t *trafficTransport) UseRelaxedLiveness() bool {
+	rl, ok := t.inner.(RelaxedLiveness)
+	return ok && rl.UseRelaxedLiveness()
+}
+
 func (t *trafficTransport) sendWith(send func([]byte) error, data []byte) error {
 	t.sendMu.Lock()
 	defer t.sendMu.Unlock()

@@ -54,6 +54,21 @@ type PeerTransport interface {
 	SupportsPeerRouting() bool
 }
 
+// RelaxedLiveness is implemented by transports whose carrier can legitimately
+// go silent for tens of seconds (vp8channel: KCP batching + SFU publisher-PC
+// renegotiation). Such transports opt into the relaxed smux keep-alive and
+// control-stream liveness windows so a transient silence is not mistaken for a
+// dead link. Conventional carriers (datachannel) do not implement this and keep
+// the conservative defaults so a genuinely dead link is detected promptly.
+//
+// This is the fork-local stand-in for upstream's transport.ControlPlane gate
+// (issue #95): our vp8channel routes its control plane at the muxconn layer
+// rather than implementing ControlPlane, so liveness scoping keys off this
+// narrow marker instead.
+type RelaxedLiveness interface {
+	UseRelaxedLiveness() bool
+}
+
 // Options is a marker for per-transport option structs. Each transport package
 // defines its own Options type (e.g. videochannel.Options) and registers a
 // factory that consumes it via type assertion. A nil Options is valid for

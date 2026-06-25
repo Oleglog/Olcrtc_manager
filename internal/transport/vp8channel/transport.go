@@ -493,6 +493,14 @@ func (p *streamTransport) Features() transport.Features {
 	}
 }
 
+// UseRelaxedLiveness opts vp8channel into the relaxed smux keep-alive and
+// control liveness windows: KCP batching and SFU publisher-PC renegotiation
+// can legitimately go silent for ~25-30s, which must not be mistaken for a
+// dead link (issue #95).
+func (p *streamTransport) UseRelaxedLiveness() bool {
+	return true
+}
+
 func (p *streamTransport) writerLoop() {
 	defer close(p.writerDone)
 

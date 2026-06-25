@@ -84,6 +84,63 @@ func MaxPayload(tr transport.Transport) int {
 	return tr.Features().MaxPayloadSize
 }
 
+// SmuxConfigLong is SmuxConfig with a relaxed keep-alive timeout for transports
+// whose carrier can legitimately go silent for tens of seconds (vp8channel: KCP
+// batching + SFU publisher-PC renegotiation). A tight timeout would tear down
+// the smux session while the carrier is rebuilding itself, forcing an
+// unnecessary second reconnect. Only transports that report IsControlPlane use
+// this; conventional carriers (datachannel) keep the conservative 30s timeout
+// so a genuinely dead link is detected and reconnected promptly.
+func SmuxConfigLong(maxWirePayload int) *smux.Config {
+	cfg := SmuxConfig(maxWirePayload)
+	cfg.KeepAliveTimeout = 120 * time.Second
+	return cfg
+}
+
+// IsControlPlane reports whether the transport opts into the relaxed liveness/
+// keep-alive windows via transport.RelaxedLiveness. vp8channel does; datachannel
+// does not. This is the fork-local stand-in for upstream's transport.ControlPlane
+// gate (issue #95): our vp8channel routes its control plane at the muxconn layer
+// rather than implementing ControlPlane, so the relaxed windows are scoped via a
+// narrow marker instead.
+func IsControlPlane(tr transport.Transport) bool {
+	rl, ok := tr.(transport.RelaxedLiveness)
+	return ok && rl.UseRelaxedLiveness()
+}
+
+// SmuxConfigFor returns the data-plane smux config appropriate for the
+// transport: relaxed keep-alive for control-plane carriers, conservative
+// otherwise.
+func SmuxConfigFor(tr transport.Transport) *smux.Config {
+	maxWirePayload := MaxPayload(tr)
+	if IsControlPlane(tr) {
+		return SmuxConfigLong(maxWirePayload)
+	}
+	return SmuxConfig(maxWirePayload)
+}
+
+// LivenessTimeout returns the control-stream pong timeout for a transport: a
+// relaxed window for control-plane transports (KCP batching + frame pacing can
+// delay control packets under load), and the conservative default for
+// conventional carriers so dead links are detected quickly.
+func LivenessTimeout(tr transport.Transport) time.Duration {
+	if IsControlPlane(tr) {
+		return 45 * time.Second
+	}
+	return control.DefaultTimeout
+}
+
+// ConnectAckTimeout returns the tunnel CONNECT ack read deadline for a
+// transport. Control-plane transports (SFU renegotiation) may take ~30s to
+// start forwarding data frames, so they get a generous window; conventional
+// carriers use the conservative default.
+func ConnectAckTimeout(tr transport.Transport) time.Duration {
+	if IsControlPlane(tr) {
+		return 90 * time.Second
+	}
+	return 15 * time.Second
+}
+
 // HealthTracker holds the live snapshot of one side's control-stream
 // health: last pong time, last RTT, miss counts, reconnect counts.
 // Server and client both embed a HealthTracker to avoid open-coding the

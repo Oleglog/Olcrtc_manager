@@ -216,7 +216,7 @@ func (c *Client) bringUpLink(
 	}
 
 	c.conn = muxconn.New(ln, c.cipher)
-	sess, err := smux.Client(c.conn, smuxConfig(linkMaxPayload(ln)))
+	sess, err := smux.Client(c.conn, runtime.SmuxConfigFor(ln))
 	if err != nil {
 		return fmt.Errorf("smux client: %w", err)
 	}
@@ -322,10 +322,6 @@ func resolveDeviceID(deviceID, path string) (string, error) {
 
 func smuxConfig(maxWirePayload int) *smux.Config {
 	return runtime.SmuxConfig(maxWirePayload)
-}
-
-func linkMaxPayload(tr transport.Transport) int {
-	return runtime.MaxPayload(tr)
 }
 
 func (c *Client) handleReconnect(ctx context.Context, cfg Config, cancel context.CancelFunc, reason string) {
@@ -453,7 +449,7 @@ func (c *Client) tryReopenSession(
 		_ = old.Close()
 	}
 
-	sess, err := smux.Client(conn, smuxConfig(linkMaxPayload(c.ln)))
+	sess, err := smux.Client(conn, runtime.SmuxConfigFor(c.ln))
 	if err != nil {
 		logger.Warnf("smux re-init failed (attempt %d): %v", attempt, err)
 		return false
@@ -487,6 +483,13 @@ func (c *Client) startControlLoop(
 	c.sessMu.Unlock()
 
 	liveness := cfg.Liveness
+	// Control-plane carriers (vp8channel) can legitimately stall control pongs
+	// under KCP batching / SFU renegotiation; relax the pong timeout so a busy
+	// link is not declared dead. Conventional carriers keep the conservative
+	// default (issue #95).
+	if runtime.IsControlPlane(c.ln) && liveness.Timeout <= control.DefaultTimeout {
+		liveness.Timeout = runtime.LivenessTimeout(c.ln)
+	}
 	onPong := liveness.OnPong
 	onMissedPong := liveness.OnMissedPong
 	onUnhealthy := liveness.OnUnhealthy
@@ -683,7 +686,7 @@ func (c *Client) sendConnectRequest(stream *smux.Stream, targetAddr string, targ
 	_ = stream.SetWriteDeadline(time.Time{})
 
 	ack := make([]byte, 1)
-	_ = stream.SetReadDeadline(time.Now().Add(15 * time.Second))
+	_ = stream.SetReadDeadline(time.Now().Add(runtime.ConnectAckTimeout(c.ln)))
 	if _, err := io.ReadFull(stream, ack); err != nil || ack[0] != 0x00 {
 		return fmt.Errorf("sid=%d: %w (read_err=%w ack=%v)", stream.ID(), ErrRemoteNotReady, err, ack)
 	}
