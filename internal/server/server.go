@@ -783,6 +783,13 @@ func (s *Server) startControlLoop(ctx context.Context, sess *smux.Session, strea
 	s.sessMu.Unlock()
 
 	liveness := s.liveness
+	// Control-plane carriers (vp8channel) can legitimately stall control pongs
+	// under KCP batching / SFU renegotiation; relax the pong timeout so a busy
+	// link is not declared dead. Mirrors the client side. Conventional carriers
+	// keep the conservative default (issue #95).
+	if runtime.IsControlPlane(s.ln) && liveness.Timeout <= control.DefaultTimeout {
+		liveness.Timeout = runtime.LivenessTimeout(s.ln)
+	}
 	onPong := liveness.OnPong
 	onMissedPong := liveness.OnMissedPong
 	onUnhealthy := liveness.OnUnhealthy
@@ -841,6 +848,13 @@ func (s *Server) startPeerControlLoop(ps *peerSession, stream *smux.Stream) {
 	ps.controlStop = stop
 
 	liveness := s.liveness
+	// Control-plane carriers (vp8channel) can legitimately stall control pongs
+	// under KCP batching / SFU renegotiation; relax the pong timeout so a busy
+	// link is not declared dead. Mirrors the client side. Conventional carriers
+	// keep the conservative default (issue #95).
+	if runtime.IsControlPlane(s.ln) && liveness.Timeout <= control.DefaultTimeout {
+		liveness.Timeout = runtime.LivenessTimeout(s.ln)
+	}
 	onPong := liveness.OnPong
 	onMissedPong := liveness.OnMissedPong
 	onUnhealthy := liveness.OnUnhealthy
