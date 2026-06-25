@@ -149,12 +149,13 @@ func (s *Session) startBackgroundGoroutines(ctx context.Context, keepAliveCh cha
 
 func (s *Session) onConnectionStateChange(state webrtc.PeerConnectionState) {
 	if !s.closed.Load() && state == webrtc.PeerConnectionStateFailed {
+		logger.Infof("goolom PC failed - queuing reconnect")
 		s.queueReconnect()
 	}
 }
 
 func (s *Session) onSubscriberConnectionStateChange(state webrtc.PeerConnectionState) {
-	logger.Debugf("goolom subscriber state: %s", state.String())
+	logger.Infof("goolom subscriber state: %s", state.String())
 	switch state {
 	case webrtc.PeerConnectionStateConnected:
 		s.subscriberReady.Store(true)
@@ -171,7 +172,7 @@ func (s *Session) onSubscriberConnectionStateChange(state webrtc.PeerConnectionS
 }
 
 func (s *Session) onPublisherConnectionStateChange(state webrtc.PeerConnectionState) {
-	logger.Debugf("goolom publisher state: %s", state.String())
+	logger.Infof("goolom publisher state: %s", state.String())
 	switch state {
 	case webrtc.PeerConnectionStateConnected:
 		s.publisherReady.Store(true)

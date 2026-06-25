@@ -41,6 +41,19 @@ const (
 	inboundQueueSize     = 8192
 	canSendHighWatermark = 90 // percent
 	keepaliveIdlePeriod  = 100 * time.Millisecond
+
+	// peerIdleTimeout bounds how long a server-side peer KCP session survives
+	// with zero inbound frames before the janitor evicts it. A live peer emits
+	// a VP8 keepalive every keepaliveIdlePeriod, so any epoch silent this long
+	// has been abandoned: the client rotated its epoch on carrier reconnect /
+	// ResetPeer and will never return on the old one. Set well above the
+	// relaxed liveness teardown window (~75s) so a peer that legitimately
+	// stalls during SFU renegotiation while keeping its epoch stable is never
+	// reaped mid-recovery. Without eviction every rotation leaks a zombie peer
+	// session (its own KCP runtime + writer pump) and the count grows unbounded
+	// under a reconnect storm.
+	peerIdleTimeout     = 120 * time.Second
+	peerJanitorInterval = 30 * time.Second
 )
 
 var (
@@ -122,9 +135,11 @@ type streamTransport struct {
 
 	// Multi-peer support: when onPeerData is set, each remote epoch gets
 	// its own KCP runtime and data is routed via onPeerData(peerID, ...).
-	peersMu sync.RWMutex
-	peers   map[uint32]*kcpRuntime // epoch → KCP runtime
-	peerOut map[uint32]chan []byte // epoch → outbound queue
+	peersMu  sync.RWMutex
+	peers    map[uint32]*kcpRuntime   // epoch → KCP runtime
+	peerOut  map[uint32]chan []byte   // epoch → outbound queue
+	peerStop map[uint32]chan struct{} // epoch → writer-pump stop signal
+	peerSeen map[uint32]*atomic.Int64 // epoch → last inbound frame (unix nanos)
 }
 
 // New creates a vp8channel transport backed by a carrier engine.
@@ -222,6 +237,8 @@ func newStreamTransport(
 		localEpoch:    randomEpoch(),
 		peers:         make(map[uint32]*kcpRuntime),
 		peerOut:       make(map[uint32]chan []byte),
+		peerStop:      make(map[uint32]chan struct{}),
+		peerSeen:      make(map[uint32]*atomic.Int64),
 	}
 
 	// In single-peer mode, confirm the peer epoch on first successful KCP
@@ -238,6 +255,12 @@ func newStreamTransport(
 		}
 	} else {
 		tr.onData = cfg.OnData
+	}
+
+	// Multi-peer (server) mode accretes a peer KCP session per remote epoch;
+	// reap abandoned ones so a client reconnect storm cannot leak them.
+	if tr.onPeerData != nil {
+		go tr.peerJanitor()
 	}
 
 	return tr
@@ -409,6 +432,8 @@ func (p *streamTransport) Close() error {
 		}
 		p.peers = make(map[uint32]*kcpRuntime)
 		p.peerOut = make(map[uint32]chan []byte)
+		p.peerStop = make(map[uint32]chan struct{})
+		p.peerSeen = make(map[uint32]*atomic.Int64)
 		p.peersMu.Unlock()
 
 		if p.writerUp.Load() {
@@ -767,8 +792,12 @@ func (p *streamTransport) handlePeerFrame(peerEpoch uint32, kcpPayload []byte) {
 }
 
 func (p *streamTransport) getOrCreatePeerKCP(epoch uint32) *kcpRuntime {
+	now := time.Now().UnixNano()
 	p.peersMu.RLock()
 	rt := p.peers[epoch]
+	if seen := p.peerSeen[epoch]; seen != nil {
+		seen.Store(now)
+	}
 	p.peersMu.RUnlock()
 	if rt != nil {
 		return rt
@@ -794,22 +823,29 @@ func (p *streamTransport) getOrCreatePeerKCP(epoch uint32) *kcpRuntime {
 		logger.Warnf("vp8channel: startKCP for peer 0x%08x failed: %v", epoch, err)
 		return nil
 	}
+	stop := make(chan struct{})
+	seen := &atomic.Int64{}
+	seen.Store(now)
 	p.peers[epoch] = rt
 	p.peerOut[epoch] = out
+	p.peerStop[epoch] = stop
+	p.peerSeen[epoch] = seen
 	logger.Infof("vp8channel: peer session created epoch=0x%08x", epoch)
 
 	// Pump outbound frames from this peer's queue into the writer.
-	go p.peerWriterPump(epoch, out)
+	go p.peerWriterPump(stop, out)
 
 	return rt
 }
 
 // peerWriterPump drains a peer's outbound KCP queue and writes frames to the
 // shared video track. Stops when the channel is closed or transport shuts down.
-func (p *streamTransport) peerWriterPump(_ uint32, out chan []byte) {
+func (p *streamTransport) peerWriterPump(stop chan struct{}, out chan []byte) {
 	for {
 		select {
 		case <-p.closeCh:
+			return
+		case <-stop:
 			return
 		case frame, ok := <-out:
 			if !ok {
@@ -821,6 +857,63 @@ func (p *streamTransport) peerWriterPump(_ uint32, out chan []byte) {
 			})
 		}
 	}
+}
+
+// peerJanitor periodically evicts server-side peer KCP sessions that have gone
+// silent. Every client epoch rotation (carrier reconnect / ResetPeer) leaves a
+// zombie peer session — its own KCP runtime and writer pump — that nothing
+// reclaims, so peer count grows without bound under a reconnect storm. Only
+// runs in multi-peer (server) mode; stops when the transport closes.
+func (p *streamTransport) peerJanitor() {
+	t := time.NewTicker(peerJanitorInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-p.closeCh:
+			return
+		case <-t.C:
+			p.evictIdlePeers()
+		}
+	}
+}
+
+func (p *streamTransport) evictIdlePeers() {
+	cutoff := time.Now().UnixNano() - int64(peerIdleTimeout)
+	var dead []uint32
+	p.peersMu.RLock()
+	for epoch, seen := range p.peerSeen {
+		if seen.Load() < cutoff {
+			dead = append(dead, epoch)
+		}
+	}
+	p.peersMu.RUnlock()
+	for _, epoch := range dead {
+		p.evictPeer(epoch)
+	}
+}
+
+// evictPeer tears down a single peer epoch: its KCP runtime, writer pump, and
+// bookkeeping. Closing the KCP runtime unblocks any pending WriteTo via the
+// kcpConn close signal, so the peer's outbound channel never sees another
+// writer and is left for GC rather than closed (avoids a send-on-closed race).
+// Safe to call for an unknown epoch (no-op).
+func (p *streamTransport) evictPeer(epoch uint32) {
+	p.peersMu.Lock()
+	rt := p.peers[epoch]
+	stop := p.peerStop[epoch]
+	delete(p.peers, epoch)
+	delete(p.peerOut, epoch)
+	delete(p.peerStop, epoch)
+	delete(p.peerSeen, epoch)
+	p.peersMu.Unlock()
+	if rt == nil {
+		return
+	}
+	rt.close()
+	if stop != nil {
+		close(stop)
+	}
+	logger.Infof("vp8channel: peer session evicted epoch=0x%08x (idle)", epoch)
 }
 
 func formatPeerID(epoch uint32) string {
