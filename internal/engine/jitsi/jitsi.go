@@ -875,31 +875,36 @@ func (s *Session) rtpKeepalive(pcCtx context.Context, track *webrtc.TrackLocalSt
 	}
 }
 
-// addVideoOrKeepaliveTrack adds the appropriate video m-line when no local
-// tracks are present. For video-receiver paths it adds a recvonly transceiver
-// (so the SDP answer carries a video m-line and JVB sets up a forwarding path);
-// for pure byte-stream paths it adds a sendonly VP8 keepalive track that pumps
-// real RTP to keep the JVB endpoint alive (see rtpKeepalive). AddTrack and
+// addVideoOrKeepaliveTrack adds the video m-line when no local tracks are
+// present. It defaults to a recvonly transceiver so the SDP answer carries a
+// video m-line and JVB sets up a forwarding path (known-good since v1.9.8).
+//
+// The sendonly VP8 keepalive (ba617b5) pumps real RTP to keep the JVB endpoint
+// alive where idle endpoints expire, but a sendonly video m-line stops some
+// JVBs (observed on meet.handyweb.org) from establishing a forwarding path,
+// which stalls ICE/DTLS and times bring-up out at bridgeOpenTimeout. So the
+// keepalive is opt-in via OLCRTC_JITSI_VIDEO_KEEPALIVE and only applies to pure
+// byte-stream sessions; video-receiver paths always use recvonly. AddTrack and
 // AddTransceiverFromKind(video,recvonly) are mutually exclusive in Plan B, so
 // only one of the two is ever added.
 func (s *Session) addVideoOrKeepaliveTrack(pc *webrtc.PeerConnection) (*webrtc.TrackLocalStaticSample, error) {
-	if s.wantsVideoReceive() {
-		if _, err := pc.AddTransceiverFromKind(
-			webrtc.RTPCodecTypeVideo,
-			webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly},
-		); err != nil {
-			return nil, fmt.Errorf("add video recvonly: %w", err)
+	if !s.wantsVideoReceive() && truthy(os.Getenv("OLCRTC_JITSI_VIDEO_KEEPALIVE")) {
+		kaTrack, err := newKeepaliveTrack()
+		if err != nil {
+			return nil, fmt.Errorf("create keepalive track: %w", err)
 		}
-		return nil, nil //nolint:nilnil // nil track signals no keepalive needed
+		if _, addErr := pc.AddTrack(kaTrack); addErr != nil {
+			return nil, fmt.Errorf("add keepalive track: %w", addErr)
+		}
+		return kaTrack, nil
 	}
-	kaTrack, err := newKeepaliveTrack()
-	if err != nil {
-		return nil, fmt.Errorf("create keepalive track: %w", err)
+	if _, err := pc.AddTransceiverFromKind(
+		webrtc.RTPCodecTypeVideo,
+		webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly},
+	); err != nil {
+		return nil, fmt.Errorf("add video recvonly: %w", err)
 	}
-	if _, addErr := pc.AddTrack(kaTrack); addErr != nil {
-		return nil, fmt.Errorf("add keepalive track: %w", addErr)
-	}
-	return kaTrack, nil
+	return nil, nil //nolint:nilnil // nil track signals no keepalive needed
 }
 
 // wantsVideoReceive reports whether the carrier expects to receive remote
