@@ -245,8 +245,18 @@ func (s *Session) publisherTrackDescriptions() []map[string]any {
 	return tracks
 }
 
-func isNonTURNURL(url string) bool {
-	return url != "" && !strings.HasPrefix(url, "turn:") && !strings.HasPrefix(url, "turns:")
+// isICEURL reports whether url is a usable ICE server URL. It keeps every
+// standard ICE scheme - STUN and TURN alike. Earlier code stripped turn:/
+// turns: relays and kept only STUN, which left clients behind symmetric or
+// CGNAT carriers (e.g. mobile Tele2) with no working candidate pair: the
+// server-reflexive path comes up for a few seconds, then ICE consent can no
+// longer be refreshed without a relay and the SFU tears the session down
+// (issue #95). Keeping the advertised TURN relays restores a stable path.
+func isICEURL(url string) bool {
+	return strings.HasPrefix(url, "stun:") ||
+		strings.HasPrefix(url, "stuns:") ||
+		strings.HasPrefix(url, "turn:") ||
+		strings.HasPrefix(url, "turns:")
 }
 
 func parseICEURLs(server map[string]any) []string {
@@ -254,13 +264,13 @@ func parseICEURLs(server map[string]any) []string {
 	switch rawURLs := server["urls"].(type) {
 	case []any:
 		for _, rawURL := range rawURLs {
-			if url, ok := rawURL.(string); ok && isNonTURNURL(url) {
+			if url, ok := rawURL.(string); ok && isICEURL(url) {
 				urls = append(urls, url)
 			}
 		}
 	case []string:
 		for _, url := range rawURLs {
-			if isNonTURNURL(url) {
+			if isICEURL(url) {
 				urls = append(urls, url)
 			}
 		}

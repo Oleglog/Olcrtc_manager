@@ -3,6 +3,7 @@ package goolom
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,6 +14,11 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
+// defaultSTUNURL is the bootstrap STUN server used before the SFU advertises
+// its own ICE servers via serverHello. Yandex Telemost hands back the real
+// STUN/TURN set in rtcConfiguration.
+const defaultSTUNURL = "stun:stun.rtc.yandex.net:3478"
+
 // Connect starts the WebRTC connection process.
 func (s *Session) Connect(ctx context.Context) error {
 	s.closed.Store(false)
@@ -20,7 +26,7 @@ func (s *Session) Connect(ctx context.Context) error {
 
 	config := webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{
-			{URLs: []string{"stun:stun.rtc.yandex.net:3478"}},
+			{URLs: []string{defaultSTUNURL}},
 		},
 		SDPSemantics: webrtc.SDPSemanticsUnifiedPlan,
 	}
@@ -188,6 +194,56 @@ func (s *Session) onPublisherConnectionStateChange(state webrtc.PeerConnectionSt
 	s.onConnectionStateChange(state)
 }
 
+// pcCloseTimeout bounds how long teardown waits for a pion PeerConnection to
+// close. With the advertised TURN relays now retained (issue #95),
+// PeerConnection.Close() tries to free the server-side TURN allocation; if
+// that relay is unreachable pion blocks on allocation retransmissions for
+// tens of seconds. A stalled close must never hold up session teardown or a
+// reconnect, so the close is bounded.
+const pcCloseTimeout = 2 * time.Second
+
+// closePeerConns closes the publisher and subscriber PeerConnections without
+// letting a stuck TURN deallocation block the caller. Each Close runs in its
+// own goroutine; the call returns once both finish or pcCloseTimeout elapses,
+// whichever comes first.
+func (s *Session) closePeerConns() {
+	var wg sync.WaitGroup
+	for _, pc := range []*webrtc.PeerConnection{s.pcPub, s.pcSub} {
+		if pc == nil {
+			continue
+		}
+		wg.Add(1)
+		go func(pc *webrtc.PeerConnection) {
+			defer wg.Done()
+			_ = pc.Close()
+		}(pc)
+	}
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(pcCloseTimeout):
+		logger.Warnf("goolom: peer connection close timed out after %s (stuck TURN dealloc?)", pcCloseTimeout)
+	}
+}
+
+// sleepCtx waits for d or until ctx is cancelled, returning ctx.Err() when the
+// context ends first. It lets the reconnect path bail out promptly during
+// shutdown instead of sleeping through a fixed backoff.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("goolom sleep canceled: %w", ctx.Err())
+	case <-timer.C:
+		return nil
+	}
+}
+
 // Close terminates the session and releases resources.
 func (s *Session) Close() error {
 	alreadyClosing := s.closed.Swap(true)
@@ -214,12 +270,7 @@ func (s *Session) Close() error {
 	if s.dc != nil {
 		_ = s.dc.Close()
 	}
-	if s.pcPub != nil {
-		_ = s.pcPub.Close()
-	}
-	if s.pcSub != nil {
-		_ = s.pcSub.Close()
-	}
+	s.closePeerConns()
 	if s.ws != nil {
 		s.wsMu.Lock()
 		_ = s.ws.WriteControl(websocket.CloseMessage,
@@ -303,18 +354,15 @@ func (s *Session) reconnect(ctx context.Context) error {
 	defer s.reconnecting.Store(false)
 
 	s.sendLeave(uuid.New().String())
-	time.Sleep(500 * time.Millisecond)
+	if err := sleepCtx(ctx, 500*time.Millisecond); err != nil {
+		return err
+	}
 	s.stopSession()
 
 	if s.dc != nil {
 		_ = s.dc.Close()
 	}
-	if s.pcPub != nil {
-		_ = s.pcPub.Close()
-	}
-	if s.pcSub != nil {
-		_ = s.pcSub.Close()
-	}
+	s.closePeerConns()
 	if s.ws != nil {
 		s.wsMu.Lock()
 		_ = s.ws.WriteControl(websocket.CloseMessage,
@@ -324,7 +372,9 @@ func (s *Session) reconnect(ctx context.Context) error {
 		s.wsMu.Unlock()
 	}
 
-	time.Sleep(3 * time.Second)
+	if err := sleepCtx(ctx, 3*time.Second); err != nil {
+		return err
+	}
 	if s.refresh == nil {
 		return ErrNoRefresh
 	}
