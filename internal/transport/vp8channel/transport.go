@@ -42,6 +42,13 @@ const (
 	canSendHighWatermark = 90 // percent
 	keepaliveIdlePeriod  = 100 * time.Millisecond
 
+	// minSampleDuration floors the wall-clock duration passed to WriteSample
+	// (~3 ticks of the 90 kHz VP8 clock) so two back-to-back writes still
+	// advance the track's RTP timestamp by at least one tick — keeping it
+	// strictly monotonic without re-introducing meaningful drift. See
+	// writeTrackSample.
+	minSampleDuration = time.Second / 30000
+
 	// peerIdleTimeout bounds how long a server-side peer KCP session survives
 	// with zero inbound frames before the janitor evicts it. A live peer emits
 	// a VP8 keepalive every keepaliveIdlePeriod, so any epoch silent this long
@@ -118,6 +125,13 @@ type streamTransport struct {
 	frameInterval time.Duration
 	batchSize     int
 	perTickBytes  int
+
+	// writeMu serializes WriteSample across the keepalive writerLoop and every
+	// per-peer writer pump, and guards lastWrite so the shared track's RTP
+	// timestamp advances by real elapsed time rather than by the number of
+	// WriteSample calls. See writeTrackSample.
+	writeMu   sync.Mutex
+	lastWrite time.Time
 
 	// localEpoch is stamped into every outgoing VP8 frame. Explicit
 	// upper-layer resets rotate it so the peer can reset its KCP state too.
@@ -526,6 +540,38 @@ func (p *streamTransport) UseRelaxedLiveness() bool {
 	return true
 }
 
+// writeTrackSample emits one VP8 sample to the shared local track, deriving
+// the sample Duration from wall-clock time elapsed since the previous write.
+//
+// pion advances a track's RTP timestamp by Duration*clockRate per WriteSample,
+// so a fixed Duration makes the RTP clock a function of *call frequency*, not
+// real time: idle keepalives (~10/s) run it slow, and the unpaced per-peer
+// writer pump bursts (one WriteSample per KCP segment) run it fast — racing the
+// timestamp ahead of wall-clock ("into the future"). Telemost's SFU validates
+// RTP/RTCP timestamp progression and silently stops forwarding a track whose
+// clock has drifted, black-holing the tunnel while ICE stays healthy (the
+// server->client direction dies first, the client then rotates its epoch).
+// Using real elapsed time keeps the RTP timestamp linear with wall-clock no
+// matter how often, or from how many goroutines, samples are written.
+func (p *streamTransport) writeTrackSample(data []byte) {
+	p.writeMu.Lock()
+	defer p.writeMu.Unlock()
+
+	dur := p.frameInterval
+	now := time.Now()
+	if !p.lastWrite.IsZero() {
+		if dur = now.Sub(p.lastWrite); dur < minSampleDuration {
+			dur = minSampleDuration
+		}
+	}
+	p.lastWrite = now
+
+	_ = p.track.WriteSample(media.Sample{
+		Data:     data,
+		Duration: dur,
+	})
+}
+
 func (p *streamTransport) writerLoop() {
 	defer close(p.writerDone)
 
@@ -555,10 +601,7 @@ func (p *streamTransport) writerLoop() {
 				sample = hdr[:]
 			}
 
-			_ = p.track.WriteSample(media.Sample{
-				Data:     sample,
-				Duration: p.frameInterval,
-			})
+			p.writeTrackSample(sample)
 		}
 	}
 }
@@ -851,10 +894,7 @@ func (p *streamTransport) peerWriterPump(stop chan struct{}, out chan []byte) {
 			if !ok {
 				return
 			}
-			_ = p.track.WriteSample(media.Sample{
-				Data:     frame,
-				Duration: p.frameInterval,
-			})
+			p.writeTrackSample(frame)
 		}
 	}
 }
