@@ -39,6 +39,33 @@ func TestNormaliseHost(t *testing.T) {
 	}
 }
 
+func TestXMPPDomainTargetsVirtualhost(t *testing.T) {
+	const (
+		xmppVHost = "meet.jitsi"
+		webHost   = "meet.mamba.group"
+	)
+	tests := []struct {
+		name     string
+		jid      string
+		fallback string
+		want     string
+	}{
+		{"web host differs from xmpp domain", "8307a4f4@" + xmppVHost + "/T4i4s0jt", webHost, xmppVHost},
+		{"no resource part", "uuid@" + xmppVHost, webHost, xmppVHost},
+		{"empty jid falls back to host", "", webHost, webHost},
+		{"jid without domain falls back", "node-only", "meet.handyweb.org", "meet.handyweb.org"},
+		{"empty domain falls back", "node@/resource", "meet.small-dm.ru", "meet.small-dm.ru"},
+		{"domain only with resource", "node@" + xmppVHost + "/", "fallback.host", xmppVHost},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := xmppDomain(tt.jid, tt.fallback); got != tt.want {
+				t.Fatalf("xmppDomain(%q, %q) = %q, want %q", tt.jid, tt.fallback, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDecodeRaw(t *testing.T) {
 	const payload = "hello world"
 	encoded := encodeForTest(t, []byte(payload))

@@ -34,6 +34,8 @@ import (
 
 	"github.com/openlibrecommunity/olcrtc/internal/engine"
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
+	"github.com/openlibrecommunity/olcrtc/internal/protect"
+	"github.com/pion/ice/v4"
 	pioninterceptor "github.com/pion/interceptor"
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
@@ -81,6 +83,10 @@ const (
 	// we wait for a peer. Some Jitsi/Prosody deployments expire idle BOSH or
 	// websocket sessions after roughly a minute.
 	xmppKeepaliveInterval = 25 * time.Second
+	// xmppKeepaliveTimeout bounds the IQ result wait. A half-open XMPP
+	// connection can accept writes while no pong ever returns; treating that as
+	// a reconnectable failure avoids waiting for the transport to time out later.
+	xmppKeepaliveTimeout = 15 * time.Second
 	reconnectJoinTimeout  = 30 * time.Second
 )
 
@@ -631,6 +637,19 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session, sctpBridge 
 	settings := webrtc.SettingEngine{}
 	settings.LoggerFactory = logger.NewPionLoggerFactory()
 
+	// When Android provides a socket protector, force Pion to create ICE
+	// sockets through the protected network adapter. Do not fall back to the
+	// default network path if setup fails, otherwise WebRTC traffic can loop
+	// back into the VPN tunnel.
+	if protect.Protector != nil {
+		pnet, perr := protect.NewProtectedNet()
+		if perr != nil {
+			return fmt.Errorf("protected net: %w", perr)
+		}
+		settings.SetNet(pnet)
+		settings.SetICEMulticastDNSMode(ice.MulticastDNSModeDisabled)
+	}
+
 	// pion auto-registers a default interceptor chain (sender reports,
 	// receiver reports, NACK, etc.) when none is supplied. Several of
 	// those probe the DTLS transport on a tick — until DTLS comes up
@@ -993,15 +1012,19 @@ func (s *Session) xmppKeepalive() {
 				continue
 			}
 			id := conn.NextID()
+			// Target the XMPP virtualhost from the bound JID, not necessarily the
+			// public web host. Some Jitsi deployments serve the web UI on one host
+			// while Prosody is bound to another domain; pinging the web host can be
+			// rejected with not-allowed and leave the idle keepalive ineffective.
 			ping := fmt.Sprintf(
 				`<iq type="get" to=%q id=%q xmlns="jabber:client"><ping xmlns="urn:xmpp:ping"/></iq>`,
-				conn.Host(), id,
+				xmppDomain(conn.JID(), conn.Host()), id,
 			)
-			if err := conn.Send(ping); err != nil {
+			if _, err := conn.SendIQWait(ping, id, xmppKeepaliveTimeout); err != nil {
 				if s.closed.Load() {
 					return
 				}
-				logger.Debugf("jitsi: xmpp keepalive send: %v", err)
+				logger.Debugf("jitsi: xmpp keepalive: %v", err)
 				if reason := err.Error(); reason != lastReconnectRequestErr {
 					s.requestReconnect("xmpp keepalive: " + reason)
 					lastReconnectRequestErr = reason
@@ -1011,6 +1034,24 @@ func (s *Session) xmppKeepalive() {
 			lastReconnectRequestErr = ""
 		}
 	}
+}
+
+// xmppDomain extracts the XMPP domain from a bound JID of the form
+// "node@domain/resource". It returns fallback when jid has no domain part, so
+// malformed or empty JIDs degrade to the previous web-host target instead of an
+// empty to-address.
+func xmppDomain(jid, fallback string) string {
+	_, rest, ok := strings.Cut(jid, "@")
+	if !ok || rest == "" {
+		return fallback
+	}
+	if domain, _, found := strings.Cut(rest, "/"); found {
+		rest = domain
+	}
+	if rest == "" {
+		return fallback
+	}
+	return rest
 }
 
 // negotiator is the subset of *peer.Negotiator we need. Defined as an
