@@ -41,6 +41,11 @@ const (
 	inboundQueueSize     = 8192
 	canSendHighWatermark = 90 // percent
 	keepaliveIdlePeriod  = 100 * time.Millisecond
+	// defaultPeerRestartGrace is how long the latched peer must be silent before
+	// a frame from a different epoch is read as a restarted peer/server. A live
+	// peer emits decodable keepalives, so a few missed beats is a useful signal
+	// without waiting for the full relaxed liveness window.
+	defaultPeerRestartGrace = 6 * time.Second
 
 	// minSampleDuration floors the wall-clock duration passed to WriteSample
 	// (~3 ticks of the 90 kHz VP8 clock) so two back-to-back writes still
@@ -140,6 +145,13 @@ type streamTransport struct {
 	epochMu      sync.RWMutex
 	localEpoch   uint32
 	peerEpoch    atomic.Uint32
+
+	// lastPeerFrameNano stamps the most recent frame from the latched peer.
+	// peerRestarting prevents repeated carrier rebuilds while one restart is
+	// already in flight.
+	lastPeerFrameNano atomic.Int64
+	peerRestarting    atomic.Bool
+	peerRestartGrace  time.Duration
 
 	kcp           *kcpRuntime
 	kcpMu         sync.RWMutex
@@ -253,7 +265,8 @@ func newStreamTransport(
 		peers:         make(map[uint32]*kcpRuntime),
 		peerOut:       make(map[uint32]chan []byte),
 		peerStop:      make(map[uint32]chan struct{}),
-		peerSeen:      make(map[uint32]*atomic.Int64),
+		peerSeen:         make(map[uint32]*atomic.Int64),
+		peerRestartGrace: defaultPeerRestartGrace,
 	}
 
 	// In single-peer mode, confirm the peer epoch on first successful KCP
@@ -774,6 +787,8 @@ func (p *streamTransport) readVP8Track(track *webrtc.TrackRemote) {
 func (p *streamTransport) handleFirstPeer(peerEpoch uint32) {
 	p.peerEpoch.Store(peerEpoch)
 	p.peerConfirmed.Store(true)
+	p.lastPeerFrameNano.Store(time.Now().UnixNano())
+	p.peerRestarting.Store(false)
 	logger.Infof("vp8channel: peer latched epoch=0x%08x", peerEpoch)
 }
 
@@ -797,15 +812,16 @@ func (p *streamTransport) handleIncomingFrame(frame []byte) {
 		return
 	}
 
-	// Single-peer mode: latch on first epoch seen, ignore all others.
+	// Single-peer mode: latch on first epoch seen. If the latched peer has
+	// gone silent and a different epoch appears, treat it as a peer/server
+	// restart and rebuild the carrier instead of waiting for liveness timeout.
 	if !p.peerConfirmed.Load() {
 		p.handleFirstPeer(peerEpoch)
 	} else if prev := p.peerEpoch.Load(); prev != peerEpoch {
-		// In a multi-participant room, other clients also publish VP8
-		// tracks. Their epochs differ from our latched peer (the server).
-		// Simply ignore frames that don't match our peer — they belong to
-		// other participants we don't communicate with.
+		p.maybePeerRestart(peerEpoch)
 		return
+	} else {
+		p.lastPeerFrameNano.Store(time.Now().UnixNano())
 	}
 
 	if len(kcpPayload) == 0 {
@@ -817,6 +833,27 @@ func (p *streamTransport) handleIncomingFrame(frame []byte) {
 	if rt != nil {
 		deliverKCPPayload(rt, kcpPayload)
 	}
+}
+
+// maybePeerRestart reads a frame from a non-latched epoch as a peer/server
+// restart once the latched peer has been silent longer than peerRestartGrace.
+// Recovery uses the carrier reconnect path because a restarted server joins
+// the SFU as a fresh participant; a local-only KCP reset on the stale media
+// path can otherwise wait until the relaxed liveness window expires.
+func (p *streamTransport) maybePeerRestart(src uint32) {
+	if p.peerRestartGrace <= 0 {
+		return
+	}
+	last := p.lastPeerFrameNano.Load()
+	if last == 0 || time.Since(time.Unix(0, last)) < p.peerRestartGrace {
+		return
+	}
+	if !p.peerRestarting.CompareAndSwap(false, true) {
+		return
+	}
+	logger.Infof("vp8channel: peer restart detected old=0x%08x new=0x%08x - rebuilding carrier",
+		p.peerEpoch.Load(), src)
+	go p.stream.Reconnect("peer restart")
 }
 
 // handlePeerFrame routes incoming KCP data to a per-peer KCP runtime,

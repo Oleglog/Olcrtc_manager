@@ -5,10 +5,21 @@
 package vp8channel
 
 import (
+	"encoding/binary"
+	"hash/crc32"
 	"net"
 	"sync"
 	"time"
 )
+
+// wireCRCLen is the size of the CRC32 trailer appended to every KCP packet
+// on the wire. KCP is used without FEC/checksum here, while the fake-VP8
+// carrier can still perturb payload bytes. Dropping packets with a bad CRC
+// restores UDP-like semantics below KCP: corrupted packets are lost and KCP
+// retransmits them instead of feeding corrupted bytes into muxconn.
+const wireCRCLen = 4
+
+var wireCRCTable = crc32.MakeTable(crc32.Castagnoli) //nolint:gochecknoglobals // read-only hot-path table
 
 func fakeUDPAddr() *net.UDPAddr {
 	return &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1}
@@ -50,11 +61,21 @@ func newKCPConn(out chan<- []byte, inboundCap int, epochHdr [epochHdrLen]byte) *
 	}
 }
 
-// deliver hands an incoming wire payload to the KCP read loop. Drops on
-// overflow are intentional - KCP will detect the loss via SACK and retransmit.
+// deliver hands an incoming wire payload to the KCP read loop. The trailing
+// CRC32 is verified and stripped first; a mismatch means the carrier corrupted
+// the packet, so we drop it and let KCP retransmit. Drops on overflow are
+// intentional - KCP will detect the loss via SACK and retransmit.
 func (c *kcpConn) deliver(payload []byte) {
-	cp := make([]byte, len(payload))
-	copy(cp, payload)
+	if len(payload) < wireCRCLen {
+		return
+	}
+	body := payload[:len(payload)-wireCRCLen]
+	want := binary.BigEndian.Uint32(payload[len(payload)-wireCRCLen:])
+	if crc32.Checksum(body, wireCRCTable) != want {
+		return
+	}
+	cp := make([]byte, len(body))
+	copy(cp, body)
 	select {
 	case c.in <- cp:
 	case <-c.closed:
@@ -90,9 +111,12 @@ func (c *kcpConn) ReadFrom(p []byte) (int, net.Addr, error) {
 }
 
 func (c *kcpConn) WriteTo(p []byte, _ net.Addr) (int, error) {
-	buf := make([]byte, epochHdrLen+len(p))
+	// Layout: [epoch header][KCP packet][CRC32(KCP packet)]. The receiver
+	// strips the epoch header before deliver(), which verifies and strips CRC.
+	buf := make([]byte, epochHdrLen+len(p)+wireCRCLen)
 	copy(buf, c.epochHdr[:])
 	copy(buf[epochHdrLen:], p)
+	binary.BigEndian.PutUint32(buf[epochHdrLen+len(p):], crc32.Checksum(p, wireCRCTable))
 
 	c.mu.Lock()
 	deadline := c.wDeadline

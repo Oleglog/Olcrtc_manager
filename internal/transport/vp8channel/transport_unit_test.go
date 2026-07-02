@@ -38,8 +38,9 @@ type fakeVideoStream struct {
 	canSend    bool
 	trackAdded bool
 	trackCB    func(*webrtc.TrackRemote, *webrtc.RTPReceiver)
-	reconnect  func()
-	should     func() bool
+	reconnect   func()
+	reconnectCh chan string
+	should      func() bool
 	ended      func(string)
 	watched    bool
 	closed     bool
@@ -56,7 +57,11 @@ func (s *fakeVideoStream) SetEndedCallback(cb func(string))  { s.ended = cb }
 func (s *fakeVideoStream) WatchConnection(context.Context)   { s.watched = true }
 func (s *fakeVideoStream) CanSend() bool                     { return s.canSend }
 func (s *fakeVideoStream) AddTrack(webrtc.TrackLocal) error  { s.trackAdded = true; return nil }
-func (s *fakeVideoStream) Reconnect(string)                  {}
+func (s *fakeVideoStream) Reconnect(reason string) {
+	if s.reconnectCh != nil {
+		s.reconnectCh <- reason
+	}
+}
 func (s *fakeVideoStream) SetTrackHandler(cb func(*webrtc.TrackRemote, *webrtc.RTPReceiver)) {
 	s.trackCB = cb
 }
@@ -272,6 +277,75 @@ func TestResetPeerRestartsKCPAndDrainsOutbound(t *testing.T) {
 	case <-rt.readDone:
 	case <-time.After(time.Second):
 		t.Fatal("old KCP runtime did not stop")
+	}
+}
+
+
+func TestKCPConnCRCVerifiesAndStripsPacket(t *testing.T) {
+	out := make(chan []byte, 1)
+	hdr := buildEpochHeader(bindingToken("client"), 0x01020304)
+	c := newKCPConn(out, 4, hdr)
+
+	pkt := []byte("kcp-packet")
+	n, err := c.WriteTo(pkt, fakeUDPAddr())
+	if err != nil {
+		t.Fatalf("WriteTo error = %v", err)
+	}
+	if n != len(pkt) {
+		t.Fatalf("WriteTo n = %d, want %d", n, len(pkt))
+	}
+
+	wire := <-out
+	if len(wire) != epochHdrLen+len(pkt)+wireCRCLen {
+		t.Fatalf("wire len = %d, want %d", len(wire), epochHdrLen+len(pkt)+wireCRCLen)
+	}
+	c.deliver(wire[epochHdrLen:])
+	buf := make([]byte, 64)
+	gotN, _, err := c.ReadFrom(buf)
+	if err != nil {
+		t.Fatalf("ReadFrom error = %v", err)
+	}
+	if got := string(buf[:gotN]); got != string(pkt) {
+		t.Fatalf("ReadFrom = %q, want %q", got, pkt)
+	}
+
+	corrupt := append([]byte(nil), wire[epochHdrLen:]...)
+	corrupt[0] ^= 0xff
+	c.deliver(corrupt)
+	_ = c.SetReadDeadline(time.Now().Add(10 * time.Millisecond))
+	if _, _, err := c.ReadFrom(buf); err == nil {
+		t.Fatal("ReadFrom after corrupt deliver succeeded, want timeout")
+	}
+}
+
+func TestPeerRestartAfterSilentFreshEpochTriggersCarrierReconnect(t *testing.T) {
+	stream := &fakeVideoStream{canSend: true, reconnectCh: make(chan string, 2)}
+	tr := &streamTransport{
+		stream:           stream,
+		outbound:         make(chan []byte, 16),
+		closeCh:          make(chan struct{}),
+		writerDone:       make(chan struct{}),
+		bindingToken:     bindingToken("client"),
+		localEpoch:       0x100,
+		peerRestartGrace: time.Millisecond,
+	}
+
+	tr.handleFirstPeer(0x200)
+	tr.lastPeerFrameNano.Store(time.Now().Add(-time.Second).UnixNano())
+	tr.maybePeerRestart(0x300)
+	select {
+	case reason := <-stream.reconnectCh:
+		if reason != "peer restart" {
+			t.Fatalf("Reconnect reason = %q, want peer restart", reason)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Reconnect was not called")
+	}
+	tr.maybePeerRestart(0x301)
+	select {
+	case reason := <-stream.reconnectCh:
+		t.Fatalf("Reconnect called again with %q", reason)
+	case <-time.After(10 * time.Millisecond):
 	}
 }
 
