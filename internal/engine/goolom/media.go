@@ -81,6 +81,7 @@ func (s *Session) handleSdpOffer(offer map[string]any, uid string, sendPub bool)
 		if err := s.sendSetSlots(); err != nil {
 			logger.Debugf("setSlots error: %v", err)
 		}
+		s.startSetSlotsWatchdog()
 	}
 
 	if !sendPub {
@@ -183,6 +184,38 @@ func (s *Session) setupICEHandlers() {
 		})
 		s.wsMu.Unlock()
 	})
+}
+
+const (
+	setSlotsWatchdogInterval = 5 * time.Second
+	setSlotsWatchdogRepeats  = 6
+)
+
+func (s *Session) startSetSlotsWatchdog() {
+	if !s.setSlotsWatchdogRun.CompareAndSwap(false, true) {
+		return
+	}
+	sessionCloseCh := s.sessionCloseCh
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		defer s.setSlotsWatchdogRun.Store(false)
+
+		ticker := time.NewTicker(setSlotsWatchdogInterval)
+		defer ticker.Stop()
+		for i := 0; i < setSlotsWatchdogRepeats; i++ {
+			select {
+			case <-s.closeCh:
+				return
+			case <-sessionCloseCh:
+				return
+			case <-ticker.C:
+				if err := s.sendSetSlots(); err != nil {
+					logger.Debugf("setSlots watchdog error: %v", err)
+				}
+			}
+		}
+	}()
 }
 
 func (s *Session) sendSetSlots() error {

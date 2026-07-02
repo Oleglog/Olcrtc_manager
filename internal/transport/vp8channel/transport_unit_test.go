@@ -281,6 +281,77 @@ func TestResetPeerRestartsKCPAndDrainsOutbound(t *testing.T) {
 }
 
 
+
+func TestWaitForPeerReturnsAfterEpochObserved(t *testing.T) {
+	tr := &streamTransport{}
+	done := make(chan error, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	go func() { done <- tr.WaitForPeer(ctx) }()
+
+	select {
+	case err := <-done:
+		t.Fatalf("WaitForPeer returned early: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	tr.peerEpoch.Store(0x1234)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("WaitForPeer error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("WaitForPeer did not return after peer epoch")
+	}
+}
+
+func TestWaitForPeerHonorsContext(t *testing.T) {
+	tr := &streamTransport{}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if err := tr.WaitForPeer(ctx); err == nil {
+		t.Fatal("WaitForPeer succeeded without peer epoch, want context error")
+	}
+}
+
+func TestReorderBufferRestoresSequenceOrder(t *testing.T) {
+	b := newReorderBuffer()
+	if got := b.push(&rtp.Packet{Header: rtp.Header{SequenceNumber: 10}, Payload: []byte("a")}); len(got) != 1 {
+		t.Fatalf("first push delivered %d packets, want 1", len(got))
+	}
+	if got := b.push(&rtp.Packet{Header: rtp.Header{SequenceNumber: 12}, Payload: []byte("c")}); len(got) != 0 {
+		t.Fatalf("gap push delivered %d packets, want 0", len(got))
+	}
+	got := b.push(&rtp.Packet{Header: rtp.Header{SequenceNumber: 11}, Payload: []byte("b")})
+	if len(got) != 2 || got[0].SequenceNumber != 11 || got[1].SequenceNumber != 12 {
+		t.Fatalf("delivered sequence = %+v, want 11,12", got)
+	}
+}
+
+func TestBatchSampleFromUsesProvidedQueue(t *testing.T) {
+	tr := &streamTransport{batchSize: 3}
+	src := make(chan []byte, 2)
+	mkFrame := func(payload string) []byte {
+		hdr := buildEpochHeader(bindingToken("client"), 1)
+		return append(hdr[:], []byte(payload)...)
+	}
+	first := mkFrame("one")
+	src <- mkFrame("two")
+	src <- mkFrame("three")
+
+	sample := tr.batchSampleFrom(src, first, defaultMaxPayloadSize)
+	payload := sample[epochHdrLen:]
+	if !bytes.HasPrefix(payload, kcpBatchMagic[:]) {
+		t.Fatalf("batch payload missing magic: %x", payload)
+	}
+	count := 0
+	splitKCPPayload(payload, func([]byte) { count++ })
+	if count != 3 {
+		t.Fatalf("batched packet count = %d, want 3", count)
+	}
+}
+
 func TestKCPConnCRCVerifiesAndStripsPacket(t *testing.T) {
 	out := make(chan []byte, 1)
 	hdr := buildEpochHeader(bindingToken("client"), 0x01020304)

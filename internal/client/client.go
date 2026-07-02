@@ -216,6 +216,9 @@ func (c *Client) bringUpLink(
 	if err := ln.Connect(ctx); err != nil {
 		return fmt.Errorf("failed to connect link: %w", err)
 	}
+	if err := waitForPeer(ctx, ln); err != nil {
+		return err
+	}
 
 	c.conn = muxconn.New(ln, c.cipher)
 	sess, err := smux.Client(c.conn, runtime.SmuxConfigFor(ln))
@@ -240,6 +243,25 @@ func (c *Client) bringUpLink(
 	c.startControlLoop(ctx, cfg, cancel, control)
 
 	go ln.WatchConnection(ctx)
+	return nil
+}
+
+// peerWaitTimeout bounds how long bringUpLink/tryReopenSession will block
+// waiting for a remote peer before opening smux. This uses the same budget as
+// the handshake path so a missing peer fails quickly instead of hanging before
+// the SOCKS listener is ready.
+const peerWaitTimeout = handshake.DefaultTimeout
+
+func waitForPeer(ctx context.Context, ln transport.Transport) error {
+	waiter, ok := ln.(transport.PeerReadyTransport)
+	if !ok {
+		return nil
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, peerWaitTimeout)
+	defer cancel()
+	if err := waiter.WaitForPeer(waitCtx); err != nil {
+		return fmt.Errorf("wait for peer: %w", err)
+	}
 	return nil
 }
 
@@ -441,6 +463,10 @@ func (c *Client) tryReopenSession(
 	cancel context.CancelFunc,
 	attempt int,
 ) bool {
+	if err := waitForPeer(ctx, c.ln); err != nil {
+		logger.Warnf("wait for peer on reconnect failed (attempt %d): %v", attempt, err)
+		return false
+	}
 	conn := muxconn.New(c.ln, c.cipher)
 
 	c.sessMu.Lock()

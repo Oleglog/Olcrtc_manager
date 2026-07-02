@@ -54,6 +54,14 @@ type PeerTransport interface {
 	SupportsPeerRouting() bool
 }
 
+// PeerReadyTransport is implemented by transports that can tell when the
+// remote peer has been observed. Clients use it before opening smux so the
+// initial SYN does not race ahead of the server bridge and get dropped by the
+// SFU. Transports without this signal are treated as immediately ready.
+type PeerReadyTransport interface {
+	WaitForPeer(ctx context.Context) error
+}
+
 // RelaxedLiveness is implemented by transports whose carrier can legitimately
 // go silent for tens of seconds (vp8channel: KCP batching + SFU publisher-PC
 // renegotiation). Such transports opt into the relaxed smux keep-alive and

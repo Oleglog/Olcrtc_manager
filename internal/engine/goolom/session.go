@@ -126,9 +126,10 @@ type Session struct {
 	videoTrackMu    sync.RWMutex
 	videoTracks     []webrtc.TrackLocal
 	onVideoTrack    func(*webrtc.TrackRemote, *webrtc.RTPReceiver)
-	subscriberReady atomic.Bool
-	publisherReady  atomic.Bool
-	subscriberConn  chan struct{}
+	subscriberReady      atomic.Bool
+	publisherReady       atomic.Bool
+	setSlotsWatchdogRun atomic.Bool
+	subscriberConn       chan struct{}
 	publisherConn   chan struct{}
 	wg              sync.WaitGroup
 	httpClient      *http.Client

@@ -523,6 +523,23 @@ func (p *streamTransport) WatchConnection(ctx context.Context) {
 	p.stream.WatchConnection(ctx)
 }
 
+// WaitForPeer blocks until the remote peer epoch has been observed. Waiting
+// here prevents the initial smux SYN from racing ahead of the server bridge on
+// SFU-backed video transports.
+func (p *streamTransport) WaitForPeer(ctx context.Context) error {
+	const pollInterval = 50 * time.Millisecond
+	for {
+		if p.peerEpoch.Load() != 0 {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(pollInterval):
+		}
+	}
+}
+
 func (p *streamTransport) CanSend() bool {
 	if p.closed.Load() {
 		return false
@@ -593,13 +610,22 @@ func (p *streamTransport) writerLoop() {
 	defer ticker.Stop()
 
 	keepaliveEvery := max(int(keepaliveIdlePeriod/p.frameInterval), 1)
+	forceKeepaliveEvery := max(int((2*time.Second)/p.frameInterval), 1)
 	idleTicks := 0
+	ticksSinceKeepalive := 0
 
 	for {
 		select {
 		case <-p.closeCh:
 			return
 		case <-ticker.C:
+			ticksSinceKeepalive++
+			if ticksSinceKeepalive >= forceKeepaliveEvery {
+				ticksSinceKeepalive = 0
+				hdr := p.epochHeader()
+				p.writeTrackSample(hdr[:])
+			}
+
 			var sample []byte
 			select {
 			case frame := <-p.outbound:
@@ -621,6 +647,10 @@ func (p *streamTransport) writerLoop() {
 }
 
 func (p *streamTransport) batchSample(first []byte, maxBytes int) []byte {
+	return p.batchSampleFrom(p.outbound, first, maxBytes)
+}
+
+func (p *streamTransport) batchSampleFrom(src <-chan []byte, first []byte, maxBytes int) []byte {
 	if maxBytes <= 0 || maxBytes > defaultMaxPayloadSize {
 		maxBytes = defaultMaxPayloadSize
 	}
@@ -635,7 +665,7 @@ func (p *streamTransport) batchSample(first []byte, maxBytes int) []byte {
 
 	for packets := 1; packets < p.batchSize; packets++ {
 		select {
-		case frame := <-p.outbound:
+		case frame := <-src:
 			if len(frame) <= epochHdrLen {
 				continue
 			}
@@ -706,6 +736,64 @@ func (p *streamTransport) drainTrack(track *webrtc.TrackRemote) {
 	}
 }
 
+const reorderWindow = 256
+
+func seqLess(a, b uint16) bool {
+	return (a-b)&0x8000 != 0
+}
+
+type reorderBuffer struct {
+	pkts    map[uint16]*rtp.Packet
+	nextSeq uint16
+	started bool
+}
+
+func newReorderBuffer() *reorderBuffer {
+	return &reorderBuffer{pkts: make(map[uint16]*rtp.Packet, reorderWindow)}
+}
+
+func (b *reorderBuffer) push(pkt *rtp.Packet) []*rtp.Packet {
+	if !b.started {
+		b.started = true
+		b.nextSeq = pkt.SequenceNumber
+	}
+	if seqLess(pkt.SequenceNumber, b.nextSeq) {
+		return nil
+	}
+	cp := &rtp.Packet{Header: pkt.Header}
+	cp.Payload = append([]byte(nil), pkt.Payload...)
+	b.pkts[pkt.SequenceNumber] = cp
+	if len(b.pkts) > reorderWindow {
+		b.skipToOldest()
+	}
+	return b.drain()
+}
+
+func (b *reorderBuffer) drain() []*rtp.Packet {
+	var out []*rtp.Packet
+	for {
+		pkt, ok := b.pkts[b.nextSeq]
+		if !ok {
+			return out
+		}
+		out = append(out, pkt)
+		delete(b.pkts, b.nextSeq)
+		b.nextSeq++
+	}
+}
+
+func (b *reorderBuffer) skipToOldest() {
+	first := true
+	var oldest uint16
+	for seq := range b.pkts {
+		if first || seqLess(seq, oldest) {
+			oldest = seq
+			first = false
+		}
+	}
+	b.nextSeq = oldest
+}
+
 type vp8FrameState struct {
 	vp8Pkt      codecs.VP8Packet
 	frameBuf    []byte
@@ -762,6 +850,7 @@ func (s *vp8FrameState) processRTPPacket(pkt *rtp.Packet) []byte {
 
 func (p *streamTransport) readVP8Track(track *webrtc.TrackRemote) {
 	var state vp8FrameState
+	reorder := newReorderBuffer()
 	buf := make([]byte, rtpBufSize)
 
 	for {
@@ -775,12 +864,13 @@ func (p *streamTransport) readVP8Track(track *webrtc.TrackRemote) {
 			continue
 		}
 
-		frame := state.processRTPPacket(pkt)
-		if frame == nil {
-			continue
+		for _, ordered := range reorder.push(pkt) {
+			frame := state.processRTPPacket(ordered)
+			if frame == nil {
+				continue
+			}
+			p.handleIncomingFrame(frame)
 		}
-
-		p.handleIncomingFrame(frame)
 	}
 }
 
@@ -922,17 +1012,28 @@ func (p *streamTransport) getOrCreatePeerKCP(epoch uint32) *kcpRuntime {
 // peerWriterPump drains a peer's outbound KCP queue and writes frames to the
 // shared video track. Stops when the channel is closed or transport shuts down.
 func (p *streamTransport) peerWriterPump(stop chan struct{}, out chan []byte) {
+	interval := p.frameInterval
+	if interval <= 0 {
+		interval = time.Second / time.Duration(defaultFPS)
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-p.closeCh:
 			return
 		case <-stop:
 			return
-		case frame, ok := <-out:
-			if !ok {
-				return
+		case <-ticker.C:
+			select {
+			case frame, ok := <-out:
+				if !ok {
+					return
+				}
+				sample := p.batchSampleFrom(out, frame, p.perTickBytes)
+				p.writeTrackSample(sample)
+			default:
 			}
-			p.writeTrackSample(frame)
 		}
 	}
 }
