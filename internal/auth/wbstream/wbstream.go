@@ -17,14 +17,22 @@ func (Provider) Engine() string { return "livekit" }
 func (Provider) DefaultServiceURL() string { return "https://stream.wb.ru" }
 
 // Issue runs the WB Stream auth flow and returns LiveKit credentials.
+//
+// When cfg.Token is set it is used as the WB account access token directly,
+// skipping the anonymous guest-register step so the session joins as that
+// account. When cfg.Token is empty the provider registers a guest as before.
 func (Provider) Issue(ctx context.Context, cfg auth.Config) (auth.Credentials, error) {
 	if cfg.RoomURL == "" || cfg.RoomURL == "any" {
 		return auth.Credentials{}, auth.ErrRoomIDRequired
 	}
 
-	accessToken, err := registerGuest(ctx, cfg.Name)
-	if err != nil {
-		return auth.Credentials{}, fmt.Errorf("register guest: %w", err)
+	accessToken := cfg.Token
+	if accessToken == "" {
+		guest, err := registerGuest(ctx, cfg.Name)
+		if err != nil {
+			return auth.Credentials{}, fmt.Errorf("register guest: %w", err)
+		}
+		accessToken = guest
 	}
 
 	roomID := cfg.RoomURL
@@ -45,7 +53,10 @@ func (Provider) Issue(ctx context.Context, cfg auth.Config) (auth.Credentials, e
 	return auth.Credentials{
 		URL:   url,
 		Token: tok.RoomToken,
-		Extra: map[string]string{"roomID": roomID},
+		Extra: map[string]string{
+			"roomID":    roomID,
+			"authToken": accessToken,
+		},
 	}, nil
 }
 

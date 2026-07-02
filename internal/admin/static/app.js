@@ -472,6 +472,9 @@ function renderInstanceCard(inst) {
   if (inst.client_id) {
     meta.appendChild(metaRow('Client ID', inst.client_id, inst.client_id));
   }
+  if (inst.has_auth_token) {
+    meta.appendChild(metaRow('Auth token', 'задан', 'auth.token is configured'));
+  }
   card.appendChild(meta);
 
   // Actions
@@ -1007,11 +1010,14 @@ function showCreateInstanceModal() {
   const transportField = makeSelectField('Транспорт', icon('wifi', 14), 'datachannel', ['datachannel', 'vp8channel', 'seichannel', 'videochannel']);
   const nameField = makeInputField('Имя', icon('tag', 14), 'jitsi_olcrtc', { placeholder: 'имя инстанса' });
   const roomIDField = makeInputField('Room ID', icon('tag', 14), '', { placeholder: 'jitsi: https://meet.small-dm.ru/yourroom · wbstream: создать на stream.wb.ru' });
+  const authTokenField = makeInputField('Auth token', icon('shield', 14), '', { placeholder: 'wbstream account/moderator token, optional' });
+  authTokenField.input.type = 'password';
 
   connGrid.appendChild(carrierField.field);
   connGrid.appendChild(transportField.field);
   connGrid.appendChild(nameField.field);
   connGrid.appendChild(roomIDField.field);
+  connGrid.appendChild(authTokenField.field);
   connectionSec.appendChild(connGrid);
 
   const dcWarn = el('div', 'p-2 mb-3 text-xs rounded border border-red-500/50 bg-red-500/10 text-red-200 hidden');
@@ -1189,6 +1195,7 @@ function showCreateInstanceModal() {
       transport: transportField.input.value,
       name: nameField.input.value,
       room_id: room,
+      auth_token: authTokenField.input.value.trim(),
       vp8_fps: vp8FpsInp.value.trim(),
       vp8_batch: vp8BatchInp.value.trim(),
       dns: dnsField.input.value.trim(),
@@ -1229,6 +1236,8 @@ function showConfigModal(inst) {
   const transportField = makeSelectField('Транспорт', icon('wifi', 14), inst.transport || 'vp8channel', getTransportOptions(inst.carrier || 'jitsi'));
   const nameField = makeInputField('Имя', icon('tag', 14), inst.name || '', { placeholder: 'имя инстанса' });
   const roomIDField = makeInputField('Room ID', icon('tag', 14), inst.room_id || '', { placeholder: 'jitsi: https://meet.small-dm.ru/yourroom · wbstream: создать на stream.wb.ru' });
+  const authTokenField = makeInputField('Auth token', icon('shield', 14), '', { placeholder: inst.has_auth_token ? 'задан, введите новый чтобы заменить' : 'wbstream account/moderator token, optional' });
+  authTokenField.input.type = 'password';
   const clientIDWrap = makeReadonlyWithRotate('Client ID', icon('shield', 14), inst.client_id || '(не задан)', async (rotateBtn) => {
     const ok = await showConfirm({
       title: 'Ротация Client ID?',
@@ -1289,6 +1298,7 @@ function showConfigModal(inst) {
   connGrid.appendChild(transportField.field);
   connGrid.appendChild(nameField.field);
   connGrid.appendChild(roomIDField.field);
+  connGrid.appendChild(authTokenField.field);
   connGrid.appendChild(clientIDWrap.field);
   connectionSec.appendChild(connGrid);
 
@@ -1549,6 +1559,10 @@ function showConfigModal(inst) {
       traffic_min_delay: trafficMinDelayField.input.value.trim(),
       traffic_max_delay: trafficMaxDelayField.input.value.trim(),
     };
+    const authToken = authTokenField.input.value.trim();
+    if (authToken) {
+      body.auth_token = authToken;
+    }
     if (!vp8Block.classList.contains('hidden')) {
       body.vp8_fps = vp8FpsInp.value.trim();
       body.vp8_batch = vp8BatchInp.value.trim();

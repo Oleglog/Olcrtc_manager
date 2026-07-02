@@ -33,6 +33,7 @@ type Instance struct {
 	Transport               string `json:"transport"`
 	RoomID                  string `json:"room_id"`
 	ClientID                string `json:"client_id"`
+	HasAuthToken            bool   `json:"has_auth_token"`
 	Name                    string `json:"name"`
 	Status                  string `json:"status"`
 	Uptime                  string `json:"uptime"`
@@ -223,12 +224,14 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
 	trafficMaxPayloadSize := ""
 	trafficMinDelay := ""
 	trafficMaxDelay := ""
+	authToken := ""
 	if r.Body != nil {
 		var req struct {
 			Carrier                 string `json:"carrier"`
 			Transport               string `json:"transport"`
 			Name                    string `json:"name"`
 			RoomID                  string `json:"room_id"`
+			AuthToken               string `json:"auth_token"`
 			VP8FPS                  any    `json:"vp8_fps"`
 			VP8Batch                any    `json:"vp8_batch"`
 			DNS                     string `json:"dns"`
@@ -251,6 +254,7 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
 				name = req.Name
 			}
 			roomID = req.RoomID
+			authToken = strings.TrimSpace(req.AuthToken)
 			if req.VP8FPS != nil {
 				vp8FPS = sanitizeUnsignedAny(req.VP8FPS)
 			}
@@ -281,6 +285,9 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
 	vals["OLCRTC_NAME"] = name
 	vals["OLCRTC_ROOM_ID"] = strings.TrimSpace(roomID)
 	vals["OLCRTC_CLIENT_ID"] = uuid.NewString()
+	if authToken != "" {
+		vals["OLCRTC_AUTH_TOKEN"] = authToken
+	}
 	vals["OLCRTC_JITSI_BRIDGE_MODE"] = jitsiBridgeMode
 	if jitsiSCTPMaxMessageSize != "" {
 		vals["OLCRTC_JITSI_SCTP_MAX_MESSAGE_SIZE"] = jitsiSCTPMaxMessageSize
@@ -393,6 +400,12 @@ func buildInstanceConfigUpdates(req map[string]any) map[string]string {
 	}
 	if v, ok := req["room_id"].(string); ok {
 		updates["OLCRTC_ROOM_ID"] = strings.TrimSpace(v)
+	}
+	if v, ok := req["auth_token"].(string); ok && strings.TrimSpace(v) != "" {
+		updates["OLCRTC_AUTH_TOKEN"] = strings.TrimSpace(v)
+	}
+	if v, ok := req["clear_auth_token"].(bool); ok && v {
+		updates["OLCRTC_AUTH_TOKEN"] = ""
 	}
 	if v, ok := req["dns"].(string); ok {
 		updates["OLCRTC_DNS"] = v
@@ -664,6 +677,7 @@ func (s *Server) buildInstance(id int) Instance {
 		Transport:             transport,
 		RoomID:                vals["OLCRTC_ROOM_ID"],
 		ClientID:              clientID,
+		HasAuthToken:          strings.TrimSpace(vals["OLCRTC_AUTH_TOKEN"]) != "",
 		Name:                  name,
 		Status:                status,
 		Uptime:                uptime,
@@ -720,6 +734,11 @@ func (s *Server) buildURIWith(vals map[string]string, clientID string) string {
 	}
 	if clientID != "" {
 		uri += "&client_id=" + url.QueryEscape(clientID)
+	}
+	if carrier == "wbstream" {
+		if authToken := strings.TrimSpace(vals["OLCRTC_AUTH_TOKEN"]); authToken != "" {
+			uri += "&auth_token=" + url.QueryEscape(authToken)
+		}
 	}
 	uri += "#" + name
 	return uri

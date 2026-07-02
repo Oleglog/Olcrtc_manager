@@ -138,6 +138,7 @@ type Config struct {
 	Engine           string
 	URL              string
 	Token            string
+	AuthToken        string
 	Liveness         control.Config
 	Traffic          transport.TrafficConfig
 
@@ -272,6 +273,7 @@ func (s *Server) bringUpLink(
 		Engine:     cfg.Engine,
 		URL:        cfg.URL,
 		Token:      cfg.Token,
+		AuthToken:  cfg.AuthToken,
 		ChannelID:  cfg.ChannelID,
 		DeviceID:   "",
 		Name:       names.Generate(),

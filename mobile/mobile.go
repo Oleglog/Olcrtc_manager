@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -79,6 +80,7 @@ var (
 type mobileConfig struct {
 	transport        string
 	dnsServer        string
+	authToken        string
 	vp8FPS           int
 	vp8BatchSize     int
 	livenessInterval time.Duration
@@ -125,6 +127,17 @@ func SetDNS(dnsServer string) {
 	defer mu.Unlock()
 	ensureDefaultConfigLocked()
 	defaults.dnsServer = dnsServer
+}
+
+// SetWBToken sets the pre-issued wbstream account token (auth.token).
+// When set, the session joins as that account instead of an anonymous guest;
+// empty keeps the guest flow. It is especially useful for wbstream datachannel
+// rooms that require an account/moderator token with publish permissions.
+func SetWBToken(token string) {
+	mu.Lock()
+	defer mu.Unlock()
+	ensureDefaultConfigLocked()
+	defaults.authToken = strings.TrimSpace(token)
 }
 
 // SetVP8Options configures vp8channel.
@@ -237,6 +250,7 @@ func Check(
 				DeviceID:  clientID,
 				LocalAddr: fmt.Sprintf("127.0.0.1:%d", socksPort),
 				DNSServer: defaultDNSServer,
+				AuthToken: cfg.authToken,
 				TransportOptions: vp8channel.Options{
 					FPS:       clampAtLeastOne(vp8FPS, 120),
 					BatchSize: clampAtLeastOne(vp8BatchSize, 64),
@@ -327,6 +341,7 @@ func Ping(
 				DeviceID:  clientID,
 				LocalAddr: fmt.Sprintf("127.0.0.1:%d", socksPort),
 				DNSServer: defaultDNSServer,
+				AuthToken: cfg.authToken,
 				TransportOptions: vp8channel.Options{
 					FPS:       clampAtLeastOne(vp8FPS, 120),
 					BatchSize: clampAtLeastOne(vp8BatchSize, 64),
@@ -574,6 +589,7 @@ func startWithConfig(
 				DeviceID:  clientID,
 				LocalAddr: fmt.Sprintf("127.0.0.1:%d", socksPort),
 				DNSServer: cfg.dnsServer,
+				AuthToken: cfg.authToken,
 				SOCKSUser: socksUser,
 				SOCKSPass: socksPass,
 				TransportOptions: vp8channel.Options{

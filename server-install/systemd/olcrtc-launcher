@@ -8,6 +8,8 @@
 # Recognised environment variables:
 #   OLCRTC_CARRIER           required: jitsi | telemost | wbstream
 #   OLCRTC_PROVIDER          deprecated alias for OLCRTC_CARRIER
+#   OLCRTC_AUTH_TOKEN        optional: provider-specific account/access token.
+#                                       For wbstream, joins with this account token instead of guest auth.
 #   OLCRTC_ROOM_ID           required: room ID (for jitsi "any" auto-creates a fresh room)
 #   OLCRTC_CLIENT_ID         advisory: per-instance client identifier issued by the admin
 #                                       UI. Surfaced through the published olcrtc:// URI to
@@ -69,6 +71,15 @@ cat > "$CONFIG_FILE" <<EOF
 mode: srv
 auth:
   provider: ${carrier}
+EOF
+
+if [ -n "${OLCRTC_AUTH_TOKEN:-}" ]; then
+    cat >> "$CONFIG_FILE" <<EOF
+  token: "${OLCRTC_AUTH_TOKEN}"
+EOF
+fi
+
+cat >> "$CONFIG_FILE" <<EOF
 room:
   id: "${room_id}"
 crypto:

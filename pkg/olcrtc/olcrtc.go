@@ -54,8 +54,9 @@ type Config struct {
 	// --- built-in auth mode ---
 	// Auth is the name of a registered auth provider ("jitsi", "telemost", "wbstream").
 	// When set, RoomID is forwarded to the provider as the room reference.
-	Auth   string
-	RoomID string
+	Auth      string
+	RoomID    string
+	AuthToken string // optional provider-specific account/access token
 
 	// --- direct engine mode (Auth == "") ---
 	// Engine selects the SFU protocol ("livekit", "goolom", "jitsi").
@@ -113,6 +114,7 @@ func newWithAuth(ctx context.Context, cfg Config) (*Session, error) {
 	authCfg := auth.Config{
 		RoomURL:   cfg.RoomID,
 		Name:      cfg.Name,
+		Token:     cfg.AuthToken,
 		DNSServer: cfg.DNSServer,
 		ProxyAddr: cfg.ProxyAddr,
 		ProxyPort: cfg.ProxyPort,

@@ -74,6 +74,7 @@ type Config struct {
 	Transport string // datachannel, videochannel, seichannel, vp8channel
 	Carrier   string // jitsi, telemost, wbstream, none
 	RoomURL   string // conference room identifier for the carrier
+	AuthToken string // optional provider-specific account/access token
 
 	// --- direct engine mode (Carrier == "none") ---
 	Engine string // livekit, goolom, jitsi
@@ -126,6 +127,7 @@ func (s *Server) Run(ctx context.Context) error {
 		Engine:           s.cfg.Engine,
 		URL:              s.cfg.URL,
 		Token:            s.cfg.Token,
+		AuthToken:        s.cfg.AuthToken,
 		KeyHex:           s.cfg.KeyHex,
 		DNSServer:        s.cfg.DNSServer,
 		SOCKSProxyAddr:   s.cfg.SOCKSProxyAddr,
