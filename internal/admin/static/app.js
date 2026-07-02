@@ -473,7 +473,7 @@ function renderInstanceCard(inst) {
     meta.appendChild(metaRow('Client ID', inst.client_id, inst.client_id));
   }
   if (inst.has_auth_token) {
-    meta.appendChild(metaRow('Auth token', 'задан', 'auth.token is configured'));
+    meta.appendChild(metaRow('Auth token', 'задан', 'QR не включает токен, вставьте его отдельно в Android профиль при необходимости'));
   }
   card.appendChild(meta);
 

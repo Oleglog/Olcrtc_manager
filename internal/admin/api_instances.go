@@ -735,11 +735,10 @@ func (s *Server) buildURIWith(vals map[string]string, clientID string) string {
 	if clientID != "" {
 		uri += "&client_id=" + url.QueryEscape(clientID)
 	}
-	if carrier == "wbstream" {
-		if authToken := strings.TrimSpace(vals["OLCRTC_AUTH_TOKEN"]); authToken != "" {
-			uri += "&auth_token=" + url.QueryEscape(authToken)
-		}
-	}
+	// Do not embed auth.token into the default URI/QR. WB account tokens are
+	// long enough to make QR codes too dense for reliable scanning, and the URI
+	// already carries the shared key. Configure the token through the Admin UI
+	// and, on Android, paste it into the profile Auth token field when needed.
 	uri += "#" + name
 	return uri
 }
