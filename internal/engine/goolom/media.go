@@ -203,7 +203,7 @@ func (s *Session) startSetSlotsWatchdog() {
 
 		ticker := time.NewTicker(setSlotsWatchdogInterval)
 		defer ticker.Stop()
-		for i := 0; i < setSlotsWatchdogRepeats; i++ {
+		for range setSlotsWatchdogRepeats {
 			select {
 			case <-s.closeCh:
 				return
