@@ -473,7 +473,7 @@ function renderInstanceCard(inst) {
     meta.appendChild(metaRow('Client ID', inst.client_id, inst.client_id));
   }
   if (inst.has_auth_token) {
-    meta.appendChild(metaRow('Auth token', 'задан', 'QR не включает токен, вставьте его отдельно в Android профиль при необходимости'));
+    meta.appendChild(metaRow('Auth token', 'задан', 'QR включает токен для импорта полного профиля'));
   }
   card.appendChild(meta);
 
@@ -489,7 +489,16 @@ function renderInstanceCard(inst) {
   const qrBtn = el('button', 'btn btn-secondary btn-sm');
   qrBtn.setAttribute('aria-label', 'Показать QR-код');
   qrBtn.innerHTML = icon('qr-code') + '<span>QR</span>';
-  qrBtn.onclick = () => showQRModal(inst.uri, inst);
+  qrBtn.onclick = async () => {
+    await withLoading(qrBtn, async () => {
+      try {
+        const res = await api('/instances/' + inst.id + '/qr');
+        showQRModal(res.uri || inst.uri, inst);
+      } catch (e) {
+        showToast('Ошибка QR: ' + e.message, 'error');
+      }
+    });
+  };
   const pingBtn = el('button', 'btn btn-secondary btn-sm');
   pingBtn.setAttribute('aria-label', 'Проверить соединение');
   pingBtn.innerHTML = icon('wifi') + '<span>Пинг</span>';
@@ -938,7 +947,7 @@ function showQRModal(uri, inst) {
       ' Смените транспорт на <b>vp8channel</b> в настройках инстанса.';
     div.appendChild(dcWarn);
   }
-  const qrWrap = el('div', 'qr-wrap flex justify-center mb-3 mx-auto');
+  const qrWrap = el('div', 'qr-wrap flex justify-center mb-3 mx-auto overflow-auto');
   const qrDiv = el('div', '');
   qrWrap.appendChild(qrDiv);
   div.appendChild(qrWrap);
@@ -961,12 +970,14 @@ function showQRModal(uri, inst) {
   closeBtn.onclick = () => closeModal(overlay);
 
   setTimeout(() => {
-    if (!uri || uri.length > 2500) {
+    if (!uri || uri.length > 4000) {
       qrDiv.innerHTML = '<div class="text-red-400 text-xs p-2">URI слишком длинный для QR-кода (' + (uri ? uri.length : 0) + ' символов)</div>';
       return;
     }
     try {
-      new QRCode(qrDiv, { text: uri, width: 280, height: 280, colorDark: '#000000', colorLight: '#ffffff', correctLevel: QRCode.CorrectLevel.M });
+      const qrSize = uri.length > 1200 ? 720 : (uri.length > 650 ? 560 : 320);
+      const correctLevel = uri.length > 650 ? QRCode.CorrectLevel.L : QRCode.CorrectLevel.M;
+      new QRCode(qrDiv, { text: uri, width: qrSize, height: qrSize, colorDark: '#000000', colorLight: '#ffffff', correctLevel });
     } catch (e) {
       qrDiv.innerHTML = '<div class="text-red-400 text-xs p-2">Ошибка генерации QR: ' + e.message + '</div>';
       return;

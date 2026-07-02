@@ -483,8 +483,9 @@ func (s *Server) getInstanceURI(w http.ResponseWriter, id int) {
 }
 
 func (s *Server) getInstanceQR(w http.ResponseWriter, id int) {
-	// Return the URI; client-side JS will generate QR.
-	uri := s.buildURI(id)
+	// Return a QR-oriented URI. Unlike the short copy URI, this may include
+	// auth.token so Android can import a complete wbstream profile from one QR.
+	uri := s.buildURIForQR(id)
 	writeJSON(w, http.StatusOK, map[string]string{"uri": uri})
 }
 
@@ -681,7 +682,7 @@ func (s *Server) buildInstance(id int) Instance {
 		Name:                  name,
 		Status:                status,
 		Uptime:                uptime,
-		URI:                   s.buildURIWith(vals, clientID),
+		URI:                   s.buildURIWith(vals, clientID, false),
 		SocksProxy:            vals["OLCRTC_SOCKS_PROXY"],
 		WarpProxy:             vals["OLCRTC_WARP_PROXY"],
 		DNS:                   vals["OLCRTC_DNS"],
@@ -700,12 +701,19 @@ func (s *Server) buildURI(id int) string {
 	envPath := InstanceEnvPath(s.cfg.ConfigDir, id)
 	vals := ReadInstanceEnv(envPath)
 	clientID := s.ensureClientID(envPath, vals["OLCRTC_CLIENT_ID"])
-	return s.buildURIWith(vals, clientID)
+	return s.buildURIWith(vals, clientID, false)
+}
+
+func (s *Server) buildURIForQR(id int) string {
+	envPath := InstanceEnvPath(s.cfg.ConfigDir, id)
+	vals := ReadInstanceEnv(envPath)
+	clientID := s.ensureClientID(envPath, vals["OLCRTC_CLIENT_ID"])
+	return s.buildURIWith(vals, clientID, true)
 }
 
 // buildURIWith renders the deep-link URI from a pre-loaded env map. It is
 // extracted so buildInstance does not have to read the env file twice.
-func (s *Server) buildURIWith(vals map[string]string, clientID string) string {
+func (s *Server) buildURIWith(vals map[string]string, clientID string, includeAuthToken bool) string {
 	carrier := vals["OLCRTC_CARRIER"]
 	if carrier == "" {
 		carrier = vals["OLCRTC_PROVIDER"]
@@ -735,10 +743,11 @@ func (s *Server) buildURIWith(vals map[string]string, clientID string) string {
 	if clientID != "" {
 		uri += "&client_id=" + url.QueryEscape(clientID)
 	}
-	// Do not embed auth.token into the default URI/QR. WB account tokens are
-	// long enough to make QR codes too dense for reliable scanning, and the URI
-	// already carries the shared key. Configure the token through the Admin UI
-	// and, on Android, paste it into the profile Auth token field when needed.
+	if includeAuthToken && carrier == "wbstream" {
+		if authToken := strings.TrimSpace(vals["OLCRTC_AUTH_TOKEN"]); authToken != "" {
+			uri += "&auth_token=" + url.QueryEscape(authToken)
+		}
+	}
 	uri += "#" + name
 	return uri
 }
