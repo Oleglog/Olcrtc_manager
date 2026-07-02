@@ -2,7 +2,9 @@ package vp8channel
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
+	"hash/crc32"
 	"net"
 	"testing"
 	"time"
@@ -26,11 +28,17 @@ func TestKCPConnReadWriteDeadlinesAndClose(t *testing.T) {
 		t.Fatalf("WriteTo() = (%d, %v), want payload length", n, err)
 	}
 	wire := <-out
-	if !bytes.Equal(wire[:epochHdrLen], hdr[:]) || string(wire[epochHdrLen:]) != "payload" {
+	wireBody := wire[epochHdrLen : len(wire)-wireCRCLen]
+	wireCRC := binary.BigEndian.Uint32(wire[len(wire)-wireCRCLen:])
+	if !bytes.Equal(wire[:epochHdrLen], hdr[:]) || string(wireBody) != "payload" ||
+		crc32.Checksum(wireBody, wireCRCTable) != wireCRC {
 		t.Fatalf("wire packet = %v", wire)
 	}
 
-	conn.deliver([]byte("incoming"))
+	incoming := append([]byte("incoming"), make([]byte, wireCRCLen)...)
+	binary.BigEndian.PutUint32(incoming[len(incoming)-wireCRCLen:],
+		crc32.Checksum([]byte("incoming"), wireCRCTable))
+	conn.deliver(incoming)
 	buf := make([]byte, 64)
 	n, addr, err := conn.ReadFrom(buf)
 	if err != nil || addr == nil || string(buf[:n]) != "incoming" {
