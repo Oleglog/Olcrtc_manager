@@ -55,6 +55,8 @@ https://<VPS-IP>:8443
 - Multi-instance systemd setup.
 - Server subscription endpoint `/sub/<slug>`.
 - QR/URI генерация для Android-клиента.
+- QR-бандлы подписок: один QR создаёт subscription-группу на Android и сразу кладёт в неё текущие профили.
+- Экспериментальные encrypted mirrors для подписок через Yandex Disk API: сервер умеет публиковать зашифрованный mirror-файл, но доступность финальных `*.storage.yandex.net` URL зависит от мобильного оператора.
 - WB Stream `auth.token` для аккаунтного/модераторского доступа.
 - Поддержка Telemost/WB Stream через goolom WebRTC engine.
 - Stabilization fixes: VP8 CRC, peer restart rebuild, WaitForPeer, RTP reorder, keyframe keepalive, RTCP drain, TURN retention.
@@ -71,8 +73,8 @@ https://github.com/Oleglog/Exclave_olcrtc
 Актуальная совместимая пара на момент обновления README:
 
 ```text
-server-v1.9.31+
-olcrtc-2.0.22+
+server-v1.9.35+
+olcrtc-2.0.27+
 ```
 
 Для `vp8channel` важно обновлять сервер и APK вместе: в `server-v1.9.27 / olcrtc-2.0.17` был изменён wire format из-за CRC KCP-пакетов.
@@ -104,7 +106,27 @@ Admin UI умеет создавать публичные subscription URLs:
 https://<domain-or-ip>:8443/sub/<slug>
 ```
 
-Если используется самоподписанный сертификат, в Android-клиенте включи настройку `allowInsecureOnRequest` для обновления подписок.
+Если домен сервера подписок не доступен с мобильной сети до поднятия туннеля, используй **QR подписки** в Admin UI. Такой QR содержит не только ссылку на подписку, но и snapshot текущих `olcrtc://` профилей. Android-клиент создаёт subscription-группу, сохраняет URL и сразу добавляет все профили из QR. Дальше обновление подписки может идти через уже поднятый olcRTC/VPN туннель.
+
+Начиная с `server-v1.9.35` есть экспериментальная поддержка encrypted mirror через Yandex Disk API. Сервер шифрует список профилей AES-256-GCM, загружает JSON на Яндекс Диск и кладёт `mirror_url` + `mirror_key` в QR-бандл. Это безопасно для публичного файла, потому что без ключа mirror не расшифровывается. Практическое ограничение: Яндекс Диск может отдавать файл через временные `*.storage.yandex.net` URL, которые у некоторых операторов недоступны. В таком случае mirror не поможет, используйте QR bootstrap и обновление через туннель, либо прямой CDN/Object Storage mirror, когда он будет доступен.
+
+Пример конфигурации mirror, если `config.yaml` не генерируется launcher-скриптом:
+
+```yaml
+subscription:
+  enabled: true
+  port: 2097
+  db_path: "/var/lib/olcrtc/subscriptions.db"
+  public_url: "https://myolcrtc.mooo.com"
+
+  mirror:
+    enabled: true
+    provider: "yandex_disk"
+    yandex_oauth_token: "YANDEX_OAUTH_TOKEN"
+    yandex_base_path: "/olcrtc/subscriptions"
+```
+
+Если сервер установлен через `olcrtc-launcher`, `/var/lib/olcrtc/config.yaml` может пересоздаваться при рестарте. В этом случае mirror-параметры надо добавлять в источник генерации, например `/etc/olcrtc/env` и launcher-шаблон.
 
 ## WARP / SOCKS
 
