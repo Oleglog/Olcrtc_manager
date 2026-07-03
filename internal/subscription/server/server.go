@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
+	"github.com/openlibrecommunity/olcrtc/internal/subscription/mirror"
 	"github.com/openlibrecommunity/olcrtc/internal/subscription/model"
 	"github.com/openlibrecommunity/olcrtc/internal/subscription/store"
 )
@@ -40,13 +41,18 @@ type Server struct {
 	store    *store.Store
 	port     int
 	apiToken string
+	mirror   *mirror.Manager
 	srv      *http.Server
 }
 
 // New creates a new subscription server. apiToken may be empty to disable
 // bearer-token authentication (localhost-only restriction still applies).
-func New(st *store.Store, port int, apiToken string) *Server {
-	return &Server{store: st, port: port, apiToken: apiToken}
+func New(st *store.Store, port int, apiToken string, mirrorManager ...*mirror.Manager) *Server {
+	var mm *mirror.Manager
+	if len(mirrorManager) > 0 {
+		mm = mirrorManager[0]
+	}
+	return &Server{store: st, port: port, apiToken: apiToken, mirror: mm}
 }
 
 // Start starts the HTTP server and blocks until ctx is cancelled.
@@ -176,6 +182,13 @@ func (s *Server) handleSubscriptionsSlug(w http.ResponseWriter, r *http.Request)
 			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		}
 
+	case len(parts) == 2 && parts[1] == "mirror":
+		if r.Method == http.MethodGet || r.Method == http.MethodPost {
+			s.getMirror(w, r, slug)
+		} else {
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		}
+
 	case len(parts) >= 2 && parts[1] == "instances":
 		if len(parts) == 2 || parts[2] == "" {
 			// /api/subscriptions/{slug}/instances
@@ -195,7 +208,7 @@ func (s *Server) handleSubscriptionsSlug(w http.ResponseWriter, r *http.Request)
 					http.Error(w, "Bad Request: invalid instance id", http.StatusBadRequest)
 					return
 				}
-				s.deleteInstance(w, id)
+				s.deleteInstance(w, id, slug)
 			} else {
 				http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 			}
@@ -243,6 +256,7 @@ func (s *Server) createSubscription(w http.ResponseWriter, r *http.Request) {
 		logger.Errorf("createSubscription: %v", err)
 		return
 	}
+	s.syncMirrorAsync(reqContext(r), sub.Slug)
 	writeJSON(w, http.StatusCreated, sub)
 }
 
@@ -258,6 +272,7 @@ func (s *Server) deleteSubscription(w http.ResponseWriter, r *http.Request, slug
 			logger.Errorf("detachInstances %s: %v", slug, err)
 			return
 		}
+		s.syncMirrorAsync(reqContext(r), slug)
 		writeJSON(w, http.StatusOK, map[string]int64{"detached": n})
 		return
 	}
@@ -310,10 +325,11 @@ func (s *Server) addInstance(w http.ResponseWriter, r *http.Request, slug string
 		logger.Errorf("addInstance %s: %v", slug, err)
 		return
 	}
+	s.syncMirrorAsync(reqContext(r), slug)
 	writeJSON(w, http.StatusCreated, inst)
 }
 
-func (s *Server) deleteInstance(w http.ResponseWriter, id int64) {
+func (s *Server) deleteInstance(w http.ResponseWriter, id int64, slug string) {
 	if err := s.store.DeleteInstance(id); errors.Is(err, store.ErrNotFound) {
 		http.Error(w, "Not Found", http.StatusNotFound)
 		return
@@ -322,6 +338,7 @@ func (s *Server) deleteInstance(w http.ResponseWriter, id int64) {
 		logger.Errorf("deleteInstance %d: %v", id, err)
 		return
 	}
+	s.syncMirrorAsync(context.Background(), slug)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -359,6 +376,61 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]int{"created": created, "skipped": skipped})
+}
+
+
+func (s *Server) getMirror(w http.ResponseWriter, r *http.Request, slug string) {
+	if s.mirror == nil || !s.mirror.Enabled() {
+		http.Error(w, "Mirror disabled", http.StatusNotFound)
+		return
+	}
+	m, err := s.syncMirror(r.Context(), slug)
+	if errors.Is(err, store.ErrNotFound) {
+		http.Error(w, "Not Found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, "Mirror error: "+err.Error(), http.StatusBadGateway)
+		logger.Errorf("syncMirror %s: %v", slug, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, m)
+}
+
+func (s *Server) syncMirrorAsync(ctx context.Context, slug string) {
+	if s.mirror == nil || !s.mirror.Enabled() {
+		return
+	}
+	go func() {
+		bg, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		if _, err := s.syncMirror(bg, slug); err != nil {
+			logger.Warnf("subscription mirror sync failed: slug=%s err=%v", slug, err)
+		}
+	}()
+}
+
+func (s *Server) syncMirror(ctx context.Context, slug string) (*model.Mirror, error) {
+	key, err := s.store.GetOrCreateMirrorKey(slug, mirror.GenerateKey)
+	if err != nil {
+		return nil, err
+	}
+	uris, err := s.store.InstanceURIs(slug)
+	if err != nil {
+		return nil, err
+	}
+	publicURL, err := s.mirror.Publish(ctx, slug, uris, key)
+	if err != nil {
+		return nil, err
+	}
+	return s.store.UpsertMirror(slug, "yandex_disk", publicURL, key)
+}
+
+func reqContext(r *http.Request) context.Context {
+	if r == nil || r.Context() == nil {
+		return context.Background()
+	}
+	return r.Context()
 }
 
 func generateSlug(name string) string {

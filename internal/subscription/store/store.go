@@ -70,6 +70,13 @@ CREATE TABLE IF NOT EXISTS instances (
     label           TEXT,
     created_at      DATETIME NOT NULL
 );
+CREATE TABLE IF NOT EXISTS subscription_mirrors (
+    subscription_id INTEGER PRIMARY KEY REFERENCES subscriptions(id) ON DELETE CASCADE,
+    type            TEXT NOT NULL,
+    public_url      TEXT NOT NULL,
+    key_b64         TEXT NOT NULL,
+    updated_at      DATETIME NOT NULL
+);
 `
 	_, err := db.Exec(schema)
 	if err != nil {
@@ -258,6 +265,65 @@ func (s *Store) InstanceURIs(slug string) ([]string, error) {
 		uris = append(uris, uri)
 	}
 	return uris, rows.Err()
+}
+
+
+// GetMirror returns mirror metadata for a subscription.
+func (s *Store) GetMirror(slug string) (*model.Mirror, error) {
+	sub, err := s.GetSubscriptionBySlug(slug)
+	if err != nil {
+		return nil, err
+	}
+	var m model.Mirror
+	err = s.db.QueryRow("SELECT subscription_id, type, public_url, key_b64, updated_at FROM subscription_mirrors WHERE subscription_id = ?", sub.ID).Scan(&m.SubscriptionID, &m.Type, &m.URL, &m.Key, &m.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+// GetOrCreateMirrorKey returns the existing mirror key or creates one with keyGen.
+func (s *Store) GetOrCreateMirrorKey(slug string, keyGen func() (string, error)) (string, error) {
+	sub, err := s.GetSubscriptionBySlug(slug)
+	if err != nil {
+		return "", err
+	}
+	var key string
+	err = s.db.QueryRow("SELECT key_b64 FROM subscription_mirrors WHERE subscription_id = ?", sub.ID).Scan(&key)
+	if err == nil {
+		return key, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+	key, err = keyGen()
+	if err != nil {
+		return "", err
+	}
+	now := time.Now().UTC()
+	_, err = s.db.Exec("INSERT INTO subscription_mirrors (subscription_id, type, public_url, key_b64, updated_at) VALUES (?, ?, ?, ?, ?)", sub.ID, "yandex_disk", "", key, now)
+	if err != nil {
+		return "", err
+	}
+	return key, nil
+}
+
+// UpsertMirror stores the latest public mirror URL.
+func (s *Store) UpsertMirror(slug, typ, publicURL, key string) (*model.Mirror, error) {
+	sub, err := s.GetSubscriptionBySlug(slug)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	_, err = s.db.Exec(`INSERT INTO subscription_mirrors (subscription_id, type, public_url, key_b64, updated_at) VALUES (?, ?, ?, ?, ?)
+ON CONFLICT(subscription_id) DO UPDATE SET type = excluded.type, public_url = excluded.public_url, key_b64 = excluded.key_b64, updated_at = excluded.updated_at`, sub.ID, typ, publicURL, key, now)
+	if err != nil {
+		return nil, err
+	}
+	return &model.Mirror{SubscriptionID: sub.ID, Type: typ, URL: publicURL, Key: key, UpdatedAt: now}, nil
 }
 
 // ── Export / Import ─────────────────────────────────────────────────────────

@@ -181,11 +181,19 @@ type Warp struct {
 }
 
 type Subscription struct {
-	Enabled   bool   `yaml:"enabled"`
-	Port      int    `yaml:"port"`
-	DBPath    string `yaml:"db_path"`
-	APIToken  string `yaml:"api_token"`
-	PublicURL string `yaml:"public_url"`
+	Enabled   bool               `yaml:"enabled"`
+	Port      int                `yaml:"port"`
+	DBPath    string             `yaml:"db_path"`
+	APIToken  string             `yaml:"api_token"`
+	PublicURL string             `yaml:"public_url"`
+	Mirror    SubscriptionMirror `yaml:"mirror"`
+}
+
+type SubscriptionMirror struct {
+	Enabled          bool   `yaml:"enabled"`
+	Provider         string `yaml:"provider"`
+	YandexOAuthToken string `yaml:"yandex_oauth_token"`
+	YandexBasePath   string `yaml:"yandex_base_path"`
 }
 
 // Load parses a YAML file from disk.
@@ -316,6 +324,10 @@ func Apply(dst session.Config, f File) session.Config {
 	dst.SubDBPath = pickString(dst.SubDBPath, f.Subscription.DBPath)
 	dst.SubAPIToken = pickString(dst.SubAPIToken, f.Subscription.APIToken)
 	dst.SubPublicURL = pickString(dst.SubPublicURL, f.Subscription.PublicURL)
+	dst.SubMirrorEnabled = dst.SubMirrorEnabled || f.Subscription.Mirror.Enabled
+	dst.SubMirrorProvider = pickString(dst.SubMirrorProvider, f.Subscription.Mirror.Provider)
+	dst.SubMirrorYandexOAuthToken = pickString(dst.SubMirrorYandexOAuthToken, f.Subscription.Mirror.YandexOAuthToken)
+	dst.SubMirrorYandexBasePath = pickString(dst.SubMirrorYandexBasePath, f.Subscription.Mirror.YandexBasePath)
 	return dst
 }
 

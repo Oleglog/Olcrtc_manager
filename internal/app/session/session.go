@@ -23,6 +23,7 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/transport/seichannel"
 	"github.com/openlibrecommunity/olcrtc/internal/transport/videochannel"
 	"github.com/openlibrecommunity/olcrtc/internal/transport/vp8channel"
+	"github.com/openlibrecommunity/olcrtc/internal/subscription/mirror"
 	subserver "github.com/openlibrecommunity/olcrtc/internal/subscription/server"
 	"github.com/openlibrecommunity/olcrtc/internal/subscription/store"
 )
@@ -211,8 +212,12 @@ type Config struct {
 	SubEnabled            bool
 	SubPort               int
 	SubDBPath             string
-	SubAPIToken           string
-	SubPublicURL          string
+	SubAPIToken                string
+	SubPublicURL               string
+	SubMirrorEnabled           bool
+	SubMirrorProvider          string
+	SubMirrorYandexOAuthToken  string
+	SubMirrorYandexBasePath    string
 }
 
 // RegisterDefaults registers built-in carriers and transports.
@@ -656,7 +661,19 @@ func startSubscriptionServer(ctx context.Context, cfg Config) error {
 	if port == 0 {
 		port = 2096
 	}
-	srv := subserver.New(st, port, cfg.SubAPIToken)
+	var mm *mirror.Manager
+	if cfg.SubMirrorEnabled {
+		mm = mirror.New(mirror.Config{
+			Enabled:    cfg.SubMirrorEnabled,
+			Provider:   cfg.SubMirrorProvider,
+			OAuthToken: cfg.SubMirrorYandexOAuthToken,
+			BasePath:   cfg.SubMirrorYandexBasePath,
+		})
+		if !mm.Enabled() {
+			logger.Warnf("subscription mirror is enabled but not configured; provider=%s", cfg.SubMirrorProvider)
+		}
+	}
+	srv := subserver.New(st, port, cfg.SubAPIToken, mm)
 	go func() {
 		if err := srv.Start(ctx); err != nil {
 			logger.Errorf("subscription server stopped: %v", err)

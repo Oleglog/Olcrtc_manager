@@ -632,7 +632,13 @@ function renderSubRow(sub, instances, sys) {
     await withLoading(qrBtn, async () => {
       try {
         const insts = await api('/subs/' + sub.slug + '/instances');
-        const bundle = buildSubscriptionBundle(sub, subURL, insts);
+        let mirror = null;
+        try {
+          mirror = await api('/subs/' + sub.slug + '/mirror');
+        } catch (e) {
+          console.warn('subscription mirror unavailable:', e.message);
+        }
+        const bundle = buildSubscriptionBundle(sub, subURL, insts, mirror);
         showQRModal(bundle, { subscriptionBundle: true, name: sub.name });
       } catch (e) {
         showToast('Ошибка QR подписки: ' + e.message, 'error');
@@ -666,7 +672,7 @@ function renderSubRow(sub, instances, sys) {
   return row;
 }
 
-function buildSubscriptionBundle(sub, subURL, insts) {
+function buildSubscriptionBundle(sub, subURL, insts, mirror) {
   const profiles = (insts || [])
     .map(inst => inst.raw_uri || inst.uri || '')
     .filter(uri => uri && uri.toLowerCase().startsWith('olcrtc://'));
@@ -677,6 +683,8 @@ function buildSubscriptionBundle(sub, subURL, insts) {
     name: sub.name || 'olcRTC subscription',
     slug: sub.slug,
     url: subURL,
+    mirrors: mirror && mirror.url && mirror.key ? [{ type: mirror.type || 'yandex_disk', url: mirror.url, encrypted: true, alg: 'AES-256-GCM' }] : [],
+    mirror_key: mirror && mirror.key ? mirror.key : '',
     update_when_connected_only: true,
     deduplication: true,
     profiles,

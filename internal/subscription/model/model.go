@@ -12,6 +12,15 @@ type Subscription struct {
 }
 
 // Instance represents a single olcrtc:// connection URI bound to a subscription.
+type Mirror struct {
+	SubscriptionID int64     `json:"subscription_id"`
+	Type           string    `json:"type"`
+	URL            string    `json:"url"`
+	Key            string    `json:"key"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+// Instance represents a single olcrtc:// connection URI bound to a subscription.
 type Instance struct {
 	ID             int64     `json:"id"`
 	SubscriptionID int64     `json:"subscription_id"`
