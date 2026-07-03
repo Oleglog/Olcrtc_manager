@@ -685,6 +685,7 @@ OLCRTC_ADMIN_USER=${ADMIN_USER}
 OLCRTC_ADMIN_PASS=${ADMIN_PASS}
 OLCRTC_ADMIN_DOMAIN=
 OLCRTC_SUB_PORT=$SUB_PORT
+OLCRTC_SUB_PUBLIC_URL=
 EOF
 chmod 0600 "$ADMIN_ENV"
 
@@ -784,6 +785,7 @@ ExecStart=/usr/local/bin/olcrtc-admin \
     -port ${OLCRTC_ADMIN_PORT} \
     -domain "${OLCRTC_ADMIN_DOMAIN}" \
     -sub-port ${OLCRTC_SUB_PORT} \
+    -sub-public-url "${OLCRTC_SUB_PUBLIC_URL}" \
     -tls-dir /var/lib/olcrtc/admin-tls
 Restart=on-failure
 RestartSec=5

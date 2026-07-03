@@ -43,7 +43,7 @@ func (s *Server) handleChangeCredentials(w http.ResponseWriter, r *http.Request)
 	}
 	s.cfg.Username = req.Username
 	s.cfg.Password = req.Password
-	if err := WriteAdminEnv(s.cfg.ConfigDir, s.cfg.Port, s.cfg.Username, s.cfg.Password, s.cfg.Domain, s.cfg.SubPort); err != nil {
+	if err := WriteAdminEnv(s.cfg.ConfigDir, s.cfg.Port, s.cfg.Username, s.cfg.Password, s.cfg.Domain, s.cfg.SubPort, s.cfg.SubPublicURL); err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}

@@ -181,10 +181,11 @@ type Warp struct {
 }
 
 type Subscription struct {
-	Enabled  bool   `yaml:"enabled"`
+	Enabled   bool   `yaml:"enabled"`
 	Port      int    `yaml:"port"`
 	DBPath    string `yaml:"db_path"`
 	APIToken  string `yaml:"api_token"`
+	PublicURL string `yaml:"public_url"`
 }
 
 // Load parses a YAML file from disk.
@@ -314,6 +315,7 @@ func Apply(dst session.Config, f File) session.Config {
 	dst.SubPort = pickInt(dst.SubPort, f.Subscription.Port)
 	dst.SubDBPath = pickString(dst.SubDBPath, f.Subscription.DBPath)
 	dst.SubAPIToken = pickString(dst.SubAPIToken, f.Subscription.APIToken)
+	dst.SubPublicURL = pickString(dst.SubPublicURL, f.Subscription.PublicURL)
 	return dst
 }
 

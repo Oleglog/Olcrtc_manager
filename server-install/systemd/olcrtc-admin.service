@@ -11,6 +11,7 @@ ExecStart=/usr/local/bin/olcrtc-admin \
     -token ${OLCRTC_ADMIN_TOKEN} \
     -domain "${OLCRTC_ADMIN_DOMAIN}" \
     -sub-port ${OLCRTC_SUB_PORT} \
+    -sub-public-url "${OLCRTC_SUB_PUBLIC_URL}" \
     -tls-dir /var/lib/olcrtc/admin-tls
 Restart=on-failure
 RestartSec=5

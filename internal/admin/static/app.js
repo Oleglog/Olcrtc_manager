@@ -608,7 +608,8 @@ function metaRow(label, value, copyValue) {
 
 function renderSubRow(sub, instances, sys) {
   const row = el('div', 'card p-3 flex flex-col md:flex-row md:items-center justify-between gap-2');
-  const subURL = (sys.admin_url || location.origin) + '/sub/' + sub.slug;
+  const subBase = (sys.subscription_public_url || sys.admin_url || location.origin).replace(/\/+$/, '');
+  const subURL = subBase + '/sub/' + sub.slug;
   const left = el('div', 'flex-1 min-w-0');
   left.innerHTML = `
     <div class="font-medium">${sub.name} <span class="text-gray-500">[${sub.slug}]</span></div>
@@ -882,6 +883,44 @@ async function renderSettings(app) {
   logBlock.appendChild(logsWrap);
   card.appendChild(logBlock);
 
+
+  // Subscription public URL
+  const subUrlBlock = el('div', 'pt-2 border-t border-white/10');
+  subUrlBlock.innerHTML = '<h3 class="font-semibold mb-2 inline-flex items-center gap-2">' + icon('rss', 16) + '<span>Домен подписок</span></h3>';
+  subUrlBlock.appendChild(el('div', 'text-sm text-gray-400 mb-2', sys.subscription_public_url ? 'Текущий: ' + sys.subscription_public_url : 'Текущий: используется URL админки'));
+  subUrlBlock.appendChild(el('div', 'text-xs text-gray-500 mb-2', 'Укажите FreeDNS/свой домен, например https://your-domain.mooo.com. Ссылки подписок будут генерироваться от него.'));
+  const subUrlInp = el('input', '');
+  subUrlInp.placeholder = 'https://your-domain.mooo.com';
+  subUrlInp.value = sys.subscription_public_url || '';
+  subUrlInp.setAttribute('aria-label', 'Публичный URL подписок');
+  const subUrlRow = el('div', 'flex gap-2 mt-2 flex-wrap');
+  const subUrlBtn = el('button', 'btn btn-primary');
+  subUrlBtn.textContent = 'Сохранить URL подписок';
+  subUrlBtn.onclick = async () => {
+    await withLoading(subUrlBtn, async () => {
+      try {
+        const res = await api('/system/subscription-url', { method: 'POST', body: JSON.stringify({ public_url: subUrlInp.value }) });
+        showToast(res.message || 'URL подписок сохранён');
+        render();
+      } catch (e) {
+        try { const err = JSON.parse(e.message); showToast(err.message || e.message, 'error'); }
+        catch { showToast(e.message, 'error'); }
+      }
+    });
+  };
+  subUrlRow.appendChild(subUrlBtn);
+  if (sys.subscription_public_url) {
+    const resetSubUrlBtn = el('button', 'btn btn-secondary');
+    resetSubUrlBtn.textContent = 'Сбросить';
+    resetSubUrlBtn.onclick = async () => {
+      await api('/system/subscription-url', { method: 'DELETE' });
+      render();
+    };
+    subUrlRow.appendChild(resetSubUrlBtn);
+  }
+  subUrlBlock.appendChild(subUrlInp);
+  subUrlBlock.appendChild(subUrlRow);
+  card.appendChild(subUrlBlock);
   wrap.appendChild(card);
   app.appendChild(wrap);
 }

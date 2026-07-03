@@ -38,8 +38,15 @@ func ReadAdminPort(configDir string) (int, error) {
 	return strconv.Atoi(s)
 }
 
+// ReadAdminSubPublicURL reads the public subscription base URL from admin.env.
+func ReadAdminSubPublicURL(configDir string) string {
+	f := filepath.Join(configDir, "admin.env")
+	vals := ReadInstanceEnv(f)
+	return vals["OLCRTC_SUB_PUBLIC_URL"]
+}
+
 // WriteAdminEnv writes the admin environment file.
-func WriteAdminEnv(configDir string, port int, username, password, domain string, subPort int) error {
+func WriteAdminEnv(configDir string, port int, username, password, domain string, subPort int, subPublicURL string) error {
 	f := filepath.Join(configDir, "admin.env")
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		return err
@@ -51,6 +58,7 @@ func WriteAdminEnv(configDir string, port int, username, password, domain string
 		fmt.Sprintf("OLCRTC_ADMIN_PASS=%s", password),
 		fmt.Sprintf("OLCRTC_ADMIN_DOMAIN=%s", domain),
 		fmt.Sprintf("OLCRTC_SUB_PORT=%d", subPort),
+		fmt.Sprintf("OLCRTC_SUB_PUBLIC_URL=%s", subPublicURL),
 	}
 	return os.WriteFile(f, []byte(strings.Join(lines, "\n")+"\n"), 0644)
 }

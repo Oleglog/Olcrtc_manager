@@ -22,9 +22,10 @@ type Config struct {
 	Port      int
 	Username  string
 	Password  string
-	Domain    string
-	SubPort   int
-	TLSDir    string
+	Domain       string
+	SubPort      int
+	SubPublicURL string
+	TLSDir       string
 	ACMEEmail string
 	ConfigDir string
 	PublicIP  string
@@ -72,6 +73,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/system/status", s.withAuth(s.withCORS(s.handleSystemStatus)))
 	s.mux.HandleFunc("/api/system/logs/", s.withAuth(s.withCORS(s.handleSystemLogs)))
 	s.mux.HandleFunc("/api/system/domain", s.withAuth(s.withCORS(s.handleSystemDomain)))
+	s.mux.HandleFunc("/api/system/subscription-url", s.withAuth(s.withCORS(s.handleSystemSubscriptionURL)))
 	s.mux.HandleFunc("/api/system/ports", s.withAuth(s.withCORS(s.handleSystemPorts)))
 	s.mux.HandleFunc("/api/system/check-updates", s.withAuth(s.withCORS(s.handleCheckUpdates)))
 	s.mux.HandleFunc("/api/system/releases", s.withAuth(s.withCORS(s.handleListReleases)))

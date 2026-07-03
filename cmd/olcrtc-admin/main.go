@@ -19,8 +19,9 @@ func main() {
 	var (
 		port      = flag.Int("port", 0, "HTTPS port (0 = auto)")
 		domain    = flag.String("domain", "", "Domain for Let's Encrypt (empty = self-signed)")
-		subPort   = flag.Int("sub-port", 2096, "Subscription API port for proxying")
-		tlsDir    = flag.String("tls-dir", "/var/lib/olcrtc/admin-tls", "TLS certificates directory")
+		subPort      = flag.Int("sub-port", 2096, "Subscription API port for proxying")
+		subPublicURL = flag.String("sub-public-url", "", "Public base URL for subscriptions, e.g. https://sub.example.com")
+		tlsDir       = flag.String("tls-dir", "/var/lib/olcrtc/admin-tls", "TLS certificates directory")
 		acmeEmail = flag.String("acme-email", "", "Email for Let's Encrypt account")
 		configDir = flag.String("config-dir", "/etc/olcrtc", "Directory with instance env files")
 		showCreds = flag.Bool("show-credentials", false, "Show admin login credentials and exit")
@@ -28,6 +29,10 @@ func main() {
 	flag.Parse()
 
 	*domain = strings.Trim(*domain, `"' `)
+	*subPublicURL = strings.Trim(*subPublicURL, `"' `)
+	if *subPublicURL == "" {
+		*subPublicURL = admin.ReadAdminSubPublicURL(*configDir)
+	}
 
 	if *showCreds {
 		u, p, err := admin.ReadAdminCredentials(*configDir)
@@ -43,7 +48,7 @@ func main() {
 	if err != nil || username == "" || password == "" {
 		username = "admin"
 		password = "admin"
-		if err := admin.WriteAdminEnv(*configDir, 0, username, password, *domain, *subPort); err != nil {
+		if err := admin.WriteAdminEnv(*configDir, 0, username, password, *domain, *subPort, *subPublicURL); err != nil {
 			log.Fatalf("Failed to write admin.env: %v", err)
 		}
 	}
@@ -58,7 +63,7 @@ func main() {
 				log.Fatalf("Failed to find free port: %v", err)
 			}
 			*port = p
-			if err := admin.WriteAdminEnv(*configDir, *port, username, password, *domain, *subPort); err != nil {
+			if err := admin.WriteAdminEnv(*configDir, *port, username, password, *domain, *subPort, *subPublicURL); err != nil {
 				log.Fatalf("Failed to save admin.env: %v", err)
 			}
 		}
@@ -70,9 +75,10 @@ func main() {
 		Port:      *port,
 		Username:  username,
 		Password:  password,
-		Domain:    *domain,
-		SubPort:   *subPort,
-		TLSDir:    *tlsDir,
+		Domain:       *domain,
+		SubPort:      *subPort,
+		SubPublicURL: *subPublicURL,
+		TLSDir:       *tlsDir,
 		ACMEEmail: *acmeEmail,
 		ConfigDir: *configDir,
 		PublicIP:  publicIP,

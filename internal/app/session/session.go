@@ -212,6 +212,7 @@ type Config struct {
 	SubPort               int
 	SubDBPath             string
 	SubAPIToken           string
+	SubPublicURL          string
 }
 
 // RegisterDefaults registers built-in carriers and transports.

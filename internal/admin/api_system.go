@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -61,8 +62,9 @@ func (s *Server) handleSystemStatus(w http.ResponseWriter, r *http.Request) {
 		"os":                osInfo,
 		"uptime":            uptime,
 		"admin_port":        s.cfg.Port,
-		"sub_port":          s.cfg.SubPort,
-		"sub_enabled":       true,
+		"sub_port":                s.cfg.SubPort,
+		"sub_enabled":             true,
+		"subscription_public_url": s.cfg.SubPublicURL,
 		"socks_proxy":       vals["OLCRTC_SOCKS_PROXY"],
 		"warp_proxy":        vals["OLCRTC_WARP_PROXY"],
 		"domain":            s.cfg.Domain,
@@ -165,7 +167,7 @@ func (s *Server) bindDomain(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.cfg.Domain = req.Domain
-	if err := WriteAdminEnv(s.cfg.ConfigDir, s.cfg.Port, s.cfg.Username, s.cfg.Password, req.Domain, s.cfg.SubPort); err != nil {
+	if err := WriteAdminEnv(s.cfg.ConfigDir, s.cfg.Port, s.cfg.Username, s.cfg.Password, req.Domain, s.cfg.SubPort, s.cfg.SubPublicURL); err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -180,7 +182,7 @@ func (s *Server) bindDomain(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) unbindDomain(w http.ResponseWriter, r *http.Request) {
 	s.cfg.Domain = ""
-	if err := WriteAdminEnv(s.cfg.ConfigDir, s.cfg.Port, s.cfg.Username, s.cfg.Password, "", s.cfg.SubPort); err != nil {
+	if err := WriteAdminEnv(s.cfg.ConfigDir, s.cfg.Port, s.cfg.Username, s.cfg.Password, "", s.cfg.SubPort, s.cfg.SubPublicURL); err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -188,6 +190,68 @@ func (s *Server) unbindDomain(w http.ResponseWriter, r *http.Request) {
 		"ok":      true,
 		"message": "Домен отвязан. Перезапустите olcrtc-admin для возврата к self-signed.",
 	})
+}
+
+func (s *Server) handleSystemSubscriptionURL(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodPost:
+		var req struct {
+			PublicURL string `json:"public_url"`
+		}
+		if err := readJSON(r, &req); err != nil {
+			http.Error(w, "Bad Request", http.StatusBadRequest)
+			return
+		}
+		publicURL, err := normalizeSubscriptionPublicURL(req.PublicURL)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error":   "invalid_subscription_public_url",
+				"message": err.Error(),
+			})
+			return
+		}
+		s.cfg.SubPublicURL = publicURL
+		if err := WriteAdminEnv(s.cfg.ConfigDir, s.cfg.Port, s.cfg.Username, s.cfg.Password, s.cfg.Domain, s.cfg.SubPort, s.cfg.SubPublicURL); err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":                      true,
+			"subscription_public_url": s.cfg.SubPublicURL,
+			"message":                 "Публичный URL подписок сохранён",
+		})
+	case http.MethodDelete:
+		s.cfg.SubPublicURL = ""
+		if err := WriteAdminEnv(s.cfg.ConfigDir, s.cfg.Port, s.cfg.Username, s.cfg.Password, s.cfg.Domain, s.cfg.SubPort, s.cfg.SubPublicURL); err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":      true,
+			"message": "Публичный URL подписок сброшен",
+		})
+	default:
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func normalizeSubscriptionPublicURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", fmt.Errorf("URL обязателен, например https://your-domain.mooo.com")
+	}
+	u, err := neturl.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "", fmt.Errorf("укажите полный URL с https:// и доменом")
+	}
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return "", fmt.Errorf("поддерживаются только http:// или https://")
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return "", fmt.Errorf("URL не должен содержать query или fragment")
+	}
+	u.Path = strings.TrimRight(u.Path, "/")
+	return strings.TrimRight(u.String(), "/"), nil
 }
 
 func (s *Server) handleSystemPorts(w http.ResponseWriter, r *http.Request) {

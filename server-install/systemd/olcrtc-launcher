@@ -41,6 +41,7 @@
 #   OLCRTC_SUB_PORT          optional: subscription server port (default 2096)
 #   OLCRTC_SUB_DB            optional: subscription DB path (default /var/lib/olcrtc/subscriptions.db)
 #   OLCRTC_SUB_API_TOKEN     optional: subscription API token
+#   OLCRTC_SUB_PUBLIC_URL    optional: public subscription base URL, e.g. https://your-domain.mooo.com
 
 set -euo pipefail
 
@@ -161,6 +162,7 @@ fi
 sub_port="${OLCRTC_SUB_PORT:-2096}"
 sub_db="${OLCRTC_SUB_DB:-/var/lib/olcrtc/subscriptions.db}"
 sub_token="${OLCRTC_SUB_API_TOKEN:-}"
+sub_public_url="${OLCRTC_SUB_PUBLIC_URL:-}"
 
 cat >> "$CONFIG_FILE" <<EOF
 subscription:
@@ -168,6 +170,7 @@ subscription:
   port: ${sub_port}
   db_path: "${sub_db}"
   api_token: "${sub_token}"
+  public_url: "${sub_public_url}"
 EOF
 
 # Optional traffic shaping. This is mostly useful for Jitsi SCTP fallback
