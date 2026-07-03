@@ -35,7 +35,7 @@ func (s *Session) setupDataChannelHandlers(dcReady chan struct{}, sessionCloseCh
 
 func (s *Session) onDataChannelClose() {
 	if !s.closed.Load() {
-		s.queueReconnect()
+		s.queueReconnectReason("datachannel closed")
 	}
 }
 
@@ -147,6 +147,19 @@ func (s *Session) handleICE(cand map[string]any) {
 }
 
 func (s *Session) setupICEHandlers() {
+	s.pcSub.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
+		logger.Infof("goolom subscriber ICE state: %s", state.String())
+	})
+	s.pcPub.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
+		logger.Infof("goolom publisher ICE state: %s", state.String())
+	})
+	s.pcSub.OnICEGatheringStateChange(func(state webrtc.ICEGatheringState) {
+		logger.Verbosef("goolom subscriber ICE gathering: %s", state.String())
+	})
+	s.pcPub.OnICEGatheringStateChange(func(state webrtc.ICEGatheringState) {
+		logger.Verbosef("goolom publisher ICE gathering: %s", state.String())
+	})
+
 	s.pcSub.OnICECandidate(func(c *webrtc.ICECandidate) {
 		if c == nil {
 			return

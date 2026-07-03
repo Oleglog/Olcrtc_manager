@@ -36,7 +36,7 @@ func (s *Session) processSendQueue(workerID int, sessionCloseCh <-chan struct{})
 
 			if err := s.dc.Send(data); err != nil {
 				logger.Debugf("send error: %v", err)
-				s.queueReconnect()
+				s.queueReconnectReason("datachannel send error: " + err.Error())
 				return
 			}
 

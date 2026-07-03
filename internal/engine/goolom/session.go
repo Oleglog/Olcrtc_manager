@@ -249,9 +249,11 @@ func (s *Session) SetShouldReconnect(fn func() bool) { s.shouldReconnect = fn }
 // CanSend checks if data can be sent.
 func (s *Session) CanSend() bool {
 	if s.onData == nil {
-		if s.hasLocalVideoTracks() {
-			return !s.closed.Load() && s.subscriberReady.Load() && s.publisherReady.Load()
-		}
+		// Do not gate video-mode sending on publisherReady. KCP can buffer and
+		// retransmit while the publisher PC is still connecting or briefly
+		// transitions through disconnected. Blocking here can stall smux/control
+		// and surface as connection refused even though the subscriber path is
+		// still alive.
 		return !s.closed.Load() && s.subscriberReady.Load()
 	}
 	if s.dc == nil || s.dc.ReadyState() != webrtc.DataChannelStateOpen {
@@ -269,9 +271,11 @@ func (s *Session) AddVideoTrack(track webrtc.TrackLocal) error {
 	if s.pcPub == nil {
 		return nil
 	}
-	if _, err := s.pcPub.AddTrack(track); err != nil {
+	sender, err := s.pcPub.AddTrack(track)
+	if err != nil {
 		return fmt.Errorf("failed to add track: %w", err)
 	}
+	s.drainPublisherRTCP(sender)
 	return nil
 }
 
@@ -299,11 +303,30 @@ func (s *Session) attachPendingVideoTracks() error {
 	defer s.videoTrackMu.RUnlock()
 
 	for _, track := range s.videoTracks {
-		if _, err := s.pcPub.AddTrack(track); err != nil {
+		sender, err := s.pcPub.AddTrack(track)
+		if err != nil {
 			return fmt.Errorf("add video track: %w", err)
 		}
+		s.drainPublisherRTCP(sender)
 	}
 	return nil
+}
+
+// drainPublisherRTCP reads feedback the SFU sends for our published track.
+// Without an active reader, Pion's RTCP/interceptor path can stall and the SFU
+// may stop considering the publisher media path alive after its idle watchdog.
+func (s *Session) drainPublisherRTCP(sender *webrtc.RTPSender) {
+	if sender == nil {
+		return
+	}
+	go func() {
+		buf := make([]byte, 1500)
+		for {
+			if _, _, err := sender.Read(buf); err != nil {
+				return
+			}
+		}
+	}()
 }
 
 func closeSignal(ch chan struct{}) {

@@ -65,7 +65,7 @@ func (s *Session) handleSignaling(ctx context.Context) {
 		if err := s.ws.ReadJSON(&msg); err != nil {
 			if !s.closed.Load() {
 				logger.Debugf("ws read error: %v", err)
-				s.queueReconnect()
+				s.queueReconnectReason("ws read error: " + err.Error())
 			}
 			return
 		}
@@ -259,7 +259,7 @@ func (s *Session) sendWSPing() bool {
 	if s.ws != nil {
 		if err := s.ws.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(10*time.Second)); err != nil {
 			logger.Debugf("ws ping error: %v", err)
-			s.queueReconnect()
+			s.queueReconnectReason("ws ping error: " + err.Error())
 			return false
 		}
 	}
@@ -275,7 +275,7 @@ func (s *Session) sendAppPing() bool {
 			"ping": map[string]any{},
 		}); err != nil {
 			logger.Debugf("app ping error: %v", err)
-			s.queueReconnect()
+			s.queueReconnectReason("app ping error: " + err.Error())
 			return false
 		}
 	}

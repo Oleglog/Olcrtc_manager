@@ -200,8 +200,7 @@ func (s *Session) startBackgroundGoroutines(ctx context.Context, keepAliveCh cha
 
 func (s *Session) onConnectionStateChange(state webrtc.PeerConnectionState) {
 	if !s.closed.Load() && state == webrtc.PeerConnectionStateFailed {
-		logger.Infof("goolom PC failed - queuing reconnect")
-		s.queueReconnect()
+		s.queueReconnectReason("peer connection failed")
 	}
 }
 
@@ -474,15 +473,22 @@ func (s *Session) drainReconnectQueue() {
 }
 
 func (s *Session) queueReconnect() {
+	s.queueReconnectReason("unspecified")
+}
+
+func (s *Session) queueReconnectReason(reason string) {
 	if s.closed.Load() || s.reconnecting.Load() {
 		return
 	}
 	if s.shouldReconnect != nil && !s.shouldReconnect() {
+		logger.Debugf("goolom reconnect suppressed reason=%s", reason)
 		return
 	}
 	select {
 	case s.reconnectCh <- struct{}{}:
+		logger.Infof("goolom reconnect queued reason=%s", reason)
 	default:
+		logger.Debugf("goolom reconnect already queued reason=%s", reason)
 	}
 }
 
@@ -496,7 +502,7 @@ func (s *Session) Reconnect(reason string) {
 	}
 	logger.Infof("goolom reconnect requested: %s", reason)
 	s.stopSession()
-	s.queueReconnect()
+	s.queueReconnectReason("upper layer: " + reason)
 }
 
 func (s *Session) stopSession() {
