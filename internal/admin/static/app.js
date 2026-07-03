@@ -625,6 +625,20 @@ function renderSubRow(sub, instances, sys) {
   const addBtn = el('button', 'btn btn-secondary btn-sm');
   addBtn.innerHTML = icon('plus') + '<span>Добавить</span>';
   addBtn.onclick = () => showAddToSubModal(sub, instances);
+  const qrBtn = el('button', 'btn btn-secondary btn-sm');
+  qrBtn.innerHTML = icon('qr-code') + '<span>QR</span>';
+  qrBtn.title = 'QR-бандл подписки: группа + текущие подключения';
+  qrBtn.onclick = async () => {
+    await withLoading(qrBtn, async () => {
+      try {
+        const insts = await api('/subs/' + sub.slug + '/instances');
+        const bundle = buildSubscriptionBundle(sub, subURL, insts);
+        showQRModal(bundle, { subscriptionBundle: true, name: sub.name });
+      } catch (e) {
+        showToast('Ошибка QR подписки: ' + e.message, 'error');
+      }
+    });
+  };
   const delBtn = el('button', 'btn btn-danger btn-sm btn-icon');
   delBtn.setAttribute('aria-label', 'Удалить подписку');
   delBtn.title = 'Удалить';
@@ -645,12 +659,29 @@ function renderSubRow(sub, instances, sys) {
   right.appendChild(viewBtn);
   right.appendChild(instBtn);
   right.appendChild(addBtn);
+  right.appendChild(qrBtn);
   right.appendChild(delBtn);
   row.appendChild(left);
   row.appendChild(right);
   return row;
 }
 
+function buildSubscriptionBundle(sub, subURL, insts) {
+  const profiles = (insts || [])
+    .map(inst => inst.raw_uri || inst.uri || '')
+    .filter(uri => uri && uri.toLowerCase().startsWith('olcrtc://'));
+  if (profiles.length === 0) throw new Error('в подписке нет olcrtc:// подключений');
+  return JSON.stringify({
+    type: 'olcrtc-sub',
+    v: 1,
+    name: sub.name || 'olcRTC subscription',
+    slug: sub.slug,
+    url: subURL,
+    update_when_connected_only: true,
+    deduplication: true,
+    profiles,
+  });
+}
 // ── Settings page ────────────────────────────────────────────────────────────
 async function renderSettings(app) {
   const wrap = el('div', 'max-w-2xl mx-auto p-4 md:p-6');
@@ -968,8 +999,9 @@ function showModal(content, opts) {
 function closeModal(overlay) { if (overlay && overlay.parentNode) overlay.remove(); }
 
 function showQRModal(uri, inst) {
+  const isBundle = inst && inst.subscriptionBundle;
   const div = el('div', '');
-  div.innerHTML = '<h3 class="text-lg font-semibold mb-3 inline-flex items-center gap-2">' + icon('qr-code', 18) + '<span>QR-код</span></h3>';
+  div.innerHTML = '<h3 class="text-lg font-semibold mb-3 inline-flex items-center gap-2">' + icon('qr-code', 18) + '<span>' + (isBundle ? 'QR подписки' : 'QR-код') + '</span></h3>';
   if (inst && inst.carrier === 'wbstream' && (!inst.room_id || inst.room_id === 'any')) {
     const notice = el('div', 'p-2 mb-3 text-xs rounded border border-amber-500/50 bg-amber-500/10 text-amber-200');
     notice.innerHTML =
@@ -994,7 +1026,7 @@ function showQRModal(uri, inst) {
   div.appendChild(uriText);
   const btnRow = el('div', 'flex gap-2 justify-end flex-wrap');
   const copyBtn = el('button', 'btn btn-secondary btn-sm');
-  copyBtn.innerHTML = icon('copy') + '<span>Копировать URI</span>';
+  copyBtn.innerHTML = icon('copy') + '<span>' + (isBundle ? 'Копировать JSON' : 'Копировать URI') + '</span>';
   copyBtn.onclick = () => { navigator.clipboard.writeText(uri); showToast('Скопировано'); };
   const downloadBtn = el('button', 'btn btn-secondary btn-sm');
   downloadBtn.innerHTML = icon('download') + '<span>Скачать PNG</span>';
@@ -1010,7 +1042,7 @@ function showQRModal(uri, inst) {
 
   setTimeout(() => {
     if (!uri || uri.length > 4000) {
-      qrDiv.innerHTML = '<div class="text-red-400 text-xs p-2">URI слишком длинный для QR-кода (' + (uri ? uri.length : 0) + ' символов)</div>';
+      qrDiv.innerHTML = '<div class="text-red-400 text-xs p-2">Данные слишком длинные для QR-кода (' + (uri ? uri.length : 0) + ' символов)</div>';
       return;
     }
     try {
@@ -1029,13 +1061,13 @@ function showQRModal(uri, inst) {
           if (!blob) { showToast('Не удалось сгенерировать PNG', 'error'); return; }
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
-          a.href = url; a.download = 'olcrtc-qr.png'; a.click();
+          a.href = url; a.download = isBundle ? 'olcrtc-subscription-qr.png' : 'olcrtc-qr.png'; a.click();
           URL.revokeObjectURL(url);
           showToast('PNG сохранён');
         }, 'image/png');
       } else if (img) {
         const a = document.createElement('a');
-        a.href = img.src; a.download = 'olcrtc-qr.png'; a.click();
+        a.href = img.src; a.download = isBundle ? 'olcrtc-subscription-qr.png' : 'olcrtc-qr.png'; a.click();
         showToast('PNG сохранён');
       } else {
         showToast('Не удалось получить QR', 'error');

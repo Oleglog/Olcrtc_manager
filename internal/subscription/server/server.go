@@ -120,7 +120,7 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	slug := strings.TrimPrefix(r.URL.Path, "/sub/")
+	slug := strings.Trim(strings.TrimPrefix(r.URL.Path, "/sub/"), "/ \t\r\n")
 	if slug == "" {
 		http.Error(w, "Not Found", http.StatusNotFound)
 		return
