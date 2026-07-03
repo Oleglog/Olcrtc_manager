@@ -3,22 +3,22 @@
 /* ── Design Tokens ────────────────────────────────────────────────────────── */
 :root {
   /* Dark theme (default) */
-  --color-primary: #5e6ad2;
-  --color-primary-hover: #828fff;
-  --color-primary-focus: #5e69d1;
+  --color-primary: #7c3aed;
+  --color-primary-hover: #8b5cf6;
+  --color-primary-focus: #5b21b6;
   --color-ink: #f7f8f8;
   --color-ink-muted: #d0d6e0;
   --color-ink-subtle: #8a8f98;
   --color-ink-tertiary: #62666d;
-  --color-canvas: #010102;
-  --color-surface-1: #0f1011;
-  --color-surface-2: #141516;
-  --color-surface-3: #18191a;
-  --color-hairline: #23252a;
-  --color-hairline-strong: #34343a;
+  --color-canvas: #09090f;
+  --color-surface-1: #12121b;
+  --color-surface-2: #191927;
+  --color-surface-3: #202033;
+  --color-hairline: #2d2a3d;
+  --color-hairline-strong: #4c3f72;
   --color-hairline-tertiary: #3e3e44;
-  --color-success: #27a644;
-  --color-error: #f43f5e;
+  --color-success: #22c55e;
+  --color-error: #f97316;
 
   /* Rounded */
   --rounded-xs: 4px;
@@ -38,22 +38,22 @@
 
 /* Light theme */
 [data-theme="light"] {
-  --color-primary: #5e6ad2;
-  --color-primary-hover: #4c5bc4;
-  --color-primary-focus: #5e69d1;
+  --color-primary: #7c3aed;
+  --color-primary-hover: #6d28d9;
+  --color-primary-focus: #5b21b6;
   --color-ink: #18191a;
   --color-ink-muted: #3e3e44;
   --color-ink-subtle: #62666d;
   --color-ink-tertiary: #8a8f98;
-  --color-canvas: #ffffff;
-  --color-surface-1: #f5f6f6;
-  --color-surface-2: #ebebec;
-  --color-surface-3: #e0e1e2;
-  --color-hairline: #d0d1d2;
-  --color-hairline-strong: #b0b1b2;
+  --color-canvas: #fbfafc;
+  --color-surface-1: #f5f3ff;
+  --color-surface-2: #ede9fe;
+  --color-surface-3: #ddd6fe;
+  --color-hairline: #ddd6fe;
+  --color-hairline-strong: #c4b5fd;
   --color-hairline-tertiary: #9a9b9c;
-  --color-success: #27a644;
-  --color-error: #dc2626;
+  --color-success: #22c55e;
+  --color-error: #ea580c;
 }
 
 body {
@@ -192,7 +192,7 @@ body {
 }
 
 .btn-success:hover:not(:disabled) {
-  background: #22903b;
+  background: #16a34a;
 }
 
 .btn-danger {
@@ -201,7 +201,7 @@ body {
 }
 
 .btn-danger:hover:not(:disabled) {
-  background: #e11d48;
+  background: #ea580c;
 }
 
 .btn-secondary {
@@ -240,12 +240,12 @@ body {
 
 .status-running {
   background: var(--color-primary);
-  box-shadow: 0 0 0 3px rgba(94,106,210,0.2);
+  box-shadow: 0 0 0 3px rgba(124,58,237,0.22);
 }
 
 .status-failed {
   background: var(--color-error);
-  box-shadow: 0 0 0 3px rgba(244,63,94,0.2);
+  box-shadow: 0 0 0 3px rgba(249,115,22,0.22);
 }
 
 .status-inactive {
@@ -302,7 +302,7 @@ body {
 }
 
 .badge-blue {
-  background: rgba(94,106,210,0.2);
+  background: rgba(124,58,237,0.22);
   color: var(--color-ink-muted);
 }
 
