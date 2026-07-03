@@ -86,6 +86,14 @@ func (t *trafficTransport) UseRelaxedLiveness() bool {
 	return ok && rl.UseRelaxedLiveness()
 }
 
+func (t *trafficTransport) WaitForPeer(ctx context.Context) error {
+	waiter, ok := t.inner.(PeerReadyTransport)
+	if !ok {
+		return nil
+	}
+	return waiter.WaitForPeer(ctx)
+}
+
 func (t *trafficTransport) sendWith(send func([]byte) error, data []byte) error {
 	t.sendMu.Lock()
 	defer t.sendMu.Unlock()

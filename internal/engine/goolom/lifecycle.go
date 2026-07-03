@@ -3,6 +3,7 @@ package goolom
 import (
 	"context"
 	"fmt"
+	"net"
 	"sync"
 	"time"
 
@@ -11,6 +12,8 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/engine"
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 	"github.com/openlibrecommunity/olcrtc/internal/protect"
+	"github.com/pion/ice/v4"
+	"github.com/pion/interceptor"
 	"github.com/pion/webrtc/v4"
 )
 
@@ -82,29 +85,17 @@ func (s *Session) waitForMediaReady(ctx context.Context, timeout time.Duration) 
 }
 
 func (s *Session) setupPeerConnections(config webrtc.Configuration) error {
-	settingEngine := webrtc.SettingEngine{}
-	if protect.Protector != nil {
-		settingEngine.SetICEProxyDialer(protect.NewProxyDialer())
+	api, err := newWebRTCAPI()
+	if err != nil {
+		return err
 	}
-	settingEngine.LoggerFactory = logger.NewPionLoggerFactory()
-	api := webrtc.NewAPI(webrtc.WithSettingEngine(settingEngine))
 
-	var err error
 	s.pcSub, err = api.NewPeerConnection(config)
 	if err != nil {
 		return fmt.Errorf("new sub pc: %w", err)
 	}
 	s.pcSub.OnConnectionStateChange(s.onSubscriberConnectionStateChange)
-	s.pcSub.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
-		if track.Kind() != webrtc.RTPCodecTypeVideo {
-			return
-		}
-		logger.Infof("goolom remote video track: codec=%s stream=%s track=%s",
-			track.Codec().MimeType, track.StreamID(), track.ID())
-		if cb := s.videoTrackHandler(); cb != nil {
-			cb(track, receiver)
-		}
-	})
+	s.pcSub.OnTrack(s.onSubscriberTrack)
 
 	s.pcPub, err = api.NewPeerConnection(config)
 	if err != nil {
@@ -116,6 +107,60 @@ func (s *Session) setupPeerConnections(config webrtc.Configuration) error {
 		return err
 	}
 	return nil
+}
+
+func newWebRTCAPI() (*webrtc.API, error) {
+	settingEngine := webrtc.SettingEngine{}
+	settingEngine.LoggerFactory = logger.NewPionLoggerFactory()
+	settingEngine.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4})
+	settingEngine.SetIPFilter(func(ip net.IP) bool { return ip.To4() != nil })
+
+	if protect.Protector != nil {
+		pnet, err := protect.NewProtectedNet()
+		if err != nil {
+			return nil, fmt.Errorf("protected net: %w", err)
+		}
+		settingEngine.SetNet(pnet)
+		settingEngine.SetICEMulticastDNSMode(ice.MulticastDNSModeDisabled)
+	}
+
+	mediaEngine := &webrtc.MediaEngine{}
+	if err := mediaEngine.RegisterDefaultCodecs(); err != nil {
+		return nil, fmt.Errorf("register default codecs: %w", err)
+	}
+	interceptorRegistry := &interceptor.Registry{}
+	if err := webrtc.RegisterDefaultInterceptors(mediaEngine, interceptorRegistry); err != nil {
+		return nil, fmt.Errorf("register default interceptors: %w", err)
+	}
+	return webrtc.NewAPI(
+		webrtc.WithSettingEngine(settingEngine),
+		webrtc.WithMediaEngine(mediaEngine),
+		webrtc.WithInterceptorRegistry(interceptorRegistry),
+	), nil
+}
+
+func (s *Session) onSubscriberTrack(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
+	if track.Kind() != webrtc.RTPCodecTypeVideo {
+		return
+	}
+	logger.Infof("goolom remote video track: codec=%s stream=%s track=%s",
+		track.Codec().MimeType, track.StreamID(), track.ID())
+	if cb := s.videoTrackHandler(); cb != nil {
+		cb(track, receiver)
+	}
+	go drainReceiverRTCP(receiver)
+}
+
+func drainReceiverRTCP(receiver *webrtc.RTPReceiver) {
+	if receiver == nil {
+		return
+	}
+	rtcpBuf := make([]byte, 1500)
+	for {
+		if _, _, err := receiver.Read(rtcpBuf); err != nil {
+			return
+		}
+	}
 }
 
 func (s *Session) dialWebSocket() error {

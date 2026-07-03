@@ -241,12 +241,15 @@ func newStreamTransport(
 	if byteRate <= 0 {
 		byteRate = defaultMaxBytesPerSec
 	}
-	// Bytes we may emit per frame tick to hold the wire under byteRate. The
-	// ticker already paces at fps, so a per-tick cap bounds the rate without
-	// any token bookkeeping. Floor at one epoch header so keepalives fit.
-	perTickBytes := byteRate / fps
-	if perTickBytes < epochHdrLen {
-		perTickBytes = epochHdrLen
+	// Bytes we may emit per frame tick when a user explicitly enables a rate
+	// cap. With the default zero cap, allow a full VP8 payload each tick so the
+	// writer does not become a hidden throughput throttle.
+	perTickBytes := defaultMaxPayloadSize
+	if byteRate > 0 {
+		perTickBytes = byteRate / fps
+		if perTickBytes < epochHdrLen {
+			perTickBytes = epochHdrLen
+		}
 	}
 
 	tr := &streamTransport{
