@@ -1012,28 +1012,17 @@ func (p *streamTransport) getOrCreatePeerKCP(epoch uint32) *kcpRuntime {
 // peerWriterPump drains a peer's outbound KCP queue and writes frames to the
 // shared video track. Stops when the channel is closed or transport shuts down.
 func (p *streamTransport) peerWriterPump(stop chan struct{}, out chan []byte) {
-	interval := p.frameInterval
-	if interval <= 0 {
-		interval = time.Second / time.Duration(defaultFPS)
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
 	for {
 		select {
 		case <-p.closeCh:
 			return
 		case <-stop:
 			return
-		case <-ticker.C:
-			select {
-			case frame, ok := <-out:
-				if !ok {
-					return
-				}
-				sample := p.batchSampleFrom(out, frame, p.perTickBytes)
-				p.writeTrackSample(sample)
-			default:
+		case frame, ok := <-out:
+			if !ok {
+				return
 			}
+			p.writeTrackSample(frame)
 		}
 	}
 }

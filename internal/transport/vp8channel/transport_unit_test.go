@@ -329,29 +329,6 @@ func TestReorderBufferRestoresSequenceOrder(t *testing.T) {
 	}
 }
 
-func TestBatchSampleFromUsesProvidedQueue(t *testing.T) {
-	tr := &streamTransport{batchSize: 3}
-	src := make(chan []byte, 2)
-	mkFrame := func(payload string) []byte {
-		hdr := buildEpochHeader(bindingToken("client"), 1)
-		return append(hdr[:], []byte(payload)...)
-	}
-	first := mkFrame("one")
-	src <- mkFrame("two")
-	src <- mkFrame("three")
-
-	sample := tr.batchSampleFrom(src, first, defaultMaxPayloadSize)
-	payload := sample[epochHdrLen:]
-	if !bytes.HasPrefix(payload, kcpBatchMagic[:]) {
-		t.Fatalf("batch payload missing magic: %x", payload)
-	}
-	count := 0
-	splitKCPPayload(payload, func([]byte) { count++ })
-	if count != 3 {
-		t.Fatalf("batched packet count = %d, want 3", count)
-	}
-}
-
 func TestKCPConnCRCVerifiesAndStripsPacket(t *testing.T) {
 	out := make(chan []byte, 1)
 	hdr := buildEpochHeader(bindingToken("client"), 0x01020304)
