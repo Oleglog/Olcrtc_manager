@@ -632,13 +632,10 @@ function renderSubRow(sub, instances, sys) {
     await withLoading(qrBtn, async () => {
       try {
         const insts = await api('/subs/' + sub.slug + '/instances');
-        let mirror = null;
-        try {
-          mirror = await api('/subs/' + sub.slug + '/mirror');
-        } catch (e) {
-          console.warn('subscription mirror unavailable:', e.message);
-        }
-        const bundle = buildSubscriptionBundle(sub, subURL, insts, mirror);
+        // Do not sync Yandex mirror while opening QR. It can be slow and the
+        // resulting mirror metadata makes the QR larger. The QR remains a fast
+        // offline bootstrap snapshot; updates can still run through the tunnel.
+        const bundle = buildSubscriptionBundle(sub, subURL, insts, null);
         showQRModal(bundle, { subscriptionBundle: true, name: sub.name });
       } catch (e) {
         showToast('Ошибка QR подписки: ' + e.message, 'error');
@@ -694,16 +691,29 @@ function buildSubscriptionBundle(sub, subURL, insts, mirror) {
   });
 }
 
+async function gzipBytes(text) {
+  if (window.pako && typeof window.pako.gzip === 'function') {
+    return new Uint8Array(window.pako.gzip(text));
+  }
+  if (typeof CompressionStream !== 'undefined' && typeof TextEncoder !== 'undefined') {
+    const stream = new Blob([new TextEncoder().encode(text)])
+      .stream()
+      .pipeThrough(new CompressionStream('gzip'));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  }
+  return null;
+}
+
 async function optimizeQRPayload(payload) {
   const original = String(payload || '');
-  if (!original || typeof CompressionStream === 'undefined' || typeof TextEncoder === 'undefined') {
+  if (!original) {
     return { text: original, compressed: false, originalLength: original.length };
   }
   try {
-    const stream = new Blob([new TextEncoder().encode(original)])
-      .stream()
-      .pipeThrough(new CompressionStream('gzip'));
-    const compressed = new Uint8Array(await new Response(stream).arrayBuffer());
+    const compressed = await gzipBytes(original);
+    if (!compressed) {
+      return { text: original, compressed: false, originalLength: original.length };
+    }
     let binary = '';
     const chunkSize = 0x8000;
     for (let i = 0; i < compressed.length; i += chunkSize) {

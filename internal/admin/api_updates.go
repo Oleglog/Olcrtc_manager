@@ -18,7 +18,7 @@ import (
 )
 
 // Version is set via ldflags at build time.
-var Version = "1.9.37"
+var Version = "1.9.38"
 
 // MinUpdatableVersion is the floor for the version dropdown — versions below
 // this lack the auto-update endpoint, so installing them would brick the flow.
