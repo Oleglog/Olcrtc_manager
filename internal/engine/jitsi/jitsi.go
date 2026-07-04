@@ -668,6 +668,13 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session, sctpBridge 
 	// the j library reference setup uses; source-add renegotiation drives
 	// reception of other participants' SSRCs on the same m=video section.
 	pcConfig := jSess.IceConfig()
+	// Some deployments advertise TURN/STUN services over XEP-0215 disco
+	// without a port or transport attribute; the resulting ICE URLs (e.g.
+	// "stun:host:") fail pion's validation inside NewPeerConnection with
+	// "invalid port" before any candidate is gathered. Normalise the list
+	// (default ports, canonical host:port, sane transport queries) so those
+	// relays stay usable, and drop only truly unsalvageable entries.
+	pcConfig.ICEServers = normaliseICEServers(pcConfig.ICEServers)
 	pcConfig.SDPSemantics = webrtc.SDPSemanticsPlanB
 
 	pc, err := api.NewPeerConnection(pcConfig)
