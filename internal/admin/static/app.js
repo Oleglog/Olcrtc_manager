@@ -1048,15 +1048,22 @@ function showQRModal(uri, inst) {
   const overlay = showModal(div);
   closeBtn.onclick = () => closeModal(overlay);
 
-  setTimeout(() => {
-    if (!uri || uri.length > 4000) {
-      qrDiv.innerHTML = '<div class="text-red-400 text-xs p-2">Данные слишком длинные для QR-кода (' + (uri ? uri.length : 0) + ' символов)</div>';
+  setTimeout(async () => {
+    const optimized = await optimizeQRPayload(uri);
+    const qrText = optimized.text;
+    if (optimized.compressed) {
+      const note = el('div', 'text-xs text-emerald-300 mb-2');
+      note.textContent = 'QR оптимизирован: ' + optimized.originalLength + ' → ' + qrText.length + ' символов. Требуется клиент с поддержкой olcrtc+gz.';
+      div.insertBefore(note, qrWrap.nextSibling);
+    }
+    if (!qrText || qrText.length > 4000) {
+      qrDiv.innerHTML = '<div class="text-red-400 text-xs p-2">Данные слишком длинные для QR-кода (' + (qrText ? qrText.length : 0) + ' символов)</div>';
       return;
     }
     try {
-      const qrSize = uri.length > 1200 ? 720 : (uri.length > 650 ? 560 : 320);
-      const correctLevel = uri.length > 650 ? QRCode.CorrectLevel.L : QRCode.CorrectLevel.M;
-      new QRCode(qrDiv, { text: uri, width: qrSize, height: qrSize, colorDark: '#000000', colorLight: '#ffffff', correctLevel });
+      const qrSize = qrText.length > 1200 ? 720 : (qrText.length > 650 ? 560 : 360);
+      const correctLevel = QRCode.CorrectLevel.L;
+      new QRCode(qrDiv, { text: qrText, width: qrSize, height: qrSize, colorDark: '#000000', colorLight: '#ffffff', correctLevel });
     } catch (e) {
       qrDiv.innerHTML = '<div class="text-red-400 text-xs p-2">Ошибка генерации QR: ' + e.message + '</div>';
       return;

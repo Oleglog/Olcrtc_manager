@@ -708,7 +708,49 @@ func (s *Server) buildURIForQR(id int) string {
 	envPath := InstanceEnvPath(s.cfg.ConfigDir, id)
 	vals := ReadInstanceEnv(envPath)
 	clientID := s.ensureClientID(envPath, vals["OLCRTC_CLIENT_ID"])
-	return s.buildURIWith(vals, clientID, true)
+	return s.buildCompactURIWith(vals, clientID, true)
+}
+
+func (s *Server) buildCompactURIWith(vals map[string]string, clientID string, includeAuthToken bool) string {
+	carrier := vals["OLCRTC_CARRIER"]
+	if carrier == "" {
+		carrier = vals["OLCRTC_PROVIDER"]
+	}
+	room := vals["OLCRTC_ROOM_ID"]
+	key := vals["OLCRTC_KEY"]
+	name := vals["OLCRTC_NAME"]
+	if name == "" {
+		name = fmt.Sprintf("%s_olcrtc", carrier)
+	}
+	transport := vals["OLCRTC_TRANSPORT"]
+	vp8Fps := vals["OLCRTC_VP8_FPS"]
+	vp8Batch := vals["OLCRTC_VP8_BATCH"]
+
+	uri := fmt.Sprintf("olcrtc://%s@r/%s?k=%s", carrier, url.PathEscape(room), url.QueryEscape(key))
+	if transport != "" && transport != "datachannel" {
+		uri += "&t=" + url.QueryEscape(transport)
+		if transport == "vp8channel" {
+			if vp8Fps != "" && vp8Fps != "60" {
+				uri += "&f=" + url.QueryEscape(vp8Fps)
+			}
+			if vp8Batch != "" && vp8Batch != "8" {
+				uri += "&b=" + url.QueryEscape(vp8Batch)
+			}
+		}
+	}
+	if clientID != "" {
+		uri += "&c=" + url.QueryEscape(clientID)
+	}
+	if includeAuthToken && carrier == "wbstream" {
+		if authToken := strings.TrimSpace(vals["OLCRTC_AUTH_TOKEN"]); authToken != "" {
+			uri += "&a=" + url.QueryEscape(authToken)
+		}
+	}
+	if dns := strings.TrimSpace(vals["OLCRTC_DNS"]); dns != "" && dns != "77.88.8.8:53" {
+		uri += "&d=" + url.QueryEscape(dns)
+	}
+	uri += "#" + url.QueryEscape(name)
+	return uri
 }
 
 // buildURIWith renders the deep-link URI from a pre-loaded env map. It is

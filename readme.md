@@ -55,7 +55,7 @@ https://<VPS-IP>:8443
 - Multi-instance systemd setup.
 - Server subscription endpoint `/sub/<slug>`.
 - QR/URI генерация для Android-клиента.
-- QR-бандлы подписок: один QR создаёт subscription-группу на Android и сразу кладёт в неё текущие профили.
+- QR-бандлы подписок: один QR создаёт subscription-группу на Android и сразу кладёт в неё текущие профили. Большие QR автоматически сжимаются в формат `olcrtc+gz`, чтобы камера телефона легче их сканировала.
 - Экспериментальные encrypted mirrors для подписок через Yandex Disk API: сервер умеет публиковать зашифрованный mirror-файл, но доступность финальных `*.storage.yandex.net` URL зависит от мобильного оператора.
 - WB Stream `auth.token` для аккаунтного/модераторского доступа.
 - Поддержка Telemost/WB Stream через goolom WebRTC engine.
@@ -73,8 +73,8 @@ https://github.com/Oleglog/Exclave_olcrtc
 Актуальная совместимая пара на момент обновления README:
 
 ```text
-server-v1.9.35+
-olcrtc-2.0.27+
+server-v1.9.36+
+olcrtc-2.0.28+
 ```
 
 Для `vp8channel` важно обновлять сервер и APK вместе: в `server-v1.9.27 / olcrtc-2.0.17` был изменён wire format из-за CRC KCP-пакетов.
