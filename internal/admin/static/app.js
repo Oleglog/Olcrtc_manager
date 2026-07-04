@@ -677,19 +677,49 @@ function buildSubscriptionBundle(sub, subURL, insts, mirror) {
     .map(inst => inst.raw_uri || inst.uri || '')
     .filter(uri => uri && uri.toLowerCase().startsWith('olcrtc://'));
   if (profiles.length === 0) throw new Error('в подписке нет olcrtc:// подключений');
+
+  // Compact keys keep subscription QR codes scannable. Android accepts both
+  // this compact form and the older verbose JSON.
   return JSON.stringify({
     type: 'olcrtc-sub',
-    v: 1,
-    name: sub.name || 'olcRTC subscription',
-    slug: sub.slug,
-    url: subURL,
-    mirrors: mirror && mirror.url && mirror.key ? [{ type: mirror.type || 'yandex_disk', url: mirror.url, encrypted: true, alg: 'AES-256-GCM' }] : [],
-    mirror_key: mirror && mirror.key ? mirror.key : '',
-    update_when_connected_only: true,
-    deduplication: true,
-    profiles,
+    v: 2,
+    n: sub.name || 'olcRTC subscription',
+    s: sub.slug,
+    u: subURL,
+    m: mirror && mirror.url && mirror.key ? [{ t: mirror.type || 'yandex_disk', u: mirror.url, e: true, a: 'AES-256-GCM' }] : [],
+    mk: mirror && mirror.key ? mirror.key : '',
+    uc: true,
+    d: true,
+    p: profiles,
   });
 }
+
+async function optimizeQRPayload(payload) {
+  const original = String(payload || '');
+  if (!original || typeof CompressionStream === 'undefined' || typeof TextEncoder === 'undefined') {
+    return { text: original, compressed: false, originalLength: original.length };
+  }
+  try {
+    const stream = new Blob([new TextEncoder().encode(original)])
+      .stream()
+      .pipeThrough(new CompressionStream('gzip'));
+    const compressed = new Uint8Array(await new Response(stream).arrayBuffer());
+    let binary = '';
+    const chunkSize = 0x8000;
+    for (let i = 0; i < compressed.length; i += chunkSize) {
+      binary += String.fromCharCode.apply(null, compressed.subarray(i, i + chunkSize));
+    }
+    const b64url = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+    const packed = 'olcrtc+gz:' + b64url;
+    if (packed.length + 24 < original.length || original.length > 900) {
+      return { text: packed, compressed: true, originalLength: original.length };
+    }
+  } catch (e) {
+    console.warn('QR gzip optimization failed:', e);
+  }
+  return { text: original, compressed: false, originalLength: original.length };
+}
+
 // ── Settings page ────────────────────────────────────────────────────────────
 async function renderSettings(app) {
   const wrap = el('div', 'max-w-2xl mx-auto p-4 md:p-6');
