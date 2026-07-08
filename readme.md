@@ -73,7 +73,7 @@ https://github.com/Oleglog/Exclave_olcrtc
 Актуальная совместимая пара на момент обновления README:
 
 ```text
-server-v1.9.38+
+server-v1.9.39+
 olcrtc-2.0.28+
 ```
 
