@@ -73,7 +73,7 @@ https://github.com/Oleglog/Exclave_olcrtc
 Актуальная совместимая пара на момент обновления README:
 
 ```text
-server-v1.9.39+
+server-v1.9.40+
 olcrtc-2.0.28+
 ```
 
@@ -166,3 +166,8 @@ Unit/race/lint/build jobs являются основными. Real provider E2E
 ## License
 
 WTFPL, как upstream olcRTC.
+
+
+### Jitsi presets in Admin UI
+
+Admin UI includes a curated list of tested public Jitsi hosts such as `meet.jit.si`, `jitsi.hamburg.ccc.de`, `meet.ffmuc.net`, `meet.systemli.org`, `jitsi.debian.social`, `meet.opensuse.org` and others. Use the preset buttons when creating or editing a Jitsi instance. The check button fetches `/config.js` server-side and reports BOSH/WebSocket/Colibri hints. Colibri WS is still confirmed only at runtime after Jingle advertises a bridge URL, so use `bridge=auto` for normal operation and `bridge=colibri-ws` only for diagnostics.

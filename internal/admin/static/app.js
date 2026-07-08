@@ -5,6 +5,30 @@
 const API = '/api';
 let creds = JSON.parse(localStorage.getItem('olcrtc_creds') || 'null'); // {username, password}
 
+const JITSI_PRESETS = [
+  { host: 'meet.jit.si', label: 'meet.jit.si', preferred: true, note: 'official, baseline' },
+  { host: 'jitsi.hamburg.ccc.de', label: 'hamburg.ccc', preferred: true, note: 'tested public' },
+  { host: 'meet.ffmuc.net', label: 'ffmuc', preferred: true, note: 'tested public' },
+  { host: 'meet.systemli.org', label: 'systemli', preferred: true, note: 'tested public' },
+  { host: 'jitsi.debian.social', label: 'debian.social', preferred: true, note: 'tested public' },
+  { host: 'meet.opensuse.org', label: 'opensuse', preferred: true, note: 'tested public' },
+  { host: 'vc.autistici.org', label: 'autistici', preferred: true, note: 'tested public' },
+  { host: 'freejitsi01.netcup.net', label: 'netcup', preferred: false, note: 'tested public' },
+  { host: 'jitsi.php-friends.de', label: 'php-friends', preferred: false, note: 'tested public' },
+  { host: 'jitsi.eichstaett.social', label: 'eichstaett', preferred: false, note: 'tested public' },
+  { host: 'meet.lug-stormarn.de', label: 'lug-stormarn', preferred: false, note: 'tested public' },
+  { host: 'meet.in-berlin.de', label: 'in-berlin', preferred: false, note: 'tested public' },
+  { host: 'jitsi.freifunk-duesseldorf.de', label: 'freifunk-dus', preferred: false, note: 'tested public' },
+  { host: 'jitsi.math.uzh.ch', label: 'math.uzh', preferred: false, note: 'tested public' },
+  { host: 'konferenz.netzbegruenung.de', label: 'netzbegruenung', preferred: false, note: 'tested public' },
+  { host: 'jitsi.is', label: 'jitsi.is', preferred: false, note: 'tested public' },
+  { host: 'virtual.chaosdorf.space', label: 'chaosdorf', preferred: false, note: 'tested public' },
+  { host: 'meet.rollenspiel.monster', label: 'rollenspiel', preferred: false, note: 'tested public' },
+  { host: 'meet.weimarnetz.de', label: 'weimarnetz', preferred: false, note: 'tested public' },
+  { host: 'meet.f3n-ac.de', label: 'f3n-ac', preferred: false, note: 'tested public' },
+];
+
+
 // ── Network helper ───────────────────────────────────────────────────────────
 async function api(path, opts = {}) {
   const url = API + path;
@@ -730,6 +754,100 @@ async function optimizeQRPayload(payload) {
   return { text: original, compressed: false, originalLength: original.length };
 }
 
+
+function roomTailOrDefault(current) {
+  const value = (current || '').trim();
+  const m = value.match(/^https?:\/\/[^\/]+(\/.*)?$/);
+  if (m) return m[1] || '/';
+  if (value && !value.includes('/')) return '/' + value;
+  const rnd = Math.random().toString(36).slice(2, 10);
+  return '/olcrtc-' + rnd;
+}
+
+function applyJitsiPresetHost(roomInput, host) {
+  const tail = roomTailOrDefault(roomInput.value);
+  roomInput.value = 'https://' + host + tail;
+  roomInput.focus();
+}
+
+function currentJitsiURL(roomInput) {
+  const value = (roomInput.value || '').trim();
+  if (value) return value;
+  return 'https://meet.jit.si/' + roomTailOrDefault(value);
+}
+
+function createJitsiPresetPanel(roomInput, bridgeModeInput, transportInput) {
+  const wrap = el('div', 'mb-3 text-xs text-gray-400 hidden');
+  const head = el('div', 'flex items-center justify-between gap-2 mb-2 flex-wrap');
+  const title = el('div', 'font-medium text-gray-300');
+  title.innerHTML = 'Jitsi servers <span class="text-gray-500">(проверенные публичные хосты)</span>';
+  const actions = el('div', 'flex items-center gap-2 flex-wrap');
+  const checkBtn = el('button', 'btn btn-secondary btn-sm');
+  checkBtn.type = 'button';
+  checkBtn.innerHTML = icon('wifi', 12) + '<span>Проверить выбранный</span>';
+  actions.appendChild(checkBtn);
+  head.appendChild(title);
+  head.appendChild(actions);
+  wrap.appendChild(head);
+
+  const info = el('div', 'text-gray-500 mb-2 leading-relaxed');
+  info.innerHTML = 'Выбери host, потом оставь или измени имя комнаты после <code>/</code>. ' +
+    '<b>⭐ preferred</b> — хорошие кандидаты для fallback-профилей. ' +
+    'Colibri WS нельзя гарантировать по одному config.js: он подтверждается при запуске комнаты. Для скорости используй <b>datachannel + bridge=auto</b>, а для диагностики можно поставить <b>bridge=colibri-ws</b>.';
+  wrap.appendChild(info);
+
+  const btns = el('div', 'flex flex-wrap gap-1.5');
+  JITSI_PRESETS.forEach((preset) => {
+    const btn = el('button', 'px-2 py-1 rounded border text-xs');
+    btn.type = 'button';
+    btn.dataset.host = preset.host;
+    btn.style.borderColor = preset.preferred ? 'rgba(34,197,94,.55)' : 'var(--color-hairline)';
+    btn.style.color = preset.preferred ? '#86efac' : '';
+    btn.title = preset.host + ' · ' + preset.note;
+    btn.textContent = (preset.preferred ? '⭐ ' : '') + preset.label;
+    btn.addEventListener('mouseenter', () => {
+      btn.style.borderColor = 'var(--color-primary)';
+      btn.style.color = 'var(--color-primary)';
+    });
+    btn.addEventListener('mouseleave', () => {
+      btn.style.borderColor = preset.preferred ? 'rgba(34,197,94,.55)' : 'var(--color-hairline)';
+      btn.style.color = preset.preferred ? '#86efac' : '';
+    });
+    btn.addEventListener('click', () => applyJitsiPresetHost(roomInput, preset.host));
+    btns.appendChild(btn);
+  });
+  wrap.appendChild(btns);
+
+  const result = el('div', 'mt-2 text-xs text-gray-500');
+  wrap.appendChild(result);
+  checkBtn.onclick = async () => {
+    const url = currentJitsiURL(roomInput);
+    await withLoading(checkBtn, async () => {
+      try {
+        const res = await api('/jitsi/check?url=' + encodeURIComponent(url));
+        const cls = res.ok ? 'text-emerald-300' : 'text-amber-300';
+        result.className = 'mt-2 text-xs ' + cls;
+        result.innerHTML = (res.ok ? 'OK' : 'WARN') + ': ' + (res.host || url) +
+          ' · ' + (res.latency_ms || '-') + 'ms' +
+          ' · BOSH=' + (!!res.has_bosh) +
+          ' · WS=' + (!!res.has_websocket) +
+          ' · Colibri hint=' + (!!res.colibri_ws_hint) +
+          '<br>' + (res.message || '');
+        if (bridgeModeInput && res.recommended_mode && bridgeModeInput.value === 'auto') {
+          bridgeModeInput.value = res.recommended_mode === 'sctp' ? 'auto' : res.recommended_mode;
+        }
+        if (transportInput && res.ok && transportInput.value === 'datachannel') {
+          // keep user choice, only hint in UI
+        }
+      } catch (e) {
+        result.className = 'mt-2 text-xs text-red-300';
+        result.textContent = 'Ошибка проверки: ' + e.message;
+      }
+    });
+  };
+  return wrap;
+}
+
 // ── Settings page ────────────────────────────────────────────────────────────
 async function renderSettings(app) {
   const wrap = el('div', 'max-w-2xl mx-auto p-4 md:p-6');
@@ -1165,39 +1283,7 @@ function showCreateInstanceModal() {
   wbHint.innerHTML = '<b>WB Stream больше не создаёт румы автоматически.</b> Создайте руму на <a href="https://stream.wb.ru" target="_blank" rel="noopener" class="underline">stream.wb.ru</a> и вставьте её ID в поле <b>Room ID</b>.';
   connectionSec.appendChild(wbHint);
 
-  const jitsiPresets = el('div', 'mb-3 text-xs text-gray-400 hidden flex flex-wrap items-center gap-2');
-  jitsiPresets.innerHTML = '<span>Jitsi server:</span>'
-    + '<button type="button" data-host="meet.small-dm.ru" class="px-2 py-0.5 rounded border" style="border-color: var(--color-hairline); transition: all 0.15s;">meet.small-dm.ru</button>'
-    + '<button type="button" data-host="meet1.arbitr.ru" class="px-2 py-0.5 rounded border" style="border-color: var(--color-hairline); transition: all 0.15s;">meet1.arbitr.ru</button>'
-    + '<button type="button" data-host="meet.handyweb.org" class="px-2 py-0.5 rounded border" style="border-color: var(--color-hairline); transition: all 0.15s;">meet.handyweb.org</button>'
-    + '<button type="button" data-host="meet.cryptopro.ru" class="px-2 py-0.5 rounded border" style="border-color: var(--color-hairline); transition: all 0.15s;">meet.cryptopro.ru</button>'
-    + '<span class="text-gray-500">(клик подставит/заменит хост в Room ID)</span>';
-  jitsiPresets.querySelectorAll('button[data-host]').forEach((btn) => {
-    btn.addEventListener('mouseenter', () => {
-      btn.style.borderColor = 'var(--color-primary)';
-      btn.style.color = 'var(--color-primary)';
-    });
-    btn.addEventListener('mouseleave', () => {
-      btn.style.borderColor = 'var(--color-hairline)';
-      btn.style.color = '';
-    });
-    btn.addEventListener('click', () => {
-      const host = btn.dataset.host;
-      const current = roomIDField.input.value.trim();
-      // If current value looks like a URL, swap the host. Otherwise prefill template.
-      const m = current.match(/^https?:\/\/[^\/]+(\/.*)?$/);
-      if (m) {
-        const tail = m[1] || '/';
-        roomIDField.input.value = 'https://' + host + tail;
-      } else if (current && !current.includes('/')) {
-        // Looks like just a room name — promote to full URL.
-        roomIDField.input.value = 'https://' + host + '/' + current;
-      } else {
-        roomIDField.input.value = 'https://' + host + '/';
-      }
-      roomIDField.input.focus();
-    });
-  });
+  const jitsiPresets = createJitsiPresetPanel(roomIDField.input, null, transportField.input);
   connectionSec.appendChild(jitsiPresets);
 
   const jitsiBlock = el('div', 'border border-gray-700 rounded-lg p-3 mb-3 hidden');
@@ -1546,37 +1632,7 @@ function showConfigModal(inst) {
   div.appendChild(wbHint);
 
   // Jitsi server presets (shown only when carrier=jitsi)
-  const jitsiPresets = el('div', 'mb-3 text-xs text-gray-400 hidden flex flex-wrap items-center gap-2');
-  jitsiPresets.innerHTML = '<span>Jitsi server:</span>'
-    + '<button type="button" data-host="meet.small-dm.ru" class="px-2 py-0.5 rounded border" style="border-color: var(--color-hairline); transition: all 0.15s;">meet.small-dm.ru</button>'
-    + '<button type="button" data-host="meet1.arbitr.ru" class="px-2 py-0.5 rounded border" style="border-color: var(--color-hairline); transition: all 0.15s;">meet1.arbitr.ru</button>'
-    + '<button type="button" data-host="meet.handyweb.org" class="px-2 py-0.5 rounded border" style="border-color: var(--color-hairline); transition: all 0.15s;">meet.handyweb.org</button>'
-    + '<button type="button" data-host="meet.cryptopro.ru" class="px-2 py-0.5 rounded border" style="border-color: var(--color-hairline); transition: all 0.15s;">meet.cryptopro.ru</button>'
-    + '<span class="text-gray-500">(клик меняет хост в Room ID)</span>';
-  jitsiPresets.querySelectorAll('button[data-host]').forEach((btn) => {
-    btn.addEventListener('mouseenter', () => {
-      btn.style.borderColor = 'var(--color-primary)';
-      btn.style.color = 'var(--color-primary)';
-    });
-    btn.addEventListener('mouseleave', () => {
-      btn.style.borderColor = 'var(--color-hairline)';
-      btn.style.color = '';
-    });
-    btn.addEventListener('click', () => {
-      const host = btn.dataset.host;
-      const current = roomIDField.input.value.trim();
-      const m = current.match(/^https?:\/\/[^\/]+(\/.*)?$/);
-      if (m) {
-        const tail = m[1] || '/';
-        roomIDField.input.value = 'https://' + host + tail;
-      } else if (current && !current.includes('/')) {
-        roomIDField.input.value = 'https://' + host + '/' + current;
-      } else {
-        roomIDField.input.value = 'https://' + host + '/';
-      }
-      roomIDField.input.focus();
-    });
-  });
+  const jitsiPresets = createJitsiPresetPanel(roomIDField.input, bridgeModeField.input, transportField.input);
   div.appendChild(jitsiPresets);
 
   // Conditional visibility

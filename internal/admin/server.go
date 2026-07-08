@@ -79,6 +79,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/system/releases", s.withAuth(s.withCORS(s.handleListReleases)))
 	s.mux.HandleFunc("/api/system/update", s.withAuth(s.withCORS(s.handleUpdate)))
 	s.mux.HandleFunc("/api/system/update-progress", s.withAuth(s.withCORS(s.handleUpdateProgress)))
+	s.mux.HandleFunc("/api/jitsi/check", s.withAuth(s.withCORS(s.handleJitsiCheck)))
 
 	s.mux.HandleFunc("/sub/", s.handlePublicSub)
 }
