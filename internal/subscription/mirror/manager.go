@@ -168,3 +168,29 @@ func (m *Manager) publicURL(ctx context.Context, p string) (string, error) {
 }
 
 func (m *Manager) auth(req *http.Request) { req.Header.Set("Authorization", "OAuth "+m.cfg.OAuthToken) }
+
+// Test performs a tiny upload+delete probe to verify OAuth token and base path.
+// ponytail: reuses existing Publish primitives; no new HTTP plumbing.
+func (m *Manager) Test(ctx context.Context) error {
+    if m.cfg.OAuthToken == "" { return errors.New("oauth token empty") }
+    probe := path.Join(m.cfg.BasePath, ".olcrtc-ping-"+time.Now().Format("20060102-150405")+".json")
+    if !strings.HasPrefix(probe, "/") { probe = "/" + probe }
+    if err := m.ensureDirs(ctx, path.Dir(probe)); err != nil { return err }
+    href, err := m.uploadHref(ctx, probe)
+    if err != nil { return err }
+    if err := m.put(ctx, href, []byte("{\"ping\":true}")); err != nil { return err }
+    _ = m.deletePath(ctx, probe)
+    return nil
+}
+
+func (m *Manager) deletePath(ctx context.Context, p string) error {
+    u := "https://cloud-api.yandex.net/v1/disk/resources?path=" + url.QueryEscape(p)
+    req, _ := http.NewRequestWithContext(ctx, http.MethodDelete, u, nil)
+    m.auth(req)
+    resp, err := m.client.Do(req)
+    if err != nil { return err }
+    defer resp.Body.Close()
+    if resp.StatusCode == http.StatusNotFound || resp.StatusCode < 300 { return nil }
+    body,_:=io.ReadAll(io.LimitReader(resp.Body,4096))
+    return fmt.Errorf("yandex delete %s: %s: %s", p, resp.Status, string(body))
+}

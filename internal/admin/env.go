@@ -9,6 +9,40 @@ import (
 	"strings"
 )
 
+// ReadMirrorConfig reads OLCRTC_SUB_MIRROR_* from the main instance env file
+// (the file olcrtc-server.service loads via EnvironmentFile=, and which
+// olcrtc-launcher reads to template-generate config.yaml).
+func ReadMirrorConfig(configDir string) (enabled bool, provider, oauthToken, basePath string) {
+	vals := ReadInstanceEnv(InstanceEnvPath(configDir, 0))
+	enabled = vals["OLCRTC_SUB_MIRROR_ENABLED"] == "1"
+	provider = vals["OLCRTC_SUB_MIRROR_PROVIDER"]
+	oauthToken = vals["OLCRTC_SUB_MIRROR_YANDEX_OAUTH_TOKEN"]
+	basePath = vals["OLCRTC_SUB_MIRROR_YANDEX_BASE_PATH"]
+	return
+}
+
+// WriteMirrorConfig overlays the four OLCRTC_SUB_MIRROR_* keys into the main
+// instance env file, preserving existing keys. The file is root:olcrtc 0640;
+// we re-write through WriteInstanceEnv and re-apply 0640 since OAuth token is
+// a credential.
+func WriteMirrorConfig(configDir string, enabled bool, provider, oauthToken, basePath string) error {
+	p := InstanceEnvPath(configDir, 0)
+	enabledVal := "0"
+	if enabled {
+		enabledVal = "1"
+	}
+	vals := map[string]string{
+		"OLCRTC_SUB_MIRROR_ENABLED":               enabledVal,
+		"OLCRTC_SUB_MIRROR_PROVIDER":             provider,
+		"OLCRTC_SUB_MIRROR_YANDEX_OAUTH_TOKEN":   oauthToken,
+		"OLCRTC_SUB_MIRROR_YANDEX_BASE_PATH":     basePath,
+	}
+	if err := WriteInstanceEnv(p, vals); err != nil {
+		return err
+	}
+	return os.Chmod(p, 0640)
+}
+
 // ReadAdminCredentials reads username and password from admin.env.
 func ReadAdminCredentials(configDir string) (username, password string, err error) {
 	f := filepath.Join(configDir, "admin.env")

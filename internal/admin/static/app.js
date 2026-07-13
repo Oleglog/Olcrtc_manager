@@ -1118,6 +1118,80 @@ async function renderSettings(app) {
   subUrlBlock.appendChild(subUrlInp);
   subUrlBlock.appendChild(subUrlRow);
   card.appendChild(subUrlBlock);
+
+  // Yandex Disk mirror (encrypted fallback)
+  const mirrorBlock = el('div', 'pt-2 border-t border-white/10');
+  mirrorBlock.innerHTML = '<h3 class="font-semibold mb-2 inline-flex items-center gap-2">' + icon('cloud', 16) + '<span>Yandex Disk mirror (encrypted fallback)</span></h3>';
+  mirrorBlock.appendChild(el('div', 'text-xs text-gray-500 mb-2', 'Сервер шифрует подписку AES-256-GCM и заливает на Yandex Disk. Клиент с выключенным туннелем скачивает mirror и расшифровывает.'));
+  const mirrorRow = el('div', 'flex flex-col gap-2 mt-2');
+
+  const enabledLabel = el('label', 'inline-flex items-center gap-2 text-sm');
+  const enabledInp = el('input', '');
+  enabledInp.type = 'checkbox';
+  enabledInp.checked = !!sys.mirror_enabled;
+  enabledLabel.appendChild(enabledInp);
+  enabledLabel.appendChild(el('span', '', 'Включить mirror'));
+  mirrorRow.appendChild(enabledLabel);
+
+  const tokenInp = el('input', '');
+  tokenInp.type = 'password';
+  tokenInp.setAttribute('aria-label', 'Yandex OAuth токен');
+  tokenInp.placeholder = sys.mirror_token_present ? (sys.mirror_token_masked || '••••') : 'вставьте OAuth токен приложения Yandex';
+  if (sys.mirror_token_present) tokenInp.value = sys.mirror_token_masked || '••••';
+  mirrorRow.appendChild(el('div', 'text-xs text-gray-500 mt-1', 'OAuth токен Yandex Disk. Не меняйте поле •••• если не хотите перезаписать токен.'));
+
+  const baseInp = el('input', '');
+  baseInp.placeholder = '/olcrtc/subscriptions';
+  baseInp.value = sys.mirror_base_path || '';
+  baseInp.setAttribute('aria-label', 'Base path на Yandex Disk');
+  mirrorRow.appendChild(el('div', 'text-xs text-gray-500 mt-1', 'Путь на Yandex Disk, куда кладутся файлы подписок.'));
+  mirrorRow.appendChild(baseInp);
+
+  const mirrorBtns = el('div', 'flex gap-2 mt-2 flex-wrap');
+  const testBtn = el('button', 'btn btn-secondary');
+  testBtn.textContent = 'Тест upload';
+  testBtn.onclick = async () => {
+    await withLoading(testBtn, async () => {
+      try {
+        const res = await api('/system/mirror-config/test', {
+          method: 'POST',
+          body: JSON.stringify({ provider: 'yandex_disk', base_path: baseInp.value, oauth_token: tokenInp.value }),
+        });
+        showToast(res.ok ? (res.message + ' (' + res.latency_ms + 'ms)') : ('Ошибка: ' + (res.message || res.error)), res.ok ? 'success' : 'error');
+      } catch (e) {
+        try { const err = JSON.parse(e.message); showToast(err.message || e.message, 'error'); }
+        catch { showToast(e.message, 'error'); }
+      }
+    });
+  };
+  const saveBtn = el('button', 'btn btn-primary');
+  saveBtn.textContent = 'Сохранить mirror';
+  saveBtn.onclick = async () => {
+    await withLoading(saveBtn, async () => {
+      try {
+        const res = await api('/system/mirror-config', {
+          method: 'POST',
+          body: JSON.stringify({
+            enabled: enabledInp.checked,
+            provider: 'yandex_disk',
+            base_path: baseInp.value,
+            oauth_token: tokenInp.value,
+          }),
+        });
+        showToast(res.message || 'Настройки зеркала сохранены', 'success');
+        render();
+      } catch (e) {
+        try { const err = JSON.parse(e.message); showToast(err.message || e.message, 'error'); }
+        catch { showToast(e.message, 'error'); }
+      }
+    });
+  };
+  mirrorBtns.appendChild(testBtn);
+  mirrorBtns.appendChild(saveBtn);
+  mirrorRow.appendChild(mirrorBtns);
+  mirrorBlock.appendChild(mirrorRow);
+  card.appendChild(mirrorBlock);
+
   wrap.appendChild(card);
   app.appendChild(wrap);
 }

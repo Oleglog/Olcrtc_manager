@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
+	"github.com/openlibrecommunity/olcrtc/internal/subscription/mirror"
 )
 
 func (s *Server) handleSystemStatus(w http.ResponseWriter, r *http.Request) {
@@ -74,6 +76,12 @@ func (s *Server) handleSystemStatus(w http.ResponseWriter, r *http.Request) {
 		"instances_running": running,
 		"admin_url":         fmt.Sprintf("https://%s:%d", adminDomain, s.cfg.Port),
 	}
+	mEnabled, mProvider, mToken, mBase := ReadMirrorConfig(s.cfg.ConfigDir)
+	result["mirror_enabled"] = mEnabled
+	result["mirror_provider"] = mProvider
+	result["mirror_base_path"] = mBase
+	result["mirror_token_present"] = mToken != ""
+	result["mirror_token_masked"] = maskToken(mToken)
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -301,4 +309,145 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", contentType)
 	_, _ = w.Write(data)
+}
+
+// mirrorTokenMask is the sentinel returned by GET; if the client POSTs it back
+// unchanged, the existing token is preserved.
+const mirrorTokenMask = "••••"
+
+func maskToken(tok string) string {
+	if tok == "" {
+		return ""
+	}
+	if len(tok) <= 4 {
+		return strings.Repeat("•", len(tok))
+	}
+	return mirrorTokenMask + tok[len(tok)-4:]
+}
+
+func (s *Server) handleSystemMirrorConfig(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		enabled, provider, oauthToken, basePath := ReadMirrorConfig(s.cfg.ConfigDir)
+		if provider == "" {
+			provider = "yandex_disk"
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"enabled":        enabled,
+			"provider":       provider,
+			"base_path":      basePath,
+			"token_masked":   maskToken(oauthToken),
+			"token_present":  oauthToken != "",
+		})
+	case http.MethodPost:
+		var req struct {
+			Enabled    bool   `json:"enabled"`
+			Provider   string `json:"provider"`
+			BasePath   string `json:"base_path"`
+			OAuthToken string `json:"oauth_token"`
+		}
+		if err := readJSON(r, &req); err != nil {
+			http.Error(w, "Bad Request", http.StatusBadRequest)
+			return
+		}
+		provider := strings.TrimSpace(req.Provider)
+		if provider == "" {
+			provider = "yandex_disk"
+		}
+		if provider != "yandex_disk" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error":   "unsupported_provider",
+				"message": "Поддерживается только yandex_disk",
+			})
+			return
+		}
+		basePath := strings.TrimSpace(req.BasePath)
+		if basePath != "" && !strings.HasPrefix(basePath, "/") {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error":   "invalid_base_path",
+				"message": "Base path должен начинаться с /",
+			})
+			return
+		}
+		_, _, existingToken, _ := ReadMirrorConfig(s.cfg.ConfigDir)
+		token := existingToken
+		if req.OAuthToken != "" && req.OAuthToken != mirrorTokenMask {
+			token = strings.TrimSpace(req.OAuthToken)
+		}
+		if err := WriteMirrorConfig(s.cfg.ConfigDir, req.Enabled, provider, token, basePath); err != nil {
+			logger.Errorf("write mirror config: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{
+				"error":   "persist_failed",
+				"message": err.Error(),
+			})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":               true,
+			"enabled":          req.Enabled,
+			"provider":         provider,
+			"base_path":        basePath,
+			"token_masked":     maskToken(token),
+			"restart_required": true,
+			"message":          "Настройки зеркала сохранены. Перезапустите olcrtc-server для применения.",
+		})
+	default:
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleSystemMirrorConfigTest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Provider   string `json:"provider"`
+		BasePath   string `json:"base_path"`
+		OAuthToken string `json:"oauth_token"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+	provider := strings.TrimSpace(req.Provider)
+	if provider == "" {
+		provider = "yandex_disk"
+	}
+	token := strings.TrimSpace(req.OAuthToken)
+	if token == "" || token == mirrorTokenMask {
+		_, _, existing, _ := ReadMirrorConfig(s.cfg.ConfigDir)
+		token = existing
+	}
+	if token == "" {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":      false,
+			"error":   "missing_token",
+			"message": "OAuth токен не указан",
+		})
+		return
+	}
+	m := mirror.New(mirror.Config{
+		Enabled:    true,
+		Provider:   provider,
+		OAuthToken: token,
+		BasePath:   strings.TrimSpace(req.BasePath),
+	})
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	start := time.Now()
+	if err := m.Test(ctx); err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":         false,
+			"error":      "test_failed",
+			"message":    err.Error(),
+			"latency_ms": time.Since(start).Milliseconds(),
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":         true,
+		"message":    "Yandex Disk доступен, тестовый upload выполнен",
+		"latency_ms": time.Since(start).Milliseconds(),
+	})
 }
