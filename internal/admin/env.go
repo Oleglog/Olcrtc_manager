@@ -14,7 +14,8 @@ import (
 // olcrtc-launcher reads to template-generate config.yaml).
 func ReadMirrorConfig(configDir string) (enabled bool, provider, oauthToken, basePath string) {
 	vals := ReadInstanceEnv(InstanceEnvPath(configDir, 0))
-	enabled = vals["OLCRTC_SUB_MIRROR_ENABLED"] == "1"
+	// ponytail: accept both "true"/"false" (current) and "1"/"0" (1.9.41 legacy).
+	enabled = vals["OLCRTC_SUB_MIRROR_ENABLED"] == "true" || vals["OLCRTC_SUB_MIRROR_ENABLED"] == "1"
 	provider = vals["OLCRTC_SUB_MIRROR_PROVIDER"]
 	oauthToken = vals["OLCRTC_SUB_MIRROR_YANDEX_OAUTH_TOKEN"]
 	basePath = vals["OLCRTC_SUB_MIRROR_YANDEX_BASE_PATH"]
@@ -25,14 +26,22 @@ func ReadMirrorConfig(configDir string) (enabled bool, provider, oauthToken, bas
 // instance env file, preserving existing keys. The file is root:olcrtc 0640;
 // we re-write through WriteInstanceEnv and re-apply 0640 since OAuth token is
 // a credential.
+//
+// ponytail: writes "true"/"false" for ENABLED, not "1"/"0" — yaml.v3 parses
+// `1` as int (not bool), which would fail SubscriptionMirror.Enabled unmarshal.
+// Also strips surrounding quotes from oauthToken as defense against pasted
+// quoted tokens that would break the launcher's YAML templating.
 func WriteMirrorConfig(configDir string, enabled bool, provider, oauthToken, basePath string) error {
 	p := InstanceEnvPath(configDir, 0)
-	enabledVal := "0"
+	enabledVal := "false"
 	if enabled {
-		enabledVal = "1"
+		enabledVal = "true"
 	}
+	oauthToken = stripEnvQuotes(oauthToken)
+	basePath = stripEnvQuotes(basePath)
+	provider = stripEnvQuotes(provider)
 	vals := map[string]string{
-		"OLCRTC_SUB_MIRROR_ENABLED":               enabledVal,
+		"OLCRTC_SUB_MIRROR_ENABLED":              enabledVal,
 		"OLCRTC_SUB_MIRROR_PROVIDER":             provider,
 		"OLCRTC_SUB_MIRROR_YANDEX_OAUTH_TOKEN":   oauthToken,
 		"OLCRTC_SUB_MIRROR_YANDEX_BASE_PATH":     basePath,
@@ -41,6 +50,19 @@ func WriteMirrorConfig(configDir string, enabled bool, provider, oauthToken, bas
 		return err
 	}
 	return os.Chmod(p, 0640)
+}
+
+// stripEnvQuotes removes one matching pair of surrounding " or ' so that
+// pasted quoted values don't end up double-quoted by the launcher template.
+func stripEnvQuotes(s string) string {
+	if len(s) < 2 {
+		return s
+	}
+	first, last := s[0], s[len(s)-1]
+	if (first == '"' && last == '"') || (first == '\'' && last == '\'') {
+		return s[1 : len(s)-1]
+	}
+	return s
 }
 
 // ReadAdminCredentials reads username and password from admin.env.

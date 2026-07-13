@@ -325,6 +325,20 @@ func maskToken(tok string) string {
 	return mirrorTokenMask + tok[len(tok)-4:]
 }
 
+// stripSurroundingQuotes removes one matching pair of surrounding " or ' from
+// a token. Defense against pasted tokens that arrive quoted and would break
+// YAML templating in config.yaml.
+func stripSurroundingQuotes(s string) string {
+	if len(s) < 2 {
+		return s
+	}
+	first, last := s[0], s[len(s)-1]
+	if (first == '"' && last == '"') || (first == '\'' && last == '\'') {
+		return s[1 : len(s)-1]
+	}
+	return s
+}
+
 func (s *Server) handleSystemMirrorConfig(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -371,8 +385,12 @@ func (s *Server) handleSystemMirrorConfig(w http.ResponseWriter, r *http.Request
 		}
 		_, _, existingToken, _ := ReadMirrorConfig(s.cfg.ConfigDir)
 		token := existingToken
-		if req.OAuthToken != "" && req.OAuthToken != mirrorTokenMask {
-			token = strings.TrimSpace(req.OAuthToken)
+		// ponytail: HasPrefix catches both the bare mask "••••" and the masked
+		// GET response "••••<last4>" the frontend pre-fills. Equality check
+		// missed the latter and persisted masked strings as real tokens.
+		submitted := strings.TrimSpace(req.OAuthToken)
+		if submitted != "" && !strings.HasPrefix(submitted, mirrorTokenMask) {
+			token = stripSurroundingQuotes(submitted)
 		}
 		if err := WriteMirrorConfig(s.cfg.ConfigDir, req.Enabled, provider, token, basePath); err != nil {
 			logger.Errorf("write mirror config: %v", err)
@@ -415,10 +433,12 @@ func (s *Server) handleSystemMirrorConfigTest(w http.ResponseWriter, r *http.Req
 		provider = "yandex_disk"
 	}
 	token := strings.TrimSpace(req.OAuthToken)
-	if token == "" || token == mirrorTokenMask {
+	// ponytail: HasPrefix catches masked GET response "••••<last4>" too.
+	if token == "" || strings.HasPrefix(token, mirrorTokenMask) {
 		_, _, existing, _ := ReadMirrorConfig(s.cfg.ConfigDir)
 		token = existing
 	}
+	token = stripSurroundingQuotes(token)
 	if token == "" {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"ok":      false,
