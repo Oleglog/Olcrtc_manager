@@ -1133,11 +1133,12 @@ async function renderSettings(app) {
   enabledLabel.appendChild(el('span', '', 'Включить mirror'));
   mirrorRow.appendChild(enabledLabel);
 
-  const tokenInp = el('input', '');
+  const tokenInp = el('input', 'w-full');
   tokenInp.type = 'password';
   tokenInp.setAttribute('aria-label', 'Yandex OAuth токен');
   tokenInp.placeholder = sys.mirror_token_present ? (sys.mirror_token_masked || '••••') : 'вставьте OAuth токен приложения Yandex';
   if (sys.mirror_token_present) tokenInp.value = sys.mirror_token_masked || '••••';
+  mirrorRow.appendChild(tokenInp);
   mirrorRow.appendChild(el('div', 'text-xs text-gray-500 mt-1', 'OAuth токен Yandex Disk. Не меняйте поле •••• если не хотите перезаписать токен.'));
 
   const baseInp = el('input', '');
