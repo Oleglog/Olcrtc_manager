@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,14 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/subscription/model"
 	"github.com/openlibrecommunity/olcrtc/internal/subscription/store"
 )
+
+func TestSyncMirrorStopsWhileSubscriptionDeleting(t *testing.T) {
+	srv := New(nil, 0, "")
+	srv.setMirrorDeleting("example", true)
+	if _, err := srv.syncMirror(context.Background(), "example"); err == nil {
+		t.Fatal("syncMirror succeeded while subscription deletion was in progress")
+	}
+}
 
 func TestGetMirrorReturnsStoredMetadataWithoutPublishing(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "subscriptions.db"))

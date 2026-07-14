@@ -95,6 +95,15 @@ func (m *Manager) Publish(ctx context.Context, slug string, lines []string, keyB
     return publicURL, nil
 }
 
+// Delete removes a subscription mirror. It intentionally works while mirror
+// publishing is disabled, as long as the saved Yandex credentials remain.
+func (m *Manager) Delete(ctx context.Context, slug string) error {
+    if m == nil || m.cfg.Provider != "yandex_disk" || m.cfg.OAuthToken == "" { return errors.New("yandex mirror credentials unavailable") }
+    filePath := path.Join(m.cfg.BasePath, slug+".json")
+    if !strings.HasPrefix(filePath, "/") { filePath = "/" + filePath }
+    return m.deletePath(ctx, filePath)
+}
+
 func (m *Manager) ensureDirs(ctx context.Context, dir string) error {
     dir = strings.Trim(dir, "/")
     if dir == "" { return nil }
@@ -184,7 +193,7 @@ func (m *Manager) Test(ctx context.Context) error {
 }
 
 func (m *Manager) deletePath(ctx context.Context, p string) error {
-    u := "https://cloud-api.yandex.net/v1/disk/resources?path=" + url.QueryEscape(p)
+    u := "https://cloud-api.yandex.net/v1/disk/resources?permanently=true&path=" + url.QueryEscape(p)
     req, _ := http.NewRequestWithContext(ctx, http.MethodDelete, u, nil)
     m.auth(req)
     resp, err := m.client.Do(req)

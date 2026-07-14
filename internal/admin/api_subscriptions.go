@@ -91,7 +91,7 @@ func (s *Server) writeSubscriptionUnavailable(w http.ResponseWriter) {
 
 func (s *Server) doProxy(w http.ResponseWriter, req *http.Request) {
 	timeout := 10 * time.Second
-	if req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/mirror") {
+	if req.Method == http.MethodDelete || (req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/mirror")) {
 		timeout = 90 * time.Second
 	}
 	client := &http.Client{Timeout: timeout}

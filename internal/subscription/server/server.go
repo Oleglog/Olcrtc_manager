@@ -46,6 +46,7 @@ type Server struct {
 	apiToken string
 	mirror   *mirror.Manager
 	mirrorMu sync.RWMutex
+	deleting map[string]struct{}
 	srv      *http.Server
 }
 
@@ -56,7 +57,7 @@ func New(st *store.Store, port int, apiToken string, mirrorManager ...*mirror.Ma
 	if len(mirrorManager) > 0 {
 		mm = mirrorManager[0]
 	}
-	return &Server{store: st, port: port, apiToken: apiToken, mirror: mm}
+	return &Server{store: st, port: port, apiToken: apiToken, mirror: mm, deleting: make(map[string]struct{})}
 }
 
 // Start starts the HTTP server and blocks until ctx is cancelled.
@@ -125,6 +126,26 @@ func (s *Server) currentMirror() *mirror.Manager {
 	s.mirrorMu.RLock()
 	defer s.mirrorMu.RUnlock()
 	return s.mirror
+}
+
+func (s *Server) setMirrorDeleting(slug string, deleting bool) {
+	s.mirrorMu.Lock()
+	defer s.mirrorMu.Unlock()
+	if deleting {
+		if s.deleting == nil {
+			s.deleting = make(map[string]struct{})
+		}
+		s.deleting[slug] = struct{}{}
+	} else {
+		delete(s.deleting, slug)
+	}
+}
+
+func (s *Server) mirrorDeleting(slug string) bool {
+	s.mirrorMu.RLock()
+	defer s.mirrorMu.RUnlock()
+	_, deleting := s.deleting[slug]
+	return deleting
 }
 
 func (s *Server) mirrorEnabled() bool {
@@ -319,6 +340,28 @@ func (s *Server) deleteSubscription(w http.ResponseWriter, r *http.Request, slug
 		return
 	}
 
+	s.setMirrorDeleting(slug, true)
+	defer s.setMirrorDeleting(slug, false)
+	if _, err := s.store.GetMirror(slug); err == nil {
+		manager := s.currentMirror()
+		if manager == nil {
+			http.Error(w, "Mirror cleanup unavailable: Yandex settings are missing", http.StatusBadGateway)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+		err = manager.Delete(ctx, slug)
+		cancel()
+		if err != nil {
+			http.Error(w, "Mirror cleanup failed: "+err.Error(), http.StatusBadGateway)
+			logger.Errorf("deleteMirror %s: %v", slug, err)
+			return
+		}
+	} else if !errors.Is(err, store.ErrNotFound) {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		logger.Errorf("getMirror before delete %s: %v", slug, err)
+		return
+	}
+
 	if err := s.store.DeleteSubscription(slug); errors.Is(err, store.ErrNotFound) {
 		http.Error(w, "Not Found", http.StatusNotFound)
 		return
@@ -506,6 +549,9 @@ func (s *Server) syncMirrorAsync(ctx context.Context, slug string) {
 }
 
 func (s *Server) syncMirror(ctx context.Context, slug string) (*model.Mirror, error) {
+	if s.mirrorDeleting(slug) {
+		return nil, errors.New("subscription deletion in progress")
+	}
 	manager := s.currentMirror()
 	if manager == nil || !manager.Enabled() {
 		return nil, errors.New("mirror manager is disabled")
@@ -522,7 +568,25 @@ func (s *Server) syncMirror(ctx context.Context, slug string) (*model.Mirror, er
 	if err != nil {
 		return nil, err
 	}
-	return s.store.UpsertMirror(slug, "yandex_disk", publicURL, key)
+	cleanup := func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if cleanupErr := manager.Delete(cleanupCtx, slug); cleanupErr != nil {
+			logger.Warnf("cleanup orphaned mirror %s: %v", slug, cleanupErr)
+		}
+	}
+	if s.mirrorDeleting(slug) {
+		cleanup()
+		return nil, errors.New("subscription deletion in progress")
+	}
+	stored, err := s.store.UpsertMirror(slug, "yandex_disk", publicURL, key)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			cleanup()
+		}
+		return nil, err
+	}
+	return stored, nil
 }
 
 func reqContext(r *http.Request) context.Context {

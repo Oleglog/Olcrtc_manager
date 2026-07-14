@@ -685,7 +685,7 @@ function renderSubRow(sub, instances, sys) {
   delBtn.onclick = async () => {
     const ok = await showConfirm({
       title: 'Удалить подписку «' + sub.name + '»?',
-      message: 'Все инстансы в этой подписке будут отвязаны. URL подписки перестанет работать.',
+      message: 'Все инстансы будут отвязаны, URL перестанет работать, а mirror JSON будет удалён с Yandex Disk.',
       danger: true,
     });
     if (!ok) return;
