@@ -330,6 +330,49 @@ WHERE i.source_instance_id = ? AND i.raw_uri <> ?`, sourceID, rawURI)
 	return slugs, nil
 }
 
+// DeleteInstancesBySource removes every subscription entry linked to an Admin
+// UI instance and returns the affected subscription slugs.
+func (s *Store) DeleteInstancesBySource(sourceID int) ([]string, int64, error) {
+	if sourceID < 0 {
+		return nil, 0, nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	rows, err := tx.Query(`SELECT DISTINCT s.slug
+FROM instances i JOIN subscriptions s ON s.id = i.subscription_id
+WHERE i.source_instance_id = ?`, sourceID)
+	if err != nil {
+		return nil, 0, err
+	}
+	var slugs []string
+	for rows.Next() {
+		var slug string
+		if err := rows.Scan(&slug); err != nil {
+			_ = rows.Close()
+			return nil, 0, err
+		}
+		slugs = append(slugs, slug)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, 0, err
+	}
+
+	result, err := tx.Exec("DELETE FROM instances WHERE source_instance_id = ?", sourceID)
+	if err != nil {
+		return nil, 0, err
+	}
+	removed, _ := result.RowsAffected()
+	if err := tx.Commit(); err != nil {
+		return nil, 0, err
+	}
+	sort.Strings(slugs)
+	return slugs, removed, nil
+}
+
 // DeleteInstance removes a single instance by ID.
 func (s *Store) DeleteInstance(id int64) error {
 	res, err := s.db.Exec("DELETE FROM instances WHERE id = ?", id)

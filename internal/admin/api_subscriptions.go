@@ -3,6 +3,7 @@ package admin
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -87,6 +88,45 @@ func (s *Server) writeSubscriptionUnavailable(w http.ResponseWriter) {
 		"error":   "subscription_service_unavailable",
 		"message": "Внутренний сервис подписок Admin UI не запущен.",
 	})
+}
+
+func (s *Server) removeLinkedSubscriptionInstance(id int) ([]string, int64, error) {
+	if !s.subscriptions.enabled() {
+		return nil, 0, nil
+	}
+	body, err := json.Marshal(map[string]int{"source_instance_id": id})
+	if err != nil {
+		return nil, 0, err
+	}
+	urlStr, ok := s.subscriptions.endpointURL("/api/subscriptions/remove-linked")
+	if !ok {
+		return nil, 0, fmt.Errorf("subscription backend is unavailable")
+	}
+	req, err := http.NewRequest(http.MethodPost, urlStr, bytes.NewReader(body))
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if token := s.subscriptions.token(); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := (&http.Client{Timeout: 90 * time.Second}).Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		message, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, 0, fmt.Errorf("subscription cleanup status %d: %s", resp.StatusCode, strings.TrimSpace(string(message)))
+	}
+	var result struct {
+		Removed int64    `json:"removed_instances"`
+		Updated []string `json:"updated_subscriptions"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, 0, err
+	}
+	return result.Updated, result.Removed, nil
 }
 
 func (s *Server) doProxy(w http.ResponseWriter, req *http.Request) {

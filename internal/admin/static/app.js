@@ -603,14 +603,15 @@ function renderInstanceCard(inst) {
     delBtn.onclick = async () => {
       const ok = await showConfirm({
         title: 'Удалить инстанс #' + inst.id + '?',
-        message: 'Сервис будет остановлен, env-файл удалён. Это действие необратимо.',
+        message: 'Сервис будет остановлен, env-файл удалён, а инстанс будет убран из всех подписок. Это действие необратимо.',
         danger: true,
         confirmText: 'Удалить',
       });
       if (!ok) return;
       try {
-        await api('/instances/' + inst.id, { method: 'DELETE' });
-        showToast('Удалено');
+        const result = await api('/instances/' + inst.id, { method: 'DELETE' });
+        const removed = result.removed_subscription_entries || 0;
+        showToast('Удалено' + (removed ? (', из подписок убрано записей: ' + removed) : ''));
         render();
       } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
     };

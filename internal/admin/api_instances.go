@@ -337,6 +337,11 @@ func (s *Server) deleteInstance(w http.ResponseWriter, id int) {
 		http.Error(w, "Cannot delete main instance", http.StatusBadRequest)
 		return
 	}
+	updatedSubscriptions, removedEntries, err := s.removeLinkedSubscriptionInstance(id)
+	if err != nil {
+		http.Error(w, "Cannot remove instance from subscriptions: "+err.Error(), http.StatusBadGateway)
+		return
+	}
 	svc := InstanceService(id)
 	_ = SystemctlStop(svc)
 
@@ -349,7 +354,11 @@ func (s *Server) deleteInstance(w http.ResponseWriter, id int) {
 	dir := filepath.Dir(envPath)
 	_ = os.Remove(dir)
 
-	writeJSON(w, http.StatusOK, map[string]any{"deleted": id})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"deleted":                      id,
+		"removed_subscription_entries": removedEntries,
+		"updated_subscriptions":        updatedSubscriptions,
+	})
 }
 
 func (s *Server) updateInstanceConfig(w http.ResponseWriter, r *http.Request, id int) {

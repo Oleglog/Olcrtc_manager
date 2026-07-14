@@ -127,6 +127,50 @@ CREATE TABLE instances (
 	}
 }
 
+func TestDeleteInstancesBySource(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "subscriptions.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	for _, slug := range []string{"alpha", "beta"} {
+		if _, err := s.CreateSubscription(slug, slug); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sourceID := 0
+	for _, slug := range []string{"alpha", "beta"} {
+		if _, err := s.AddInstanceWithSource(slug, "olcrtc://wbstream@room/"+slug+"?key=one#linked", &sourceID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.AddInstance("alpha", "olcrtc://manual@room/keep?key=two#manual"); err != nil {
+		t.Fatal(err)
+	}
+
+	slugs, removed, err := s.DeleteInstancesBySource(sourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 2 || !reflect.DeepEqual(slugs, []string{"alpha", "beta"}) {
+		t.Fatalf("DeleteInstancesBySource() removed=%d slugs=%v", removed, slugs)
+	}
+	alpha, err := s.ListInstances("alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(alpha) != 1 || alpha[0].SourceInstanceID != nil {
+		t.Fatalf("alpha instances after delete = %+v", alpha)
+	}
+	beta, err := s.ListInstances("beta")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(beta) != 0 {
+		t.Fatalf("beta instances after delete = %+v", beta)
+	}
+}
+
 func hasColumn(t *testing.T, db *sql.DB, table, column string) bool {
 	t.Helper()
 	rows, err := db.Query("PRAGMA table_info(" + table + ")")

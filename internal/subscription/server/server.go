@@ -84,6 +84,7 @@ func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
 	mux.HandleFunc("/api/subscriptions/export", s.localhostOnly(s.handleExport))
 	mux.HandleFunc("/api/subscriptions/import", s.localhostOnly(s.handleImport))
 	mux.HandleFunc("/api/subscriptions/refresh-linked", s.localhostOnly(s.handleRefreshLinked))
+	mux.HandleFunc("/api/subscriptions/remove-linked", s.localhostOnly(s.handleRemoveLinked))
 	mux.HandleFunc("/api/export", s.localhostOnly(s.handleExport))
 	mux.HandleFunc("/api/import", s.localhostOnly(s.handleImport))
 
@@ -449,6 +450,37 @@ func (s *Server) handleRefreshLinked(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"updated_subscriptions": slugs,
 		"mirror_errors":         mirrorErrors,
+	})
+}
+
+func (s *Server) handleRemoveLinked(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		SourceInstanceID *int `json:"source_instance_id"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
+		http.Error(w, "Bad Request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.SourceInstanceID == nil || *req.SourceInstanceID < 0 {
+		http.Error(w, "Bad Request: source_instance_id is required", http.StatusBadRequest)
+		return
+	}
+	slugs, removed, err := s.store.DeleteInstancesBySource(*req.SourceInstanceID)
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		logger.Errorf("remove linked instance %d: %v", *req.SourceInstanceID, err)
+		return
+	}
+	for _, slug := range slugs {
+		s.syncMirrorAsync(r.Context(), slug)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"removed_instances":     removed,
+		"updated_subscriptions": slugs,
 	})
 }
 
