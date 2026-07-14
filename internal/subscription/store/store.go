@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -66,6 +67,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 CREATE TABLE IF NOT EXISTS instances (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     subscription_id INTEGER NOT NULL REFERENCES subscriptions(id) ON DELETE CASCADE,
+    source_instance_id INTEGER,
     raw_uri         TEXT    NOT NULL,
     label           TEXT,
     created_at      DATETIME NOT NULL
@@ -82,9 +84,47 @@ CREATE TABLE IF NOT EXISTS subscription_mirrors (
 	if err != nil {
 		return fmt.Errorf("migrate schema: %w", err)
 	}
+	if err := ensureInstanceSourceColumn(db); err != nil {
+		return err
+	}
+	if _, err := db.Exec("CREATE INDEX IF NOT EXISTS idx_instances_source_instance_id ON instances(source_instance_id)"); err != nil {
+		return fmt.Errorf("create source instance index: %w", err)
+	}
 	// Enable FK enforcement.
 	_, err = db.Exec("PRAGMA foreign_keys = ON")
 	return err
+}
+
+func ensureInstanceSourceColumn(db *sql.DB) error {
+	rows, err := db.Query("PRAGMA table_info(instances)")
+	if err != nil {
+		return fmt.Errorf("inspect instances schema: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	hasColumn := false
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull, pk int
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			return fmt.Errorf("scan instances schema: %w", err)
+		}
+		if name == "source_instance_id" {
+			hasColumn = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("read instances schema: %w", err)
+	}
+	if hasColumn {
+		return nil
+	}
+	if _, err := db.Exec("ALTER TABLE instances ADD COLUMN source_instance_id INTEGER"); err != nil {
+		return fmt.Errorf("add source_instance_id: %w", err)
+	}
+	return nil
 }
 
 // ── Subscriptions ───────────────────────────────────────────────────────────
@@ -159,6 +199,12 @@ func (s *Store) DeleteSubscription(slug string) error {
 
 // AddInstance adds an olcrtc:// URI to a subscription.
 func (s *Store) AddInstance(slug, rawURI string) (*model.Instance, error) {
+	return s.AddInstanceWithSource(slug, rawURI, nil)
+}
+
+// AddInstanceWithSource adds an olcrtc:// URI and optionally links it to an
+// Admin UI instance. Instance ID zero is the main Admin UI instance.
+func (s *Store) AddInstanceWithSource(slug, rawURI string, sourceInstanceID *int) (*model.Instance, error) {
 	if !strings.HasPrefix(rawURI, "olcrtc://") {
 		return nil, ErrInvalidURI
 	}
@@ -171,9 +217,16 @@ func (s *Store) AddInstance(slug, rawURI string) (*model.Instance, error) {
 	label := extractLabel(rawURI)
 	now := time.Now().UTC()
 
+	var source any
+	var linkedSource *int
+	if sourceInstanceID != nil && *sourceInstanceID >= 0 {
+		value := *sourceInstanceID
+		source = value
+		linkedSource = &value
+	}
 	res, err := s.db.Exec(
-		"INSERT INTO instances (subscription_id, raw_uri, label, created_at) VALUES (?, ?, ?, ?)",
-		sub.ID, rawURI, label, now,
+		"INSERT INTO instances (subscription_id, source_instance_id, raw_uri, label, created_at) VALUES (?, ?, ?, ?, ?)",
+		sub.ID, source, rawURI, label, now,
 	)
 	if err != nil {
 		return nil, err
@@ -181,7 +234,7 @@ func (s *Store) AddInstance(slug, rawURI string) (*model.Instance, error) {
 	id, _ := res.LastInsertId()
 	return &model.Instance{
 		ID: id, SubscriptionID: sub.ID,
-		RawURI: rawURI, Label: label, CreatedAt: now,
+		SourceInstanceID: linkedSource, RawURI: rawURI, Label: label, CreatedAt: now,
 	}, nil
 }
 
@@ -193,7 +246,7 @@ func (s *Store) ListInstances(slug string) ([]model.Instance, error) {
 	}
 
 	rows, err := s.db.Query(
-		"SELECT id, subscription_id, raw_uri, label, created_at FROM instances WHERE subscription_id = ? ORDER BY created_at",
+		"SELECT id, subscription_id, source_instance_id, raw_uri, label, created_at FROM instances WHERE subscription_id = ? ORDER BY created_at",
 		sub.ID,
 	)
 	if err != nil {
@@ -204,12 +257,67 @@ func (s *Store) ListInstances(slug string) ([]model.Instance, error) {
 	var insts []model.Instance
 	for rows.Next() {
 		var inst model.Instance
-		if err := rows.Scan(&inst.ID, &inst.SubscriptionID, &inst.RawURI, &inst.Label, &inst.CreatedAt); err != nil {
+		var source sql.NullInt64
+		if err := rows.Scan(&inst.ID, &inst.SubscriptionID, &source, &inst.RawURI, &inst.Label, &inst.CreatedAt); err != nil {
 			return nil, err
+		}
+		if source.Valid {
+			value := int(source.Int64)
+			inst.SourceInstanceID = &value
 		}
 		insts = append(insts, inst)
 	}
 	return insts, rows.Err()
+}
+
+// RefreshLinkedInstances replaces snapshot URIs for entries linked to Admin
+// UI instances. It returns subscription slugs whose content changed.
+func (s *Store) RefreshLinkedInstances(uris map[int]string) ([]string, error) {
+	if len(uris) == 0 {
+		return nil, nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	changed := make(map[string]struct{})
+	for sourceID, rawURI := range uris {
+		if sourceID < 0 || !strings.HasPrefix(rawURI, "olcrtc://") {
+			continue
+		}
+		rows, err := tx.Query(`SELECT DISTINCT s.slug
+FROM instances i JOIN subscriptions s ON s.id = i.subscription_id
+WHERE i.source_instance_id = ? AND i.raw_uri <> ?`, sourceID, rawURI)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var slug string
+			if err := rows.Scan(&slug); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			changed[slug] = struct{}{}
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
+		if _, err := tx.Exec("UPDATE instances SET raw_uri = ?, label = ? WHERE source_instance_id = ? AND raw_uri <> ?", rawURI, extractLabel(rawURI), sourceID, rawURI); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	slugs := make([]string, 0, len(changed))
+	for slug := range changed {
+		slugs = append(slugs, slug)
+	}
+	sort.Strings(slugs)
+	return slugs, nil
 }
 
 // DeleteInstance removes a single instance by ID.
@@ -266,7 +374,6 @@ func (s *Store) InstanceURIs(slug string) ([]string, error) {
 	}
 	return uris, rows.Err()
 }
-
 
 // GetMirror returns mirror metadata for a subscription.
 func (s *Store) GetMirror(slug string) (*model.Mirror, error) {
@@ -343,7 +450,10 @@ func (s *Store) Export() (*model.ExportFormat, error) {
 		}
 		es := model.ExportSubscription{Slug: sub.Slug, Name: sub.Name}
 		for _, inst := range insts {
-			es.Instances = append(es.Instances, model.ExportInstance{RawURI: inst.RawURI})
+			es.Instances = append(es.Instances, model.ExportInstance{
+				SourceInstanceID: inst.SourceInstanceID,
+				RawURI:           inst.RawURI,
+			})
 		}
 		exp.Subscriptions = append(exp.Subscriptions, es)
 	}
@@ -374,9 +484,13 @@ func (s *Store) Import(data *model.ExportFormat, overwrite bool) (created, skipp
 		for _, ei := range es.Instances {
 			now := time.Now().UTC()
 			label := extractLabel(ei.RawURI)
+			var source any
+			if ei.SourceInstanceID != nil && *ei.SourceInstanceID >= 0 {
+				source = *ei.SourceInstanceID
+			}
 			_, iErr := s.db.Exec(
-				"INSERT INTO instances (subscription_id, raw_uri, label, created_at) VALUES (?, ?, ?, ?)",
-				sub.ID, ei.RawURI, label, now,
+				"INSERT INTO instances (subscription_id, source_instance_id, raw_uri, label, created_at) VALUES (?, ?, ?, ?, ?)",
+				sub.ID, source, ei.RawURI, label, now,
 			)
 			if iErr != nil {
 				return created, skipped, fmt.Errorf("add instance to %s: %w", es.Slug, iErr)

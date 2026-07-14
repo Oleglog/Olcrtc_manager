@@ -1,0 +1,28 @@
+[Unit]
+Description=olcRTC WB Stream Playwright session
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=olcrtc-wb
+Group=olcrtc-wb
+UMask=0077
+RuntimeDirectory=olcrtc-wb
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
+StateDirectory=olcrtc-wb
+StateDirectoryMode=0700
+ExecStart=/opt/olcrtc-wb-automation/run-session.sh
+KillMode=control-group
+TimeoutStopSec=10
+MemoryMax=1200M
+TasksMax=256
+NoNewPrivileges=true
+PrivateTmp=false
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/olcrtc-wb /run/olcrtc-wb /tmp/.X11-unix
+
+[Install]
+WantedBy=multi-user.target

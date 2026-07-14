@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-INSTALLER_VERSION="1.9.23"
+INSTALLER_VERSION="1.9.46"
 CARRIER_DEFAULT="jitsi"
 TRANSPORT_DEFAULT="vp8channel"
 DNS_DEFAULT="8.8.8.8:53"
@@ -139,6 +139,10 @@ download_release() {
 
 # ── Uninstall ────────────────────────────────────────────────────────────────
 do_uninstall() {
+    if [ -x /usr/local/lib/olcrtc/wb-automation/uninstall.sh ]; then
+        echo "[*] Removing WB browser automation..."
+        bash /usr/local/lib/olcrtc/wb-automation/uninstall.sh || true
+    fi
     echo "[*] Stopping services..."
     systemctl stop olcrtc-server.service 2>/dev/null || true
     systemctl stop olcrtc-admin.service 2>/dev/null || true

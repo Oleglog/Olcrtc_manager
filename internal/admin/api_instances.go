@@ -34,10 +34,13 @@ type Instance struct {
 	RoomID                  string `json:"room_id"`
 	ClientID                string `json:"client_id"`
 	HasAuthToken            bool   `json:"has_auth_token"`
+	AuthTokenExpiresAt      int64  `json:"auth_token_expires_at,omitempty"`
+	AuthTokenExpired        bool   `json:"auth_token_expired"`
 	Name                    string `json:"name"`
 	Status                  string `json:"status"`
 	Uptime                  string `json:"uptime"`
 	URI                     string `json:"uri"`
+	SubscriptionURI         string `json:"subscription_uri"`
 	SocksProxy              string `json:"socks_proxy"`
 	WarpProxy               string `json:"warp_proxy"`
 	DNS                     string `json:"dns"`
@@ -194,21 +197,6 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
 	envPath := InstanceEnvPath(s.cfg.ConfigDir, newID)
 	keyPath := InstanceKeyPath(s.cfg.ConfigDir, newID)
 
-	if err := os.MkdirAll(filepath.Dir(keyPath), 0755); err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-
-	key := make([]byte, 32)
-	if _, err := rand.Read(key); err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-	if err := os.WriteFile(keyPath, []byte(hex.EncodeToString(key)), 0600); err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-
 	// Parse optional body for initial config.
 	carrier := "jitsi"
 	transport := "vp8channel"
@@ -277,13 +265,31 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = fmt.Sprintf("%s_olcrtc_%d", carrier, newID+1)
 	}
+	roomID = strings.TrimSpace(roomID)
+	if carrier == "wbstream" && (roomID == "" || roomID == "any") {
+		http.Error(w, "wbstream requires a Room ID", http.StatusBadRequest)
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(keyPath), 0755); err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	if err := os.WriteFile(keyPath, []byte(hex.EncodeToString(key)), 0600); err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
 
 	vals := make(map[string]string)
 	vals["OLCRTC_CARRIER"] = carrier
 	vals["OLCRTC_TRANSPORT"] = transport
 	vals["OLCRTC_KEY"] = hex.EncodeToString(key)
 	vals["OLCRTC_NAME"] = name
-	vals["OLCRTC_ROOM_ID"] = strings.TrimSpace(roomID)
+	vals["OLCRTC_ROOM_ID"] = roomID
 	vals["OLCRTC_CLIENT_ID"] = uuid.NewString()
 	if authToken != "" {
 		vals["OLCRTC_AUTH_TOKEN"] = authToken
@@ -316,6 +322,9 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
 	if err := WriteInstanceEnv(envPath, vals); err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
+	}
+	if carrier == "wbstream" && authToken != "" {
+		s.saveWBAccountToken(authToken)
 	}
 
 	svc := InstanceService(newID)
@@ -373,6 +382,9 @@ func (s *Server) updateInstanceConfig(w http.ResponseWriter, r *http.Request, id
 	if err := WriteInstanceEnv(envPath, updates); err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
+	}
+	if carrier == "wbstream" {
+		s.saveWBAccountToken(effective["OLCRTC_AUTH_TOKEN"])
 	}
 
 	// Restart service.
@@ -657,6 +669,8 @@ func (s *Server) buildInstance(id int) Instance {
 	}
 
 	clientID := s.ensureClientID(envPath, vals["OLCRTC_CLIENT_ID"])
+	authToken := strings.TrimSpace(vals["OLCRTC_AUTH_TOKEN"])
+	authExpiresAt, _ := parseJWTExpiry(authToken)
 
 	label := "Доп. #" + strconv.Itoa(id)
 	if id == 0 {
@@ -672,21 +686,24 @@ func (s *Server) buildInstance(id int) Instance {
 	}
 
 	return Instance{
-		ID:                    id,
-		Label:                 label,
-		Carrier:               carrier,
-		Transport:             transport,
-		RoomID:                vals["OLCRTC_ROOM_ID"],
-		ClientID:              clientID,
-		HasAuthToken:          strings.TrimSpace(vals["OLCRTC_AUTH_TOKEN"]) != "",
-		Name:                  name,
-		Status:                status,
-		Uptime:                uptime,
-		URI:                   s.buildURIWith(vals, clientID, false),
-		SocksProxy:            vals["OLCRTC_SOCKS_PROXY"],
-		WarpProxy:             vals["OLCRTC_WARP_PROXY"],
-		DNS:                   vals["OLCRTC_DNS"],
-		Debug:                 vals["OLCRTC_DEBUG"] == "1",
+		ID:                      id,
+		Label:                   label,
+		Carrier:                 carrier,
+		Transport:               transport,
+		RoomID:                  vals["OLCRTC_ROOM_ID"],
+		ClientID:                clientID,
+		HasAuthToken:            authToken != "",
+		AuthTokenExpiresAt:      authExpiresAt,
+		AuthTokenExpired:        authExpiresAt > 0 && time.Now().Unix() >= authExpiresAt,
+		Name:                    name,
+		Status:                  status,
+		Uptime:                  uptime,
+		URI:                     s.buildURIWith(vals, clientID, false),
+		SubscriptionURI:         s.buildURIWith(vals, clientID, true),
+		SocksProxy:              vals["OLCRTC_SOCKS_PROXY"],
+		WarpProxy:               vals["OLCRTC_WARP_PROXY"],
+		DNS:                     vals["OLCRTC_DNS"],
+		Debug:                   vals["OLCRTC_DEBUG"] == "1",
 		JitsiBridgeMode:         effectiveJitsiBridgeMode(vals["OLCRTC_JITSI_BRIDGE_MODE"]),
 		JitsiSCTPMaxMessageSize: vals["OLCRTC_JITSI_SCTP_MAX_MESSAGE_SIZE"],
 		TrafficMaxPayloadSize:   vals["OLCRTC_TRAFFIC_MAX_PAYLOAD"],

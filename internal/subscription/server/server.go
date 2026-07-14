@@ -67,6 +67,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/api/subscriptions/", s.localhostOnly(s.handleSubscriptionsSlug))
 	mux.HandleFunc("/api/subscriptions/export", s.localhostOnly(s.handleExport))
 	mux.HandleFunc("/api/subscriptions/import", s.localhostOnly(s.handleImport))
+	mux.HandleFunc("/api/subscriptions/refresh-linked", s.localhostOnly(s.handleRefreshLinked))
 	mux.HandleFunc("/api/export", s.localhostOnly(s.handleExport))
 	mux.HandleFunc("/api/import", s.localhostOnly(s.handleImport))
 
@@ -304,14 +305,15 @@ func (s *Server) listInstances(w http.ResponseWriter, slug string) {
 
 func (s *Server) addInstance(w http.ResponseWriter, r *http.Request, slug string) {
 	var req struct {
-		RawURI string `json:"raw_uri"`
+		RawURI           string `json:"raw_uri"`
+		SourceInstanceID *int   `json:"source_instance_id"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
 		http.Error(w, "Bad Request: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	inst, err := s.store.AddInstance(slug, req.RawURI)
+	inst, err := s.store.AddInstanceWithSource(slug, req.RawURI, req.SourceInstanceID)
 	if errors.Is(err, store.ErrNotFound) {
 		http.Error(w, "Not Found: subscription not found", http.StatusNotFound)
 		return
@@ -327,6 +329,43 @@ func (s *Server) addInstance(w http.ResponseWriter, r *http.Request, slug string
 	}
 	s.syncMirrorAsync(reqContext(r), slug)
 	writeJSON(w, http.StatusCreated, inst)
+}
+
+func (s *Server) handleRefreshLinked(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		URIs map[int]string `json:"uris"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		http.Error(w, "Bad Request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	slugs, err := s.store.RefreshLinkedInstances(req.URIs)
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		logger.Errorf("refresh linked subscriptions: %v", err)
+		return
+	}
+	mirrorErrors := make(map[string]string)
+	for _, slug := range slugs {
+		if s.mirror == nil || !s.mirror.Enabled() {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+		_, syncErr := s.syncMirror(ctx, slug)
+		cancel()
+		if syncErr != nil {
+			mirrorErrors[slug] = syncErr.Error()
+			logger.Warnf("refresh linked mirror %s: %v", slug, syncErr)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"updated_subscriptions": slugs,
+		"mirror_errors":         mirrorErrors,
+	})
 }
 
 func (s *Server) deleteInstance(w http.ResponseWriter, id int64, slug string) {
@@ -377,7 +416,6 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]int{"created": created, "skipped": skipped})
 }
-
 
 func (s *Server) getMirror(w http.ResponseWriter, r *http.Request, slug string) {
 	if s.mirror == nil || !s.mirror.Enabled() {

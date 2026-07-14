@@ -115,6 +115,8 @@ const ICONS = {
   'rotate-ccw': '<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>',
   'shield': '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
   'sliders-horizontal': '<line x1="21" y1="4" x2="14" y2="4"/><line x1="10" y1="4" x2="3" y2="4"/><line x1="21" y1="12" x2="12" y2="12"/><line x1="8" y1="12" x2="3" y2="12"/><line x1="21" y1="20" x2="16" y2="20"/><line x1="12" y1="20" x2="3" y2="20"/><line x1="14" y1="2" x2="14" y2="6"/><line x1="8" y1="10" x2="8" y2="14"/><line x1="16" y1="18" x2="16" y2="22"/>',
+  'video': '<polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>',
+  'cloud': '<path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9z"/>',
   'sun': '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>',
   'moon': '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>'
 };
@@ -482,6 +484,14 @@ function renderInstanceCard(inst) {
     noRoomBadge.innerHTML = icon('alert-triangle', 12) + '<span>Room ID required</span>';
     noRoomBadge.title = 'wbstream больше не создаёт румы автоматически — задайте Room ID в настройках инстанса';
     badges.appendChild(noRoomBadge);
+  }
+  if (inst.carrier === 'wbstream' && inst.auth_token_expired) {
+    const expiredBadge = el('span', 'badge badge-amber');
+    expiredBadge.innerHTML = icon('alert-circle', 12) + '<span>Токен истёк</span>';
+    expiredBadge.title = inst.auth_token_expires_at
+      ? 'Истёк ' + new Date(inst.auth_token_expires_at * 1000).toLocaleString()
+      : 'Обновите общий WB-токен в Настройках';
+    badges.appendChild(expiredBadge);
   }
   if (inst.uptime) {
     const upBadge = el('span', 'badge');
@@ -866,6 +876,8 @@ async function renderSettings(app) {
 
   let sys = {};
   try { sys = await api('/system/status'); } catch (e) {}
+  let wbAutomation = {};
+  try { wbAutomation = await api('/wb-automation/components'); } catch (e) {}
 
   const card = el('div', 'card p-5 space-y-6');
 
@@ -1042,6 +1054,119 @@ async function renderSettings(app) {
   updateBlock.appendChild(updateRow);
   updateBlock.appendChild(selectorRow);
   card.appendChild(updateBlock);
+
+  // WB Stream browser automation
+  const wbBlock = el('div', 'pt-2 border-t border-white/10');
+  wbBlock.innerHTML = '<h3 class="font-semibold mb-2 inline-flex items-center gap-2">' + icon('video', 16) + '<span>WB Stream · автоматизация браузера</span></h3>';
+  const wbStatus = el('div', 'text-sm text-gray-300 mb-2');
+  wbStatus.textContent = !wbAutomation.supported
+    ? 'Эта платформа не поддерживается'
+    : (wbAutomation.installed ? 'Компоненты установлены' : 'Компоненты не установлены');
+  wbBlock.appendChild(wbStatus);
+  wbBlock.appendChild(el('div', 'text-xs text-gray-500 mb-3', 'Удалённый Chromium запускается на VPS только на время входа. Поддерживаются Ubuntu/Debian x86_64.'));
+
+  if (wbAutomation.token_expires_at) {
+    const expiry = new Date(wbAutomation.token_expires_at * 1000);
+    const tokenLine = el('div', 'text-sm mb-3 ' + (wbAutomation.token_expired ? 'text-red-300' : 'text-emerald-300'));
+    tokenLine.textContent = wbAutomation.token_expired
+      ? 'Общий WB-токен истёк: ' + expiry.toLocaleString()
+      : 'Общий WB-токен действует до: ' + expiry.toLocaleString();
+    wbBlock.appendChild(tokenLine);
+  }
+
+  const wbButtons = el('div', 'flex gap-2 flex-wrap mb-3');
+  if (!wbAutomation.installed && wbAutomation.supported) {
+    const installWBBtn = el('button', 'btn btn-primary');
+    installWBBtn.textContent = 'Установить компоненты';
+    installWBBtn.onclick = async () => {
+      const ok = await showConfirm({
+        title: 'Установить автоматизацию WB?',
+        message: 'Будут установлены Playwright, Chromium, Xvfb и noVNC. Потребуется около 1–1.5 ГБ диска.',
+        confirmText: 'Установить',
+      });
+      if (!ok) return;
+      try {
+        await api('/wb-automation/components', { method: 'POST', body: JSON.stringify({ action: 'install' }) });
+        showWBComponentsProgress('install');
+      } catch (e) { showToast('Ошибка запуска установки: ' + e.message, 'error'); }
+    };
+    wbButtons.appendChild(installWBBtn);
+  } else if (!wbAutomation.installed) {
+    wbButtons.appendChild(el('div', 'text-xs text-amber-300', 'Нужна Ubuntu/Debian x86_64.'));
+  } else {
+    if (wbAutomation.supported) {
+      const refreshWBBtn = el('button', 'btn btn-primary');
+      refreshWBBtn.textContent = wbAutomation.token_expired ? 'Получить новый токен' : 'Обновить общий токен';
+      refreshWBBtn.onclick = () => showWBAutomationSession('refresh');
+      wbButtons.appendChild(refreshWBBtn);
+    }
+    const removeWBBtn = el('button', 'btn btn-danger');
+    removeWBBtn.textContent = 'Удалить компоненты';
+    removeWBBtn.onclick = async () => {
+      const ok = await showConfirm({
+        title: 'Удалить автоматизацию WB?',
+        message: 'Chrome-профиль, cookies WB, прокси и служебные метаданные будут удалены. Рабочие конфигурации инстансов останутся.',
+        danger: true,
+        confirmText: 'Удалить',
+      });
+      if (!ok) return;
+      try {
+        await api('/wb-automation/components', { method: 'POST', body: JSON.stringify({ action: 'remove' }) });
+        showWBComponentsProgress('remove');
+      } catch (e) { showToast('Ошибка запуска удаления: ' + e.message, 'error'); }
+    };
+    wbButtons.appendChild(removeWBBtn);
+  }
+  wbBlock.appendChild(wbButtons);
+
+  const proxyGrid = el('div', 'grid grid-cols-1 md:grid-cols-3 gap-2');
+  const proxyServer = el('input', '');
+  proxyServer.placeholder = 'socks5://host:port, http:// или https://';
+  proxyServer.value = wbAutomation.proxy_server || '';
+  proxyServer.setAttribute('aria-label', 'WB browser proxy');
+  const proxyUser = el('input', '');
+  proxyUser.placeholder = 'Логин прокси';
+  proxyUser.value = wbAutomation.proxy_username || '';
+  const proxyPass = el('input', '');
+  proxyPass.type = 'password';
+  proxyPass.placeholder = wbAutomation.proxy_has_password ? '•••• (оставьте пустым, чтобы сохранить)' : 'Пароль прокси';
+  proxyGrid.appendChild(proxyServer);
+  proxyGrid.appendChild(proxyUser);
+  proxyGrid.appendChild(proxyPass);
+  wbBlock.appendChild(proxyGrid);
+  const saveProxyBtn = el('button', 'btn btn-secondary mt-2');
+  saveProxyBtn.textContent = 'Сохранить прокси WB';
+  saveProxyBtn.onclick = async () => {
+    await withLoading(saveProxyBtn, async () => {
+      try {
+        await api('/wb-automation/config', {
+          method: 'POST',
+          body: JSON.stringify({ server: proxyServer.value.trim(), username: proxyUser.value.trim(), password: proxyPass.value }),
+        });
+        showToast('Настройки прокси WB сохранены');
+        render();
+      } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
+    });
+  };
+  wbBlock.appendChild(saveProxyBtn);
+  if (wbAutomation.proxy_server) {
+    const clearProxyBtn = el('button', 'btn btn-secondary mt-2 ml-2');
+    clearProxyBtn.textContent = 'Сбросить прокси WB';
+    clearProxyBtn.onclick = async () => {
+      await withLoading(clearProxyBtn, async () => {
+        try {
+          await api('/wb-automation/config', {
+            method: 'POST',
+            body: JSON.stringify({ server: '', username: '', clear_password: true }),
+          });
+          showToast('Прокси WB сброшен');
+          render();
+        } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
+      });
+    };
+    wbBlock.appendChild(clearProxyBtn);
+  }
+  card.appendChild(wbBlock);
 
   // Security
   const secBlock = el('div', '');
@@ -1224,6 +1349,121 @@ function showTokenModal(tok) {
   closeBtn.onclick = () => closeModal(overlay);
 }
 
+function showWBComponentsProgress(action) {
+  const div = el('div', '');
+  div.innerHTML = '<h3 class="text-lg font-semibold mb-3">' + (action === 'remove' ? 'Удаление' : 'Установка') + ' автоматизации WB</h3>';
+  const message = el('div', 'text-sm text-gray-300 mb-3', 'Запуск операции...');
+  const progress = el('div', 'w-full bg-gray-800 rounded overflow-hidden mb-3');
+  const bar = el('div', 'h-2 bg-violet-500');
+  bar.style.width = '1%';
+  progress.appendChild(bar);
+  const closeBtn = el('button', 'btn btn-secondary hidden');
+  closeBtn.textContent = 'Закрыть';
+  div.appendChild(message);
+  div.appendChild(progress);
+  div.appendChild(closeBtn);
+  const overlay = showModal(div, { small: true });
+  overlay.dataset.onOutsideClose = 'cancel';
+  closeBtn.onclick = () => { closeModal(overlay); render(); };
+
+  const timer = setInterval(async () => {
+    try {
+      const state = await api('/wb-automation/components/progress');
+      message.textContent = state.message || state.phase || 'Выполняется...';
+      bar.style.width = Math.max(1, Math.min(100, state.percent || 0)) + '%';
+      if (state.phase === 'completed' || state.phase === 'error') {
+        clearInterval(timer);
+        closeBtn.classList.remove('hidden');
+        if (state.phase === 'completed') showToast(state.message || 'Операция завершена');
+        else showToast(state.message || 'Ошибка установки', 'error');
+      }
+    } catch (e) {
+      // The admin remains available; transient package-manager stalls are retried.
+    }
+  }, 1500);
+}
+
+async function showWBAutomationSession(action, onCreateResult) {
+  let started;
+  try {
+    started = await api('/wb-automation/session', { method: 'POST', body: JSON.stringify({ action }) });
+  } catch (e) {
+    showToast('Не удалось запустить WB-браузер: ' + e.message, 'error');
+    return;
+  }
+
+  const div = el('div', '');
+  div.innerHTML = '<h3 class="text-lg font-semibold mb-2">WB Stream · удалённый Chrome</h3>';
+  div.appendChild(el('div', 'text-xs text-gray-400 mb-2', 'Войдите вручную и пройдите CAPTCHA. После входа автоматизация продолжит работу сама.'));
+  const status = el('div', 'text-sm text-gray-300 mb-2', started.message || 'Запуск Chrome...');
+  const frame = el('iframe', 'w-full rounded border border-gray-700 bg-black');
+  frame.style.height = 'min(70vh, 800px)';
+  frame.setAttribute('allow', 'clipboard-read; clipboard-write');
+  frame.src = started.viewer_url;
+  const row = el('div', 'flex gap-2 justify-end mt-3');
+  const extendBtn = el('button', 'btn btn-secondary');
+  extendBtn.textContent = 'Продлить на 15 минут';
+  const cancelBtn = el('button', 'btn btn-danger');
+  cancelBtn.textContent = 'Отмена';
+  row.appendChild(extendBtn);
+  row.appendChild(cancelBtn);
+  div.appendChild(status);
+  div.appendChild(frame);
+  div.appendChild(row);
+  const overlay = showModal(div);
+  overlay.dataset.onOutsideClose = 'cancel';
+  const modal = overlay.querySelector('.modal');
+  if (modal) { modal.style.width = '96vw'; modal.style.maxWidth = '1280px'; }
+
+  extendBtn.onclick = async () => {
+    try {
+      await api('/wb-automation/session/extend', { method: 'POST', body: '{}' });
+      extendBtn.disabled = true;
+      extendBtn.textContent = 'Продлено';
+    } catch (e) { showToast(e.message, 'error'); }
+  };
+  cancelBtn.onclick = async () => {
+    try { await api('/wb-automation/session/cancel', { method: 'POST', body: '{}' }); }
+    catch (e) { showToast(e.message, 'error'); return; }
+    clearInterval(timer);
+    closeModal(overlay);
+  };
+
+  const timer = setInterval(async () => {
+    try {
+      const state = await api('/wb-automation/session');
+      status.textContent = state.message || state.phase;
+      if (state.phase === 'applying') {
+        frame.classList.add('hidden');
+        extendBtn.classList.add('hidden');
+        cancelBtn.disabled = true;
+        cancelBtn.textContent = 'Применение...';
+      }
+      if (state.phase === 'success') {
+        clearInterval(timer);
+        if (action === 'create' && onCreateResult) onCreateResult(state);
+        if (action === 'refresh') {
+          const count = state.apply && state.apply.updated_instances ? state.apply.updated_instances.length : 0;
+          showToast('Общий WB-токен обновлён для ' + count + ' инстансов');
+        }
+        try { await api('/wb-automation/session', { method: 'DELETE' }); } catch (e) {}
+        closeModal(overlay);
+        if (action === 'refresh') render();
+      } else if (state.phase === 'error' || state.phase === 'cancelled') {
+        clearInterval(timer);
+        frame.classList.add('hidden');
+        extendBtn.classList.add('hidden');
+        cancelBtn.disabled = false;
+        cancelBtn.textContent = 'Закрыть';
+        cancelBtn.className = 'btn btn-secondary';
+        showToast(state.message || 'Ошибка WB-автоматизации', 'error');
+      }
+    } catch (e) {
+      status.textContent = 'Ожидание ответа worker...';
+    }
+  }, 1000);
+}
+
 // ── Modals ───────────────────────────────────────────────────────────────────
 function showModal(content, opts) {
   opts = opts || {};
@@ -1362,8 +1602,24 @@ function showCreateInstanceModal() {
   connectionSec.appendChild(dcWarn);
 
   const wbHint = el('div', 'mb-3 text-xs text-amber-300 bg-amber-900/30 border border-amber-700/40 p-3 rounded-lg hidden');
-  wbHint.innerHTML = '<b>WB Stream больше не создаёт румы автоматически.</b> Создайте руму на <a href="https://stream.wb.ru" target="_blank" rel="noopener" class="underline">stream.wb.ru</a> и вставьте её ID в поле <b>Room ID</b>.';
+  wbHint.innerHTML = '<b>WB Stream.</b> Комнату и account token можно получить через удалённый Chrome на VPS либо ввести вручную.';
   connectionSec.appendChild(wbHint);
+  const wbAcquireBtn = el('button', 'btn btn-primary mb-3 hidden');
+  wbAcquireBtn.textContent = 'Получить токен и создать комнату';
+  wbAcquireBtn.onclick = async () => {
+    let components;
+    try { components = await api('/wb-automation/components'); } catch (e) {}
+    if (!components || !components.installed) {
+      showToast('Сначала установите компоненты автоматизации в Настройках', 'error');
+      return;
+    }
+    showWBAutomationSession('create', state => {
+      roomIDField.input.value = state.room_id || '';
+      authTokenField.input.value = state.token || '';
+      showToast('Room ID и WB-токен заполнены');
+    });
+  };
+  connectionSec.appendChild(wbAcquireBtn);
 
   const jitsiPresets = createJitsiPresetPanel(roomIDField.input, null, transportField.input);
   connectionSec.appendChild(jitsiPresets);
@@ -1466,6 +1722,7 @@ function showCreateInstanceModal() {
     jitsiBlock.classList.toggle('hidden', !(c === 'jitsi' && finalTransport === 'datachannel'));
     dcWarn.classList.toggle('hidden', isCompatible || finalTransport !== 'datachannel');
     wbHint.classList.toggle('hidden', c !== 'wbstream');
+    wbAcquireBtn.classList.toggle('hidden', c !== 'wbstream');
     jitsiPresets.classList.toggle('hidden', c !== 'jitsi');
 
     // Auto-rename
@@ -1710,7 +1967,7 @@ function showConfigModal(inst) {
 
   // wbstream hint
   const wbHint = el('div', 'mb-3 text-xs text-amber-300 bg-amber-900/30 border border-amber-700/40 p-3 rounded-lg');
-  wbHint.innerHTML = '<b>WB Stream больше не создаёт румы автоматически.</b> Создайте руму на <a href="https://stream.wb.ru" target="_blank" rel="noopener" class="underline">stream.wb.ru</a> и вставьте её ID в поле <b>Room ID</b>.';
+  wbHint.innerHTML = '<b>WB Stream.</b> Room ID и токен можно ввести вручную либо получить через удалённый Chrome: Настройки → WB Stream → «Обновить общий токен».';
   div.appendChild(wbHint);
 
   // Jitsi server presets (shown only when carrier=jitsi)
@@ -1975,12 +2232,15 @@ function showAddToSubModal(sub, instances) {
     if (checked.value === 'manual') rawUri = manualInp.value;
     else {
       const inst = instances.find(i => String(i.id) === checked.value);
-      rawUri = inst ? inst.uri : '';
+      rawUri = inst ? (inst.subscription_uri || inst.uri) : '';
     }
     if (!rawUri) { showToast('URI не может быть пустым', 'error'); return; }
     await withLoading(addBtn, async () => {
       try {
-        await api('/subs/' + sub.slug + '/instances', { method: 'POST', body: JSON.stringify({ raw_uri: rawUri }) });
+        const sourceID = checked.value === 'manual' ? null : Number(checked.value);
+        const body = { raw_uri: rawUri };
+        if (sourceID !== null) body.source_instance_id = sourceID;
+        await api('/subs/' + sub.slug + '/instances', { method: 'POST', body: JSON.stringify(body) });
         showToast('Добавлено');
         closeModal(overlay);
         render();

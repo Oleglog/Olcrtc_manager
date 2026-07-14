@@ -255,3 +255,6 @@ prompt.md
 docs/plan-client-fix.md
 docs/plan-server-fix.md
 docs/upstream-commit-analysis.md
+SKILL.md
+.gitnexus/
+screen*.png

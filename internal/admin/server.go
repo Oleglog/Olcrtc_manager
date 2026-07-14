@@ -19,34 +19,36 @@ var staticFS embed.FS
 
 // Config holds server configuration.
 type Config struct {
-	Port      int
-	Username  string
-	Password  string
+	Port         int
+	Username     string
+	Password     string
 	Domain       string
 	SubPort      int
 	SubPublicURL string
 	TLSDir       string
-	ACMEEmail string
-	ConfigDir string
-	PublicIP  string
+	ACMEEmail    string
+	ConfigDir    string
+	PublicIP     string
 }
 
 // Server is the admin HTTP server.
 type Server struct {
-	cfg        Config
-	mux        *http.ServeMux
-	srv        *http.Server
-	subProxy   *httputil.ReverseProxy
-	mu         sync.RWMutex
-	lastBadIPs map[string]time.Time // simple rate-limit memory
+	cfg          Config
+	mux          *http.ServeMux
+	srv          *http.Server
+	subProxy     *httputil.ReverseProxy
+	mu           sync.RWMutex
+	lastBadIPs   map[string]time.Time // simple rate-limit memory
+	wbAutomation *wbAutomationManager
 }
 
 // NewServer creates a new admin server.
 func NewServer(cfg Config) *Server {
 	s := &Server{
-		cfg:        cfg,
-		mux:        http.NewServeMux(),
-		lastBadIPs: make(map[string]time.Time),
+		cfg:          cfg,
+		mux:          http.NewServeMux(),
+		lastBadIPs:   make(map[string]time.Time),
+		wbAutomation: newWBAutomationManager(),
 	}
 
 	target := fmt.Sprintf("http://127.0.0.1:%d", cfg.SubPort)
@@ -82,6 +84,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/jitsi/check", s.withAuth(s.withCORS(s.handleJitsiCheck)))
 	s.mux.HandleFunc("/api/system/mirror-config", s.withAuth(s.withCORS(s.handleSystemMirrorConfig)))
 	s.mux.HandleFunc("/api/system/mirror-config/test", s.withAuth(s.withCORS(s.handleSystemMirrorConfigTest)))
+	s.setupWBAutomationRoutes()
 
 	s.mux.HandleFunc("/sub/", s.handlePublicSub)
 }

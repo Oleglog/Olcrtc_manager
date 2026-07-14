@@ -11,14 +11,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 )
 
 // Version is set via ldflags at build time.
-var Version = "1.9.45"
+var Version = "1.9.46"
 
 // MinUpdatableVersion is the floor for the version dropdown — versions below
 // this lack the auto-update endpoint, so installing them would brick the flow.
@@ -403,9 +402,7 @@ echo "=== Update Completed at $(date) ==="
 			logger.Errorf("failed to start systemd-run update: %v, output: %s", err, string(output))
 			// Fallback: try to run directly with setsid
 			fallback := exec.Command("setsid", "bash", scriptPath)
-			fallback.SysProcAttr = &syscall.SysProcAttr{
-				Setsid: true,
-			}
+			configureDetachedProcess(fallback)
 			devNull, _ := os.Open(os.DevNull)
 			if devNull != nil {
 				fallback.Stdout = devNull

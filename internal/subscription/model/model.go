@@ -22,11 +22,12 @@ type Mirror struct {
 
 // Instance represents a single olcrtc:// connection URI bound to a subscription.
 type Instance struct {
-	ID             int64     `json:"id"`
-	SubscriptionID int64     `json:"subscription_id"`
-	RawURI         string    `json:"raw_uri"`
-	Label          string    `json:"label,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
+	ID               int64     `json:"id"`
+	SubscriptionID   int64     `json:"subscription_id"`
+	SourceInstanceID *int      `json:"source_instance_id,omitempty"`
+	RawURI           string    `json:"raw_uri"`
+	Label            string    `json:"label,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
 }
 
 // ExportFormat is the top-level JSON structure for import/export.
@@ -44,5 +45,6 @@ type ExportSubscription struct {
 
 // ExportInstance is a single instance entry in the export file.
 type ExportInstance struct {
-	RawURI string `json:"raw_uri"`
+	SourceInstanceID *int   `json:"source_instance_id,omitempty"`
+	RawURI           string `json:"raw_uri"`
 }

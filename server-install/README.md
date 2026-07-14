@@ -5,10 +5,10 @@
 > ### ⚠ Known issues
 >
 > - **WB Stream**: stream.wb.ru shut down its public room-creation API and
->   blocks guest joins. `wbstream` auto-room-gen no longer works — create the
->   room manually at <https://stream.wb.ru> and copy the room ID from the URL.
->   Pass it with `--id <room>` on first install or set it later in the Admin
->   Web UI.
+>   blocks guest joins. Server-side guest auto-room-gen no longer works.
+>   `server-v1.9.46+` can instead open a temporary Chromium session from the
+>   Admin UI so the operator logs in manually, passes CAPTCHA, creates a room
+>   and captures the account token. Manual Room ID/token entry still works.
 > - For the fastest spin-up without manual steps, use `jitsi` (server-side
 >   auto-gen still works) or `telemost` (the installer self-generates an
 >   `olcrtc-XXXXXXXX` room ID).
@@ -71,6 +71,11 @@ Speed (descending): **datachannel** (~6 MB/s) > **vp8channel** > **seichannel** 
 - Recommended: 1 vCPU, 1 GB RAM, 10 GB disk. Binary ~20 MB; ~50–250 MB RAM
   under traffic.
 
+Optional WB Stream browser automation requires Ubuntu/Debian x86_64,
+approximately 1–1.5 GB additional disk space and 2 GB RAM. It installs a
+pinned Node.js, Playwright Chromium, Xvfb, openbox and noVNC only after the
+operator clicks **Install components** in Admin UI settings.
+
 ## Quick start
 
 **Option A — one-liner** (recommended):
@@ -118,6 +123,22 @@ After install you'll see:
 
 Open the Admin UI, accept the self-signed cert, log in, and **change the
 password** in the settings page.
+
+### WB Stream browser automation
+
+For a `wbstream` instance, open **Settings → WB Stream browser automation**
+and install the optional components. The create-instance form then offers
+**Get token and create room**. A remote Chromium window is embedded into the
+authenticated Admin UI; login and CAPTCHA remain fully manual. The browser
+profile is retained for seven days, while each session lasts 15 minutes with
+one optional 15-minute extension.
+
+The same settings block can refresh the shared WB token. A refresh updates all
+WB instance env files, refreshes subscription entries linked to those instance
+IDs, syncs enabled mirrors and restarts running WB services sequentially.
+Manual subscription URIs are not rewritten. Removing the optional components
+deletes Chromium, the WB profile/cookies, browser proxy settings and token
+metadata without deleting working instance configurations or subscriptions.
 
 ### Picking carrier / transport at install time
 

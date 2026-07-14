@@ -14,7 +14,7 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 # Check if anything is installed
-if [ ! -f /usr/local/bin/olcrtc ] && [ ! -f /etc/systemd/system/olcrtc-server.service ] && [ ! -d /etc/olcrtc ]; then
+if [ ! -f /usr/local/bin/olcrtc ] && [ ! -f /etc/systemd/system/olcrtc-server.service ] && [ ! -d /etc/olcrtc ] && [ ! -d /opt/olcrtc-wb-automation ]; then
     echo "[*] olcRTC is not installed. Nothing to do."
     exit 0
 fi
@@ -45,6 +45,9 @@ echo "    - /etc/olcrtc/  (all configs + encryption keys + admin.env)"
 echo "    - /var/lib/olcrtc/ and /var/lib/olcrtc-*/"
 echo "    - /var/lib/olcrtc/admin-tls/ (certificates)"
 echo "    - system user 'olcrtc'"
+if [ -d /opt/olcrtc-wb-automation ] || [ -d /var/lib/olcrtc-wb ]; then
+    echo "    - WB browser automation, Chrome profile and cookies"
+fi
 echo ""
 
 # Read from /dev/tty to support curl | bash
@@ -63,6 +66,11 @@ if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
 fi
 
 echo ""
+if [ -x /usr/local/lib/olcrtc/wb-automation/uninstall.sh ]; then
+    echo "[*] Удаляю автоматизацию WB Stream..."
+    bash /usr/local/lib/olcrtc/wb-automation/uninstall.sh || true
+fi
+
 echo "[*] Останавливаю и удаляю основной сервис..."
 systemctl disable --now olcrtc-server 2>/dev/null || true
 systemctl reset-failed olcrtc-server 2>/dev/null || true
