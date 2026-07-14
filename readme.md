@@ -55,7 +55,7 @@ https://<VPS-IP>:8443
 - Multi-instance systemd setup.
 - Server subscription endpoint `/sub/<slug>`.
 - QR/URI генерация для Android-клиента.
-- QR-бандлы подписок: один QR создаёт subscription-группу на Android и сразу кладёт в неё текущие профили. Большие QR автоматически сжимаются в формат `olcrtc+gz`, чтобы камера телефона легче их сканировала. QR подписки генерируется без сетевой синхронизации mirror, поэтому открывается быстро.
+- QR-бандлы подписок: один QR создаёт subscription-группу на Android и сразу кладёт в неё текущие профили. Большие QR автоматически сжимаются в формат `olcrtc+gz`, чтобы камера телефона легче их сканировала. QR подписки синкает Yandex mirror (если включён) и вкладывает mirror metadata в бандл — чтобы Android мог фолбэчиться на Диск при таймауте основного URL.
 - Экспериментальные encrypted mirrors для подписок через Yandex Disk API: сервер умеет публиковать зашифрованный mirror-файл, но доступность финальных `*.storage.yandex.net` URL зависит от мобильного оператора.
 - WB Stream `auth.token` для аккаунтного/модераторского доступа.
 - Поддержка Telemost/WB Stream через goolom WebRTC engine.
@@ -110,7 +110,89 @@ https://<domain-or-ip>:8443/sub/<slug>
 
 Начиная с `server-v1.9.35` есть экспериментальная поддержка encrypted mirror через Yandex Disk API. Сервер шифрует список профилей AES-256-GCM, загружает JSON на Яндекс Диск и кладёт `mirror_url` + `mirror_key` в QR-бандл. Это безопасно для публичного файла, потому что без ключа mirror не расшифровывается. Практическое ограничение: Яндекс Диск может отдавать файл через временные `*.storage.yandex.net` URL, которые у некоторых операторов недоступны. В таком случае mirror не поможет, используйте QR bootstrap и обновление через туннель, либо прямой CDN/Object Storage mirror, когда он будет доступен.
 
-Пример конфигурации mirror, если `config.yaml` не генерируется launcher-скриптом:
+### Настройка Yandex Disk mirror через Admin UI
+
+`server-v1.9.41+` добавляет секцию **Yandex Disk mirror (encrypted fallback)** в Admin UI. Оператор управляет mirror-конфигом из браузера, без ручного редактирования env-файлов. Настройки сохраняются в `/etc/olcrtc/env` и переживают регенерацию `config.yaml` лаунчером.
+
+#### Шаг 1. Создать OAuth-приложение в Яндексе
+
+1. Открой [https://oauth.yandex.ru/client/new](https://oauth.yandex.ru/client/new) под любым Яндекс-аккаунтом, на Диск которого будет публиковаться mirror.
+2. Заполни поля:
+   - **Название сервиса** — произвольное, например `olcRTC subscription mirror`.
+   - **Ссылка на сайт сервиса** — домен твоего сервера (например `https://myolcrtc.mooo.com`), либо просто любой URL.
+   - **Redirect URI** — обязательно добавь `https://oauth.yandex.ru/verification_code` (для Implicit Grant flow).
+   - **Доступы** — выбери **Яндекс Диск**: `Доступ к информации о Диске` и `Запись в любом месте на Диске`.
+3. Нажми **Создать приложение**. Получишь **ClientID** вида `a1b2c3d4e5f6g7h8i9j0...`.
+
+#### Шаг 2. Получить OAuth-токен
+
+Открой в браузере URL (подставь свой ClientID):
+
+```text
+https://oauth.yandex.ru/authorize?response_type=token&client_id=<CLIENTID>
+```
+
+Яндекс попросит разрешение на доступ к Диску. После согласия браузер вернётся на `https://oauth.yandex.ru/verification_code#access_token=<TOKEN>`. Скопируй `<TOKEN>` из URL — это и есть OAuth-токен для mirror.
+
+Токен действителен 1 год. Когда истечёт — повтори этот шаг и обнови в Admin UI.
+
+#### Шаг 3. Настроить в Admin UI
+
+1. Открой Admin UI → вкладка **Settings** → раздел **Yandex Disk mirror (encrypted fallback)**.
+2. Включи toggle **Включить mirror**.
+3. Поле `provider` заблокировано на `yandex_disk` (других провайдеров пока нет).
+4. **base_path** — путь на Яндекс Диске, куда сервер будет публиковать mirror-файлы. По умолчанию `/olcrtc/subscriptions`. Если оставишь пустым, будет использован `olcrtc/subscriptions`.
+5. **OAuth token** — вставь токен из Шага 2. Поле masked: после сохранения будет показываться `••••<последние 4 символа>`. Чтобы не изменять токен при правке других полей — оставляй masked значение как есть, оно не перезапишется.
+6. Нажми **Test upload** — сервер сделает пробную загрузку+удаление `.olcrtc-ping-*.json` на Яндинс Диск. Покажет latency при успехе или человекочитаемый Yandex API error при неудаче (401/403 обычно означают невалидный или истекший токен).
+7. Нажми **Save**. Файл `/etc/olcrtc/env` обновляется: `OLCRTC_SUB_MIRROR_ENABLED=true`, `OLCRTC_SUB_MIRROR_PROVIDER=yandex_disk`, `OLCRTC_SUB_MIRROR_YANDEX_OAUTH_TOKEN=<token>`, `OLCRTC_SUB_MIRROR_YANDEX_BASE_PATH=<path>`. Права файла `0640 root:olcrtc`.
+8. **Перезапусти `olcrtc-server`**, чтобы mirror manager подхватил новые настройки:
+
+```bash
+sudo systemctl restart olcrtc-server.service
+```
+
+После рестарта при следующем QR подписки сервер автоматически синкает Yandex mirror и вложит `m` (mirror metadata) + `mk` (AES key base64) в JSON бандла. Android при таймауте основного subscription URL использует этот ключ, чтобы скачать и расшифровать mirror-файл.
+
+#### Ручное редактирование env (без Admin UI)
+
+Если Admin UI недоступен, mirror можно настроить напрямую через `/etc/olcrtc/env`:
+
+```bash
+sudo nano /etc/olcrtc/env
+```
+
+```ini
+OLCRTC_SUB_MIRROR_ENABLED=true
+OLCRTC_SUB_MIRROR_PROVIDER=yandex_disk
+OLCRTC_SUB_MIRROR_YANDEX_OAUTH_TOKEN=<token>
+OLCRTC_SUB_MIRROR_YANDEX_BASE_PATH=/olcrtc/subscriptions
+```
+
+```bash
+sudo systemctl restart olcrtc-server.service
+```
+
+`enabled` пиши как `true`/`false` (не `1`/`0`): yaml.v3 парсит `1` как int, что ломает unmarshal `SubscriptionMirror.Enabled bool` при регенерации `config.yaml` лаунчером (см. [[Gotcha — mirror save bricked olcrtc-server 1.9.41]]).
+
+#### Проверка фолбэка на Android
+
+1. Создай подписку в Admin UI, добавь инстансы.
+2. Нажми **QR подписки** и отсканируй Android-клиентом. Android импортирует бандл с `m`+`mk`.
+3. Сымитируй недоступность основного сервера:
+
+```bash
+sudo systemctl stop olcrtc-server.service
+# nginx отдаёт 502 на /sub/...
+```
+
+4. На Android — **обновить подписку**. Через 5-30сек клиент фолбэчится на Yandex Disk, скачивает и расшифровывает mirror, обновляет профили.
+5. Верни сервер: `sudo systemctl start olcrtc-server.service`.
+
+Если фолбэк не работает — проверь, что свежий QR содержит `m:[...]` и непустой `mk` (старые QR от `server-v1.9.38` — `1.9.43` имели `m:[]` и `mk:""`). С `server-v1.9.44+` QR снова содержит mirror metadata.
+
+#### Пример прямой конфигурации в `config.yaml`
+
+Если сервер запускается не через `olcrtc-launcher` (например, вручную без env-генерации), mirror можно прописать прямо в `config.yaml`:
 
 ```yaml
 subscription:
@@ -126,7 +208,7 @@ subscription:
     yandex_base_path: "/olcrtc/subscriptions"
 ```
 
-Если сервер установлен через `olcrtc-launcher`, `/var/lib/olcrtc/config.yaml` может пересоздаваться при рестарте. В этом случае mirror-параметры надо добавлять в источник генерации, например `/etc/olcrtc/env` и launcher-шаблон.
+Если сервер установлен через `olcrtc-launcher`, `/var/lib/olcrtc/config.yaml` пересоздаётся при рестарте из `/etc/olcrtc/env`. В этом режиме править `config.yaml` напрямую бесполезно — используй Admin UI или ручное редактирование env (см. выше).
 
 ## WARP / SOCKS
 
