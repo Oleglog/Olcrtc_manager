@@ -88,3 +88,17 @@ func TestWBSessionResponseOnlyReturnsCreateToken(t *testing.T) {
 		t.Fatalf("unexpected viewer URL %q", viewerURL)
 	}
 }
+
+func TestWBSessionServiceHasWritablePrivateTmp(t *testing.T) {
+	data, err := wbAutomationAssets.ReadFile("wbautomation/olcrtc-wb-session.service")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unit := string(data)
+	if !strings.Contains(unit, "PrivateTmp=true") {
+		t.Fatal("WB session service does not provide a private writable /tmp")
+	}
+	if strings.Contains(unit, "PrivateTmp=false") {
+		t.Fatal("WB session service still exposes the read-only host /tmp")
+	}
+}

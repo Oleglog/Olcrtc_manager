@@ -19,10 +19,10 @@ TimeoutStopSec=10
 MemoryMax=1200M
 TasksMax=256
 NoNewPrivileges=true
-PrivateTmp=false
+PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=/var/lib/olcrtc-wb /run/olcrtc-wb /tmp/.X11-unix
+ReadWritePaths=/var/lib/olcrtc-wb /run/olcrtc-wb
 
 [Install]
 WantedBy=multi-user.target

@@ -323,6 +323,9 @@ func (s *Server) startWBSession(action string) (*wbAutomationSession, error) {
 	_, _ = SystemctlRun("stop", wbSessionService)
 	_, _ = SystemctlRun("reset-failed", wbSessionService)
 	cleanupWBWorkerFiles()
+	if err := refreshWBAutomationRuntimeAssets(); err != nil {
+		return nil, err
+	}
 	if err := prepareWBProfile(); err != nil {
 		return nil, err
 	}
@@ -775,6 +778,40 @@ func ensureWBAutomationAssets() error {
 		if err := os.WriteFile(filepath.Join(wbAssetsDir, entry.Name()), data, mode); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func refreshWBAutomationRuntimeAssets() error {
+	if err := ensureWBAutomationAssets(); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(wbInstallDir, 0755); err != nil {
+		return err
+	}
+	files := []struct {
+		name string
+		dest string
+		mode os.FileMode
+	}{
+		{name: "worker.mjs", dest: filepath.Join(wbInstallDir, "worker.mjs"), mode: 0644},
+		{name: "run-session.sh", dest: filepath.Join(wbInstallDir, "run-session.sh"), mode: 0755},
+		{name: "olcrtc-wb-session.service", dest: "/etc/systemd/system/" + wbSessionService, mode: 0644},
+	}
+	for _, file := range files {
+		data, err := wbAutomationAssets.ReadFile("wbautomation/" + file.name)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(file.dest, data, file.mode); err != nil {
+			return fmt.Errorf("refresh WB automation %s: %w", file.name, err)
+		}
+		if err := os.Chmod(file.dest, file.mode); err != nil {
+			return err
+		}
+	}
+	if out, err := SystemctlRun("daemon-reload"); err != nil {
+		return fmt.Errorf("reload WB automation service: %w: %s", err, strings.TrimSpace(out))
 	}
 	return nil
 }
