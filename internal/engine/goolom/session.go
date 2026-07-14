@@ -229,6 +229,9 @@ func (s *Session) Send(data []byte) error {
 // GetSendQueue returns the transmission queue.
 func (s *Session) GetSendQueue() chan []byte { return s.sendQueue }
 
+// SendQueueDepth reports application messages waiting for DataChannel workers.
+func (s *Session) SendQueueDepth() int { return len(s.sendQueue) }
+
 // GetBufferedAmount returns the WebRTC buffered amount.
 func (s *Session) GetBufferedAmount() uint64 {
 	if s.dc != nil {

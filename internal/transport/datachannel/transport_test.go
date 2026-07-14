@@ -30,6 +30,8 @@ type stubSession struct {
 	reconnectCB func(*webrtc.DataChannel)
 	shouldFn    func() bool
 	endedCB     func(string)
+	sendQueue   chan []byte
+	buffered    uint64
 }
 
 func (s *stubSession) Capabilities() engine.Capabilities { return s.caps }
@@ -44,8 +46,14 @@ func (s *stubSession) SetShouldReconnect(fn func() bool)                       {
 func (s *stubSession) SetEndedCallback(cb func(string))                        { s.endedCB = cb }
 func (s *stubSession) WatchConnection(context.Context)                         { s.watched = true }
 func (s *stubSession) CanSend() bool                                           { return s.canSend }
-func (s *stubSession) GetSendQueue() chan []byte                               { return nil }
-func (s *stubSession) GetBufferedAmount() uint64                               { return 0 }
+func (s *stubSession) GetSendQueue() chan []byte                               { return s.sendQueue }
+func (s *stubSession) GetBufferedAmount() uint64                               { return s.buffered }
+func (s *stubSession) SendQueueDepth() int {
+	if s.sendQueue == nil {
+		return 0
+	}
+	return len(s.sendQueue)
+}
 func (s *stubSession) Reconnect(string)                                        {}
 
 func registerCarrier(name string, sess engine.Session, err error) {
@@ -130,5 +138,40 @@ func TestStreamTransportWrapsErrors(t *testing.T) {
 	}
 	if err := tr.Close(); err == nil || err.Error() != "session close: close boom" {
 		t.Fatalf("Close() error = %v", err)
+	}
+}
+
+func TestServerBackpressureUsesHighAndLowWatermarks(t *testing.T) {
+	queue := make(chan []byte, serverQueueHighWatermark+1)
+	sess := &stubSession{canSend: true, sendQueue: queue}
+	tr := &streamTransport{session: sess, serverMode: true}
+
+	for range serverQueueHighWatermark {
+		queue <- []byte("queued")
+	}
+	if tr.CanSend() {
+		t.Fatal("CanSend() = true at server high watermark")
+	}
+	metrics := tr.Metrics()
+	if !metrics.Backpressured || metrics.BackpressureEvents != 1 || metrics.SendQueueDepth != serverQueueHighWatermark {
+		t.Fatalf("Metrics() at high watermark = %+v", metrics)
+	}
+
+	for len(queue) > serverQueueLowWatermark {
+		<-queue
+	}
+	if !tr.CanSend() {
+		t.Fatal("CanSend() = false after queue drained to low watermark")
+	}
+	if metrics = tr.Metrics(); metrics.Backpressured {
+		t.Fatalf("Metrics() after drain = %+v", metrics)
+	}
+
+	client := &streamTransport{session: sess}
+	for len(queue) < cap(queue) {
+		queue <- []byte("client")
+	}
+	if !client.CanSend() {
+		t.Fatal("client-mode CanSend() was changed by server backpressure")
 	}
 }

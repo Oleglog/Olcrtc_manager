@@ -2037,6 +2037,17 @@ func (s *Session) CanSend() bool {
 // GetSendQueue exposes the outbound queue for upstream metrics.
 func (s *Session) GetSendQueue() chan []byte { return s.sendQueue }
 
+// SendQueueDepth includes both local bridge queues and the j library's wire queue.
+func (s *Session) SendQueueDepth() int {
+	depth := len(s.sendQueue) + len(s.peerSendQueue)
+	if jSess := s.jSess.Load(); jSess != nil {
+		if wireDepth := jSess.BridgeSendQueueDepth(); wireDepth > 0 {
+			depth += wireDepth
+		}
+	}
+	return depth
+}
+
 // GetBufferedAmount returns a coarse estimate of bytes pending on the wire.
 //
 // The j library's bridge connection only exposes message-count depth, so we

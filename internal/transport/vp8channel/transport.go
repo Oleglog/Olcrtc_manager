@@ -37,10 +37,12 @@ const (
 	// to a couple of send windows so KCP's flush never blocks (a blocked
 	// WriteTo would stall KCP's update loop and delay ACKs); the paced writer
 	// keeps it drained so this depth is headroom, not standing latency.
-	outboundQueueSize    = 2048
-	inboundQueueSize     = 8192
-	canSendHighWatermark = 90 // percent
-	keepaliveIdlePeriod  = 100 * time.Millisecond
+	outboundQueueSize        = 2048
+	inboundQueueSize         = 8192
+	canSendHighWatermark     = 90 // percent
+	serverQueueHighWatermark = 128
+	serverQueueLowWatermark  = 64
+	keepaliveIdlePeriod      = 100 * time.Millisecond
 	// defaultPeerRestartGrace is how long the latched peer must be silent before
 	// a frame from a different epoch is read as a restarted peer/server. A live
 	// peer emits decodable keepalives, so a few missed beats is a useful signal
@@ -120,6 +122,9 @@ type streamTransport struct {
 	track         *webrtc.TrackLocalStaticSample
 	onData        func([]byte)
 	onPeerData    func(peerID string, data []byte)
+	// ponytail: OnPeerData is the existing server-role signal; add an explicit
+	// role only if clients later need peer-routed receive callbacks.
+	serverMode    bool
 	outbound      chan []byte
 	closeCh       chan struct{}
 	writerDone    chan struct{}
@@ -166,6 +171,15 @@ type streamTransport struct {
 	peerOut  map[uint32]chan []byte   // epoch → outbound queue
 	peerStop map[uint32]chan struct{} // epoch → writer-pump stop signal
 	peerSeen map[uint32]*atomic.Int64 // epoch → last inbound frame (unix nanos)
+
+	backpressured         atomic.Bool
+	backpressureMu        sync.Mutex
+	backpressureSince     atomic.Int64
+	backpressureEvents    atomic.Uint64
+	backpressureWaitNanos atomic.Int64
+	reorderGapEvents      atomic.Uint64
+	reorderSkipped        atomic.Uint64
+	reorderLastGapNanos   atomic.Int64
 }
 
 // New creates a vp8channel transport backed by a carrier engine.
@@ -257,6 +271,7 @@ func newStreamTransport(
 		track:         track,
 		onData:        cfg.OnData,
 		onPeerData:    cfg.OnPeerData,
+		serverMode:    cfg.OnPeerData != nil,
 		outbound:      make(chan []byte, outboundQueueSize),
 		closeCh:       make(chan struct{}),
 		writerDone:    make(chan struct{}),
@@ -310,7 +325,7 @@ func (p *streamTransport) Connect(ctx context.Context) error {
 	// would deadlock: muxconn.Write spins on CanSend (which checks kcp!=nil)
 	// and KCP was only started lazily on the first incoming peer frame.
 	p.kcpOnce.Do(func() {
-		rt, err := startKCP(p.outbound, p.onData, p.epochHeader())
+		rt, err := p.startKCPRuntime(p.outbound, p.onData, p.epochHeader())
 		if err != nil {
 			logger.Infof("vp8channel: startKCP failed: %v", err)
 			return
@@ -550,8 +565,109 @@ func (p *streamTransport) CanSend() bool {
 	p.kcpMu.RLock()
 	hasKCP := p.kcp != nil
 	p.kcpMu.RUnlock()
-	return hasKCP && p.stream.CanSend() &&
-		len(p.outbound) < cap(p.outbound)*canSendHighWatermark/100
+	if !hasKCP || !p.stream.CanSend() {
+		return false
+	}
+	if !p.serverMode {
+		return len(p.outbound) < cap(p.outbound)*canSendHighWatermark/100
+	}
+
+	depth := p.outboundDepth()
+	if p.backpressured.Load() {
+		if depth > serverQueueLowWatermark {
+			return false
+		}
+		p.clearBackpressure()
+	}
+	if depth >= serverQueueHighWatermark {
+		p.startBackpressure()
+		return false
+	}
+	return true
+}
+
+func (p *streamTransport) outboundDepth() int {
+	depth := len(p.outbound)
+	p.peersMu.RLock()
+	for epoch := range p.peers {
+		depth += len(p.peerOut[epoch])
+	}
+	p.peersMu.RUnlock()
+	return depth
+}
+
+func (p *streamTransport) kcpRuntimes() []*kcpRuntime {
+	p.kcpMu.RLock()
+	primary := p.kcp
+	p.kcpMu.RUnlock()
+	runtimes := make([]*kcpRuntime, 0, 1)
+	if primary != nil {
+		runtimes = append(runtimes, primary)
+	}
+
+	p.peersMu.RLock()
+	for _, runtime := range p.peers {
+		runtimes = append(runtimes, runtime)
+	}
+	p.peersMu.RUnlock()
+	return runtimes
+}
+
+func (p *streamTransport) startBackpressure() {
+	p.backpressureMu.Lock()
+	defer p.backpressureMu.Unlock()
+	if p.backpressured.Load() {
+		return
+	}
+	p.backpressureSince.Store(time.Now().UnixNano())
+	p.backpressureEvents.Add(1)
+	p.backpressured.Store(true)
+}
+
+func (p *streamTransport) clearBackpressure() {
+	p.backpressureMu.Lock()
+	defer p.backpressureMu.Unlock()
+	if !p.backpressured.Load() {
+		return
+	}
+	since := p.backpressureSince.Swap(0)
+	if since > 0 {
+		p.backpressureWaitNanos.Add(time.Now().UnixNano() - since)
+	}
+	p.backpressured.Store(false)
+}
+
+func (p *streamTransport) backpressureWait() time.Duration {
+	nanos := p.backpressureWaitNanos.Load()
+	if since := p.backpressureSince.Load(); since > 0 {
+		nanos += time.Now().UnixNano() - since
+	}
+	return time.Duration(nanos)
+}
+
+// Metrics reports VP8/KCP queue pressure and RTP gap recovery counters.
+func (p *streamTransport) Metrics() transport.RuntimeMetrics {
+	metrics := transport.RuntimeMetrics{
+		OutboundQueueDepth:  p.outboundDepth(),
+		RTPReorderGapEvents: p.reorderGapEvents.Load(),
+		RTPReorderSkipped:   p.reorderSkipped.Load(),
+		RTPReorderLastGap:   time.Duration(p.reorderLastGapNanos.Load()),
+		Backpressured:       p.backpressured.Load(),
+		BackpressureEvents:  p.backpressureEvents.Load(),
+		BackpressureWait:    p.backpressureWait(),
+	}
+	for _, runtime := range p.kcpRuntimes() {
+		if metrics.KCPSendWindow == 0 {
+			metrics.KCPSendWindow = runtime.sendWindow
+		}
+		if srtt := runtime.srtt(); srtt > metrics.KCPSRTT {
+			metrics.KCPSRTT = srtt
+		}
+		events, wait := runtime.writeWait()
+		metrics.KCPWriteWaitEvents += events
+		metrics.KCPWriteWait += wait
+	}
+	return metrics
 }
 
 // Features advertises reliable+ordered semantics now that KCP guarantees
@@ -709,13 +825,25 @@ func (p *streamTransport) restartKCP(epochHdr [epochHdrLen]byte) {
 	if old != nil {
 		old.close()
 	}
-	rt, err := startKCP(p.outbound, p.onData, epochHdr)
+	rt, err := p.startKCPRuntime(p.outbound, p.onData, epochHdr)
 	if err != nil {
 		return
 	}
 	p.kcpMu.Lock()
 	p.kcp = rt
 	p.kcpMu.Unlock()
+}
+
+func (p *streamTransport) startKCPRuntime(
+	out chan<- []byte,
+	onData func([]byte),
+	epochHdr [epochHdrLen]byte,
+) (*kcpRuntime, error) {
+	sendWindow := kcpSndWnd
+	if p.serverMode {
+		sendWindow = serverKCPSndWnd
+	}
+	return startKCPWithSendWindow(out, onData, epochHdr, sendWindow)
 }
 
 func (p *streamTransport) handleRemoteTrack(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
@@ -739,20 +867,34 @@ func (p *streamTransport) drainTrack(track *webrtc.TrackRemote) {
 	}
 }
 
-const reorderWindow = 256
+const (
+	reorderWindow     = 32
+	reorderMaxGapWait = 30 * time.Millisecond
+)
 
 func seqLess(a, b uint16) bool {
 	return (a-b)&0x8000 != 0
 }
 
 type reorderBuffer struct {
-	pkts    map[uint16]*rtp.Packet
-	nextSeq uint16
-	started bool
+	pkts     map[uint16]*rtp.Packet
+	nextSeq  uint16
+	started  bool
+	now      func() time.Time
+	gapSince time.Time
+	onSkip   func(skipped int, age time.Duration)
 }
 
 func newReorderBuffer() *reorderBuffer {
-	return &reorderBuffer{pkts: make(map[uint16]*rtp.Packet, reorderWindow)}
+	return newReorderBufferWithClock(time.Now, nil)
+}
+
+func newReorderBufferWithClock(now func() time.Time, onSkip func(int, time.Duration)) *reorderBuffer {
+	return &reorderBuffer{
+		pkts:   make(map[uint16]*rtp.Packet, reorderWindow),
+		now:    now,
+		onSkip: onSkip,
+	}
 }
 
 func (b *reorderBuffer) push(pkt *rtp.Packet) []*rtp.Packet {
@@ -766,10 +908,34 @@ func (b *reorderBuffer) push(pkt *rtp.Packet) []*rtp.Packet {
 	cp := &rtp.Packet{Header: pkt.Header}
 	cp.Payload = append([]byte(nil), pkt.Payload...)
 	b.pkts[pkt.SequenceNumber] = cp
-	if len(b.pkts) > reorderWindow {
-		b.skipToOldest()
+	out := b.drain()
+	if len(b.pkts) == 0 {
+		b.gapSince = time.Time{}
+		return out
 	}
-	return b.drain()
+
+	now := b.now()
+	if b.gapSince.IsZero() {
+		b.gapSince = now
+	}
+	// ponytail: expiry is checked on packet arrival. VP8 keepalives bound the
+	// idle case; use a timer-driven reader if their cadence ever exceeds this budget.
+	gapAge := now.Sub(b.gapSince)
+	if len(b.pkts) < reorderWindow && gapAge < reorderMaxGapWait {
+		return out
+	}
+
+	skipped := b.skipToOldest()
+	if b.onSkip != nil {
+		b.onSkip(skipped, max(gapAge, 0))
+	}
+	out = append(out, b.drain()...)
+	if len(b.pkts) == 0 {
+		b.gapSince = time.Time{}
+	} else {
+		b.gapSince = now
+	}
+	return out
 }
 
 func (b *reorderBuffer) drain() []*rtp.Packet {
@@ -785,16 +951,23 @@ func (b *reorderBuffer) drain() []*rtp.Packet {
 	}
 }
 
-func (b *reorderBuffer) skipToOldest() {
+func (b *reorderBuffer) skipToOldest() int {
 	first := true
 	var oldest uint16
+	var oldestDistance uint16
 	for seq := range b.pkts {
-		if first || seqLess(seq, oldest) {
+		distance := seq - b.nextSeq
+		if first || distance < oldestDistance {
 			oldest = seq
+			oldestDistance = distance
 			first = false
 		}
 	}
+	if first {
+		return 0
+	}
 	b.nextSeq = oldest
+	return int(oldestDistance)
 }
 
 type vp8FrameState struct {
@@ -853,7 +1026,11 @@ func (s *vp8FrameState) processRTPPacket(pkt *rtp.Packet) []byte {
 
 func (p *streamTransport) readVP8Track(track *webrtc.TrackRemote) {
 	var state vp8FrameState
-	reorder := newReorderBuffer()
+	reorder := newReorderBufferWithClock(time.Now, func(skipped int, age time.Duration) {
+		p.reorderGapEvents.Add(1)
+		p.reorderSkipped.Add(uint64(skipped))
+		p.reorderLastGapNanos.Store(int64(age))
+	})
 	buf := make([]byte, rtpBufSize)
 
 	for {
@@ -988,7 +1165,7 @@ func (p *streamTransport) getOrCreatePeerKCP(epoch uint32) *kcpRuntime {
 	peerID := formatPeerID(epoch)
 	out := make(chan []byte, outboundQueueSize)
 	hdr := buildEpochHeader(p.bindingToken, p.localEpochValue())
-	rt, err := startKCP(out, func(data []byte) {
+	rt, err := p.startKCPRuntime(out, func(data []byte) {
 		if p.onPeerData != nil {
 			p.onPeerData(peerID, data)
 		}

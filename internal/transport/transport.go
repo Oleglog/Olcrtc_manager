@@ -28,6 +28,29 @@ type Features struct {
 	MaxPayloadSize  int
 }
 
+// RuntimeMetrics is a point-in-time transport pressure snapshot used by the
+// server's periodic health log. Fields that do not apply to a transport stay zero.
+type RuntimeMetrics struct {
+	SendQueueDepth      int
+	BufferedAmount      uint64
+	OutboundQueueDepth  int
+	KCPSendWindow       int
+	KCPSRTT             time.Duration
+	KCPWriteWaitEvents  uint64
+	KCPWriteWait        time.Duration
+	RTPReorderGapEvents uint64
+	RTPReorderSkipped   uint64
+	RTPReorderLastGap   time.Duration
+	Backpressured       bool
+	BackpressureEvents  uint64
+	BackpressureWait    time.Duration
+}
+
+// MetricsProvider is implemented by transports that expose runtime pressure.
+type MetricsProvider interface {
+	Metrics() RuntimeMetrics
+}
+
 // Transport defines a byte transport independent of the underlying carrier.
 type Transport interface {
 	Connect(ctx context.Context) error

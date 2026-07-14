@@ -5,6 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/openlibrecommunity/olcrtc/internal/engine"
 	enginebuiltin "github.com/openlibrecommunity/olcrtc/internal/engine/builtin"
@@ -12,17 +15,35 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
-const defaultMaxPayloadSize = 12*1024 - 12
+const (
+	defaultMaxPayloadSize       = 12*1024 - 12
+	serverQueueHighWatermark    = 128
+	serverQueueLowWatermark     = 64
+	serverBufferedHighWatermark = 512 * 1024
+	serverBufferedLowWatermark  = 256 * 1024
+)
 
 // ErrByteStreamUnsupported is returned when a carrier engine cannot expose a byte stream.
 var ErrByteStreamUnsupported = errors.New("engine does not support byte stream")
 
 type streamTransport struct {
-	session engine.Session
+	session               engine.Session
+	// ponytail: OnPeerData is the existing server-role signal; add an explicit
+	// role only if clients later need peer-routed receive callbacks.
+	serverMode            bool
+	backpressureMu        sync.Mutex
+	backpressured         atomic.Bool
+	backpressureSince     atomic.Int64
+	backpressureEvents    atomic.Uint64
+	backpressureWaitNanos atomic.Int64
 }
 
 type byteStreamPayloadSizer interface {
 	ByteStreamMaxPayloadSize() int
+}
+
+type sendQueueDepthProvider interface {
+	SendQueueDepth() int
 }
 
 // New creates a datachannel transport backed by a carrier engine.
@@ -50,7 +71,7 @@ func New(ctx context.Context, cfg transport.Config) (transport.Transport, error)
 		return nil, ErrByteStreamUnsupported
 	}
 
-	return &streamTransport{session: sess}, nil
+	return &streamTransport{session: sess, serverMode: cfg.OnPeerData != nil}, nil
 }
 
 // Connect starts the transport connection.
@@ -131,7 +152,80 @@ func (p *streamTransport) WatchConnection(ctx context.Context) {
 
 // CanSend reports whether transport is ready for sending.
 func (p *streamTransport) CanSend() bool {
-	return p.session.CanSend()
+	if !p.session.CanSend() {
+		return false
+	}
+	if !p.serverMode {
+		return true
+	}
+
+	depth := p.sendQueueDepth()
+	buffered := p.session.GetBufferedAmount()
+	if p.backpressured.Load() {
+		if depth > serverQueueLowWatermark || buffered > serverBufferedLowWatermark {
+			return false
+		}
+		p.clearBackpressure()
+	}
+	if depth >= serverQueueHighWatermark || buffered >= serverBufferedHighWatermark {
+		p.startBackpressure()
+		return false
+	}
+	return true
+}
+
+func (p *streamTransport) sendQueueDepth() int {
+	if provider, ok := p.session.(sendQueueDepthProvider); ok {
+		return provider.SendQueueDepth()
+	}
+	queue := p.session.GetSendQueue()
+	if queue == nil {
+		return 0
+	}
+	return len(queue)
+}
+
+func (p *streamTransport) startBackpressure() {
+	p.backpressureMu.Lock()
+	defer p.backpressureMu.Unlock()
+	if p.backpressured.Load() {
+		return
+	}
+	p.backpressureSince.Store(time.Now().UnixNano())
+	p.backpressureEvents.Add(1)
+	p.backpressured.Store(true)
+}
+
+func (p *streamTransport) clearBackpressure() {
+	p.backpressureMu.Lock()
+	defer p.backpressureMu.Unlock()
+	if !p.backpressured.Load() {
+		return
+	}
+	since := p.backpressureSince.Swap(0)
+	if since > 0 {
+		p.backpressureWaitNanos.Add(time.Now().UnixNano() - since)
+	}
+	p.backpressured.Store(false)
+}
+
+func (p *streamTransport) backpressureWait() time.Duration {
+	nanos := p.backpressureWaitNanos.Load()
+	if since := p.backpressureSince.Load(); since > 0 {
+		nanos += time.Now().UnixNano() - since
+	}
+	return time.Duration(nanos)
+}
+
+// Metrics reports server-side engine queue pressure.
+func (p *streamTransport) Metrics() transport.RuntimeMetrics {
+	return transport.RuntimeMetrics{
+		SendQueueDepth:     p.sendQueueDepth(),
+		BufferedAmount:     p.session.GetBufferedAmount(),
+		Backpressured:      p.backpressured.Load(),
+		BackpressureEvents: p.backpressureEvents.Load(),
+		BackpressureWait:   p.backpressureWait(),
+	}
 }
 
 // Features describes the current datachannel transport semantics.

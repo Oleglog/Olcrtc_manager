@@ -800,7 +800,7 @@ func (s *Server) startControlLoop(ctx context.Context, sess *smux.Session, strea
 		sid := s.sessionID
 		s.sessMu.RUnlock()
 		s.recordPong(h)
-		logger.Debugf("control alive session=%s rtt=%v seq=%d", sid, h.RTT, h.Seq)
+		s.logRuntimeMetrics(sid, "", h)
 		if onPong != nil {
 			onPong(h)
 		}
@@ -862,7 +862,7 @@ func (s *Server) startPeerControlLoop(ps *peerSession, stream *smux.Stream) {
 	onUnhealthy := liveness.OnUnhealthy
 	liveness.OnPong = func(h control.Health) {
 		s.recordPong(h)
-		logger.Debugf("control alive session=%s peer=%s rtt=%v seq=%d", ps.sessionID, ps.peerID, h.RTT, h.Seq)
+		s.logRuntimeMetrics(ps.sessionID, ps.peerID, h)
 		if onPong != nil {
 			onPong(h)
 		}
@@ -912,6 +912,24 @@ func (s *Server) stopping() bool {
 // Status returns the latest server-side control health snapshot.
 func (s *Server) Status() control.Status {
 	return s.health.Status()
+}
+
+func (s *Server) logRuntimeMetrics(sessionID, peerID string, health control.Health) {
+	metrics := transport.RuntimeMetrics{}
+	if provider, ok := s.ln.(transport.MetricsProvider); ok {
+		metrics = provider.Metrics()
+	}
+	logger.Infof(
+		"server_metrics session=%s peer=%s control_rtt_ms=%d seq=%d queue_depth=%d buffered_bytes=%d "+
+			"vp8_outbound_depth=%d kcp_send_window=%d kcp_srtt_ms=%d kcp_write_wait_events=%d kcp_write_wait_ms=%d "+
+			"rtp_gap_events=%d rtp_skipped_packets=%d "+
+			"rtp_last_gap_ms=%d backpressured=%t backpressure_events=%d backpressure_wait_ms=%d",
+		sessionID, peerID, health.RTT.Milliseconds(), health.Seq,
+		metrics.SendQueueDepth, metrics.BufferedAmount, metrics.OutboundQueueDepth, metrics.KCPSendWindow,
+		metrics.KCPSRTT.Milliseconds(), metrics.KCPWriteWaitEvents, metrics.KCPWriteWait.Milliseconds(),
+		metrics.RTPReorderGapEvents, metrics.RTPReorderSkipped, metrics.RTPReorderLastGap.Milliseconds(),
+		metrics.Backpressured, metrics.BackpressureEvents, metrics.BackpressureWait.Milliseconds(),
+	)
 }
 
 func (s *Server) recordSession(sessionID string) { s.health.RecordSession(sessionID) }
@@ -988,12 +1006,14 @@ func (s *Server) dispatch(stream *smux.Stream, req ConnectRequest, sessionID str
 	dialElapsed := time.Since(dialStart)
 
 	if err != nil {
-		logger.Infof("sid=%d dial %s failed (%v): %v", stream.ID(), addr, dialElapsed, err)
+		logger.Infof("server_dial sid=%d target=%s duration_ms=%d success=false error=%v",
+			stream.ID(), addr, dialElapsed.Milliseconds(), err)
 		return
 	}
 	defer func() { _ = conn.Close() }()
 
-	logger.Infof("sid=%d connected %s in %v", stream.ID(), addr, dialElapsed)
+	logger.Infof("server_dial sid=%d target=%s duration_ms=%d success=true",
+		stream.ID(), addr, dialElapsed.Milliseconds())
 
 	if _, err := stream.Write([]byte{0x00}); err != nil {
 		return

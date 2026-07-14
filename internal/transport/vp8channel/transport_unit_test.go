@@ -329,6 +329,96 @@ func TestReorderBufferRestoresSequenceOrder(t *testing.T) {
 	}
 }
 
+func TestReorderBufferExpiresMissingPacket(t *testing.T) {
+	now := time.Unix(100, 0)
+	var skipped int
+	var gapAge time.Duration
+	b := newReorderBufferWithClock(func() time.Time { return now }, func(count int, age time.Duration) {
+		skipped = count
+		gapAge = age
+	})
+	if got := b.push(&rtp.Packet{Header: rtp.Header{SequenceNumber: 10}}); len(got) != 1 {
+		t.Fatalf("first push delivered %d packets, want 1", len(got))
+	}
+	if got := b.push(&rtp.Packet{Header: rtp.Header{SequenceNumber: 12}}); len(got) != 0 {
+		t.Fatalf("gap push delivered %d packets, want 0", len(got))
+	}
+	now = now.Add(reorderMaxGapWait + time.Millisecond)
+	got := b.push(&rtp.Packet{Header: rtp.Header{SequenceNumber: 13}})
+	if len(got) != 2 || got[0].SequenceNumber != 12 || got[1].SequenceNumber != 13 {
+		t.Fatalf("expired gap delivered %+v, want 12,13", got)
+	}
+	if skipped != 1 || gapAge != reorderMaxGapWait+time.Millisecond {
+		t.Fatalf("skip metrics = (%d, %v), want (1, %v)", skipped, gapAge, reorderMaxGapWait+time.Millisecond)
+	}
+}
+
+func TestReorderBufferBoundsWindow(t *testing.T) {
+	now := time.Unix(200, 0)
+	var skipped int
+	b := newReorderBufferWithClock(func() time.Time { return now }, func(count int, _ time.Duration) {
+		skipped = count
+	})
+	_ = b.push(&rtp.Packet{Header: rtp.Header{SequenceNumber: 100}})
+	var got []*rtp.Packet
+	for seq := uint16(102); seq < 102+reorderWindow; seq++ {
+		got = b.push(&rtp.Packet{Header: rtp.Header{SequenceNumber: seq}})
+	}
+	if len(got) != reorderWindow || got[0].SequenceNumber != 102 || got[len(got)-1].SequenceNumber != 133 {
+		t.Fatalf("window flush delivered %d packets (%v), want 102..133", len(got), got)
+	}
+	if skipped != 1 {
+		t.Fatalf("window flush skipped %d packets, want 1", skipped)
+	}
+}
+
+func TestReorderBufferHandlesSequenceWrap(t *testing.T) {
+	b := newReorderBuffer()
+	if got := b.push(&rtp.Packet{Header: rtp.Header{SequenceNumber: 65534}}); len(got) != 1 {
+		t.Fatalf("first push delivered %d packets, want 1", len(got))
+	}
+	if got := b.push(&rtp.Packet{Header: rtp.Header{SequenceNumber: 0}}); len(got) != 0 {
+		t.Fatalf("wrapped gap push delivered %d packets, want 0", len(got))
+	}
+	got := b.push(&rtp.Packet{Header: rtp.Header{SequenceNumber: 65535}})
+	if len(got) != 2 || got[0].SequenceNumber != 65535 || got[1].SequenceNumber != 0 {
+		t.Fatalf("wrapped delivery = %+v, want 65535,0", got)
+	}
+}
+
+func TestServerVP8BackpressureUsesQueueHysteresis(t *testing.T) {
+	tr := &streamTransport{
+		stream:     &fakeVideoStream{canSend: true},
+		serverMode: true,
+		outbound:   make(chan []byte, serverQueueHighWatermark+1),
+		peers:      make(map[uint32]*kcpRuntime),
+		peerOut:    make(map[uint32]chan []byte),
+	}
+	rt, err := tr.startKCPRuntime(tr.outbound, nil, tr.epochHeader())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.close()
+	tr.kcp = rt
+
+	for len(tr.outbound) < serverQueueHighWatermark {
+		tr.outbound <- []byte("queued")
+	}
+	if tr.CanSend() {
+		t.Fatal("CanSend() = true at VP8 server high watermark")
+	}
+	if metrics := tr.Metrics(); !metrics.Backpressured ||
+		metrics.OutboundQueueDepth != serverQueueHighWatermark || metrics.KCPSendWindow != serverKCPSndWnd {
+		t.Fatalf("Metrics() at high watermark = %+v", metrics)
+	}
+	for len(tr.outbound) > serverQueueLowWatermark {
+		<-tr.outbound
+	}
+	if !tr.CanSend() {
+		t.Fatal("CanSend() = false after VP8 queue drained to low watermark")
+	}
+}
+
 func TestKCPConnCRCVerifiesAndStripsPacket(t *testing.T) {
 	out := make(chan []byte, 1)
 	hdr := buildEpochHeader(bindingToken("client"), 0x01020304)

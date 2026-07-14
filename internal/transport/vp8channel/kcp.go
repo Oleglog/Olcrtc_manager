@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	kcp "github.com/xtaci/kcp-go/v5"
 )
@@ -38,6 +40,10 @@ const (
 	// window stays generous so the peer is never the bottleneck.
 	kcpSndWnd = 768
 	kcpRcvWnd = 1024
+	// Server writes are bounded more aggressively so bulk responses cannot
+	// queue seconds of KCP segments ahead of control pongs.
+	serverKCPSndWnd       = 256
+	kcpWriteWaitThreshold = time.Millisecond
 
 	// Length prefix for our message framing on top of KCP stream mode.
 	// We use stream mode because UDPSession.Write fragments messages > MSS
@@ -59,14 +65,29 @@ var ErrKCPMessageTooLarge = errors.New("vp8channel: kcp message exceeds maximum 
 // kcpRuntime owns the KCP session and the goroutine that pumps reassembled
 // messages from KCP up to cfg.OnData.
 type kcpRuntime struct {
-	conn      *kcpConn
-	sess      *kcp.UDPSession
-	readDone  chan struct{}
-	writeMu   sync.Mutex // serializes length-prefix + payload writes
-	closeOnce sync.Once
+	conn            *kcpConn
+	sess            *kcp.UDPSession
+	sendWindow      int
+	readDone        chan struct{}
+	writeMu         sync.Mutex // serializes length-prefix + payload writes
+	writeWaitEvents atomic.Uint64
+	writeWaitNanos  atomic.Int64
+	closeOnce       sync.Once
 }
 
 func startKCP(out chan<- []byte, onData func([]byte), epochHdr [epochHdrLen]byte) (*kcpRuntime, error) {
+	return startKCPWithSendWindow(out, onData, epochHdr, kcpSndWnd)
+}
+
+func startKCPWithSendWindow(
+	out chan<- []byte,
+	onData func([]byte),
+	epochHdr [epochHdrLen]byte,
+	sendWindow int,
+) (*kcpRuntime, error) {
+	if sendWindow <= 0 {
+		sendWindow = kcpSndWnd
+	}
 	c := newKCPConn(out, inboundQueueSize, epochHdr)
 
 	sess, err := kcp.NewConn3(kcpConvID, fakeUDPAddr(), nil, 0, 0, c)
@@ -84,7 +105,7 @@ func startKCP(out chan<- []byte, onData func([]byte), epochHdr [epochHdrLen]byte
 	// full and retransmits the few losses; the pacer caps the rate so we
 	// never overdrive the policer into its collapse zone.
 	sess.SetNoDelay(1, 5, 2, 1)
-	sess.SetWindowSize(kcpSndWnd, kcpRcvWnd)
+	sess.SetWindowSize(sendWindow, kcpRcvWnd)
 	sess.SetMtu(kcpMTU)
 	// Upstream marked SetStreamMode deprecated without providing a replacement;
 	// stream framing is still required for our wire format.
@@ -93,9 +114,10 @@ func startKCP(out chan<- []byte, onData func([]byte), epochHdr [epochHdrLen]byte
 	sess.SetWriteDelay(false)
 
 	rt := &kcpRuntime{
-		conn:     c,
-		sess:     sess,
-		readDone: make(chan struct{}),
+		conn:       c,
+		sess:       sess,
+		sendWindow: sendWindow,
+		readDone:   make(chan struct{}),
 	}
 
 	go rt.readLoop(onData)
@@ -146,8 +168,15 @@ func (r *kcpRuntime) send(msg []byte) error {
 	var hdr [kcpLenPrefix]byte
 	binary.BigEndian.PutUint32(hdr[:], uint32(len(msg))) //nolint:gosec,lll // G115: bounded conversion verified by surrounding logic
 
+	started := time.Now()
 	r.writeMu.Lock()
-	defer r.writeMu.Unlock()
+	defer func() {
+		r.writeMu.Unlock()
+		if waited := time.Since(started); waited >= kcpWriteWaitThreshold {
+			r.writeWaitEvents.Add(1)
+			r.writeWaitNanos.Add(int64(waited))
+		}
+	}()
 
 	if _, err := r.sess.Write(hdr[:]); err != nil {
 		return fmt.Errorf("kcp write header: %w", err)
@@ -156,6 +185,17 @@ func (r *kcpRuntime) send(msg []byte) error {
 		return fmt.Errorf("kcp write payload: %w", err)
 	}
 	return nil
+}
+
+func (r *kcpRuntime) srtt() time.Duration {
+	if millis := r.sess.GetSRTT(); millis > 0 {
+		return time.Duration(millis) * time.Millisecond
+	}
+	return 0
+}
+
+func (r *kcpRuntime) writeWait() (uint64, time.Duration) {
+	return r.writeWaitEvents.Load(), time.Duration(r.writeWaitNanos.Load())
 }
 
 func (r *kcpRuntime) close() {

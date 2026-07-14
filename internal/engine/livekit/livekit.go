@@ -499,6 +499,9 @@ func (s *Session) CanSend() bool {
 // GetSendQueue exposes the outbound queue.
 func (s *Session) GetSendQueue() chan []byte { return s.sendQueue }
 
+// SendQueueDepth reports application messages waiting for the LiveKit SDK.
+func (s *Session) SendQueueDepth() int { return len(s.sendQueue) }
+
 // GetBufferedAmount is a stub for LiveKit (the SDK handles its own buffering).
 func (s *Session) GetBufferedAmount() uint64 { return 0 }
 
