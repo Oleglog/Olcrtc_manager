@@ -656,10 +656,14 @@ function renderSubRow(sub, instances, sys) {
     await withLoading(qrBtn, async () => {
       try {
         const insts = await api('/subs/' + sub.slug + '/instances');
-        // Do not sync Yandex mirror while opening QR. It can be slow and the
-        // resulting mirror metadata makes the QR larger. The QR remains a fast
-        // offline bootstrap snapshot; updates can still run through the tunnel.
-        const bundle = buildSubscriptionBundle(sub, subURL, insts, null);
+        // Sync Yandex mirror and embed its metadata in the QR so Android can
+        // fall back to it when the primary subscription URL is unreachable.
+        // If mirror is disabled or sync fails, QR stays a primary-only bundle.
+        let mirror = null;
+        try {
+          mirror = await api('/subs/' + sub.slug + '/mirror');
+        } catch (e) { /* mirror disabled or not synced — fall through */ }
+        const bundle = buildSubscriptionBundle(sub, subURL, insts, mirror);
         showQRModal(bundle, { subscriptionBundle: true, name: sub.name });
       } catch (e) {
         showToast('Ошибка QR подписки: ' + e.message, 'error');
