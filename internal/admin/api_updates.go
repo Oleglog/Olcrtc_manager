@@ -18,7 +18,7 @@ import (
 )
 
 // Version is set via ldflags at build time.
-var Version = "1.9.53"
+var Version = "1.9.54"
 
 // ReleaseBranch identifies the release channel used to build the admin binary.
 // Stable builds use master; branch builds override it via ldflags.
@@ -504,18 +504,19 @@ func (s *Server) handleListReleases(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// fetchReleases tries the rate-limit-free atom feed first, then GitHub API.
+// fetchReleases uses the API first because GitHub's Atom feed omits prereleases.
+// Atom remains a rate-limit-free fallback for stable releases.
 func fetchReleases() ([]releaseInfo, string, error) {
-	rels, err := fetchReleasesViaAtom()
-	if err == nil {
-		return rels, "atom", nil
-	}
-	atomErr := err
-	rels, err = fetchReleasesViaAPI()
+	rels, err := fetchReleasesViaAPI()
 	if err == nil {
 		return rels, "api", nil
 	}
-	return nil, "", fmt.Errorf("atom: %w; api: %w", atomErr, err)
+	apiErr := err
+	rels, err = fetchReleasesViaAtom()
+	if err == nil {
+		return rels, "atom", nil
+	}
+	return nil, "", fmt.Errorf("api: %w; atom: %w", apiErr, err)
 }
 
 func fetchReleasesViaAtom() ([]releaseInfo, error) {
