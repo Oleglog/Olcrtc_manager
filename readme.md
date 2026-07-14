@@ -145,13 +145,7 @@ https://oauth.yandex.ru/authorize?response_type=token&client_id=<CLIENTID>
 5. **OAuth token** — вставь токен из Шага 2. Поле masked: после сохранения будет показываться `••••<последние 4 символа>`. Чтобы не изменять токен при правке других полей — оставляй masked значение как есть, оно не перезапишется.
 6. Нажми **Test upload** — сервер сделает пробную загрузку+удаление `.olcrtc-ping-*.json` на Яндинс Диск. Покажет latency при успехе или человекочитаемый Yandex API error при неудаче (401/403 обычно означают невалидный или истекший токен).
 7. Нажми **Save**. Файл `/etc/olcrtc/env` обновляется: `OLCRTC_SUB_MIRROR_ENABLED=true`, `OLCRTC_SUB_MIRROR_PROVIDER=yandex_disk`, `OLCRTC_SUB_MIRROR_YANDEX_OAUTH_TOKEN=<token>`, `OLCRTC_SUB_MIRROR_YANDEX_BASE_PATH=<path>`. Права файла `0640 root:olcrtc`.
-8. **Перезапусти `olcrtc-server`**, чтобы mirror manager подхватил новые настройки:
-
-```bash
-sudo systemctl restart olcrtc-server.service
-```
-
-После рестарта при следующем QR подписки сервер автоматически синкает Yandex mirror и вложит `m` (mirror metadata) + `mk` (AES key base64) в JSON бандла. Android при таймауте основного subscription URL использует этот ключ, чтобы скачать и расшифровать mirror-файл.
+8. **olcrtc-server перезапускается автоматически** (с `server-v1.9.45+` через detached `systemd-run`), чтобы mirror manager подхватил новые env vars. Admin UI остаётся живым, на экране тост "olcrtc-server автоматически перезапускается". Рестарт занимает ~10-15 сек.
 
 #### Ручное редактирование env (без Admin UI)
 
@@ -172,7 +166,7 @@ OLCRTC_SUB_MIRROR_YANDEX_BASE_PATH=/olcrtc/subscriptions
 sudo systemctl restart olcrtc-server.service
 ```
 
-`enabled` пиши как `true`/`false` (не `1`/`0`): yaml.v3 парсит `1` как int, что ломает unmarshal `SubscriptionMirror.Enabled bool` при регенерации `config.yaml` лаунчером (см. [[Gotcha — mirror save bricked olcrtc-server 1.9.41]]).
+`enabled` пиши как `true`/`false` (не `1`/`0`): yaml.v3 парсит `1` как int, что ломает unmarshal `SubscriptionMirror.Enabled bool` при регенерации `config.yaml` лаунчером.
 
 #### Проверка фолбэка на Android
 

@@ -1184,6 +1184,9 @@ async function renderSettings(app) {
           }),
         });
         showToast(res.message || 'Настройки зеркала сохранены', 'success');
+        if (res.restarting) {
+          showToast('olcrtc-server автоматически перезапускается (~10 сек)', 'success');
+        }
         render();
       } catch (e) {
         try { const err = JSON.parse(e.message); showToast(err.message || e.message, 'error'); }

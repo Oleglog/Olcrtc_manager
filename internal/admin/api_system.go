@@ -7,6 +7,7 @@ import (
 	"net/http"
 	neturl "net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -400,14 +401,30 @@ func (s *Server) handleSystemMirrorConfig(w http.ResponseWriter, r *http.Request
 			})
 			return
 		}
+		// Detached restart of olcrtc-server so mirror manager picks up the new
+		// env vars. systemd-run --no-block returns immediately; the actual restart
+		// fires after a short sleep so the HTTP response reaches the client first.
+		// ponytail: admin service itself is not restarted.
+		go func() {
+			time.Sleep(1 * time.Second)
+			cmd := exec.Command("systemd-run", "--no-block", "--collect",
+				"--unit=olcrtc-mirror-restart",
+				"--description=olcRTC mirror config apply",
+				"systemctl", "restart", "olcrtc-server.service")
+			if out, err := cmd.CombinedOutput(); err != nil {
+				logger.Errorf("mirror config restart: %v, output: %s", err, string(out))
+			} else {
+				logger.Info("olcrtc-server restarted after mirror config save")
+			}
+		}()
 		writeJSON(w, http.StatusOK, map[string]any{
-			"ok":               true,
-			"enabled":          req.Enabled,
-			"provider":         provider,
-			"base_path":        basePath,
-			"token_masked":     maskToken(token),
-			"restart_required": true,
-			"message":          "Настройки зеркала сохранены. Перезапустите olcrtc-server для применения.",
+			"ok":         true,
+			"enabled":    req.Enabled,
+			"provider":   provider,
+			"base_path":  basePath,
+			"token_masked": maskToken(token),
+			"restarting":   true,
+			"message":    "Настройки зеркала сохранены. olcrtc-server автоматически перезапускается.",
 		})
 	default:
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
