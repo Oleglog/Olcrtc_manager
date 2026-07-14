@@ -343,7 +343,11 @@ func (s *Server) deleteInstance(w http.ResponseWriter, id int) {
 		return
 	}
 	svc := InstanceService(id)
-	_ = SystemctlStop(svc)
+	if err := SystemctlRemoveInstance(svc); err != nil {
+		logger.Errorf("remove instance service %s: %v", svc, err)
+		http.Error(w, "Cannot remove instance systemd service: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	envPath := InstanceEnvPath(s.cfg.ConfigDir, id)
 	keyPath := InstanceKeyPath(s.cfg.ConfigDir, id)

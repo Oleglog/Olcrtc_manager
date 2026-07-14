@@ -1,10 +1,19 @@
 package admin
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
+)
+
+var (
+	systemdUnitDir     = "/etc/systemd/system"
+	systemctlRemoveRun = SystemctlRun
 )
 
 // SystemctlStatus holds systemd unit status.
@@ -31,6 +40,42 @@ func SystemctlStart(service string) error {
 func SystemctlStop(service string) error {
 	_, err := SystemctlRun("stop", service)
 	return err
+}
+
+// SystemctlRemoveInstance permanently removes one instantiated server unit.
+// The shared olcrtc-server@.service template and other instance IDs are kept.
+func SystemctlRemoveInstance(service string) error {
+	const prefix = "olcrtc-server@"
+	const suffix = ".service"
+	if !strings.HasPrefix(service, prefix) || !strings.HasSuffix(service, suffix) {
+		return fmt.Errorf("invalid instance service %q", service)
+	}
+	idText := strings.TrimSuffix(strings.TrimPrefix(service, prefix), suffix)
+	id, err := strconv.Atoi(idText)
+	if err != nil || id <= 0 || strconv.Itoa(id) != idText {
+		return fmt.Errorf("invalid instance service %q", service)
+	}
+
+	// systemctl may report an error for an already-disabled or already-cleaned
+	// unit. Exact filesystem cleanup below is authoritative for final deletion.
+	_, _ = systemctlRemoveRun("disable", "--now", service)
+	_, _ = systemctlRemoveRun("clean", "--what=state", service)
+	_, _ = systemctlRemoveRun("reset-failed", service)
+
+	var cleanupErr error
+	for _, path := range []string{
+		filepath.Join(systemdUnitDir, service),
+		filepath.Join(systemdUnitDir, "multi-user.target.wants", service),
+		filepath.Join(systemdUnitDir, service+".d"),
+	} {
+		if err := os.RemoveAll(path); err != nil {
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("remove %s: %w", path, err))
+		}
+	}
+	if _, err := systemctlRemoveRun("daemon-reload"); err != nil {
+		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("systemctl daemon-reload: %w", err))
+	}
+	return cleanupErr
 }
 
 // SystemctlRestart restarts a service.
