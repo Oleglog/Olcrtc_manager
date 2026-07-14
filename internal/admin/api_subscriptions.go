@@ -90,7 +90,11 @@ func (s *Server) writeSubscriptionUnavailable(w http.ResponseWriter) {
 }
 
 func (s *Server) doProxy(w http.ResponseWriter, req *http.Request) {
-	client := &http.Client{Timeout: 10 * time.Second}
+	timeout := 10 * time.Second
+	if req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/mirror") {
+		timeout = 90 * time.Second
+	}
+	client := &http.Client{Timeout: timeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		if strings.Contains(err.Error(), "connection refused") {

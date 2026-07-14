@@ -12,6 +12,8 @@
 //	GET    /api/subscriptions/{slug}/instances
 //	POST   /api/subscriptions/{slug}/instances
 //	DELETE /api/subscriptions/{slug}/instances/{id}
+//	GET    /api/subscriptions/{slug}/mirror
+//	POST   /api/subscriptions/{slug}/mirror
 //	GET    /api/export
 //	POST   /api/import
 package server
@@ -88,7 +90,7 @@ func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
 		Addr:         listener.Addr().String(),
 		Handler:      mux,
 		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
+		WriteTimeout: 90 * time.Second,
 	}
 
 	// Graceful shutdown on context cancellation.
@@ -220,9 +222,12 @@ func (s *Server) handleSubscriptionsSlug(w http.ResponseWriter, r *http.Request)
 		}
 
 	case len(parts) == 2 && parts[1] == "mirror":
-		if r.Method == http.MethodGet || r.Method == http.MethodPost {
+		switch r.Method {
+		case http.MethodGet:
 			s.getMirror(w, r, slug)
-		} else {
+		case http.MethodPost:
+			s.refreshMirror(w, r, slug)
+		default:
 			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		}
 
@@ -453,12 +458,28 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]int{"created": created, "skipped": skipped})
 }
 
-func (s *Server) getMirror(w http.ResponseWriter, r *http.Request, slug string) {
+func (s *Server) getMirror(w http.ResponseWriter, _ *http.Request, slug string) {
+	m, err := s.store.GetMirror(slug)
+	if errors.Is(err, store.ErrNotFound) {
+		http.Error(w, "Not Found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		logger.Errorf("getMirror %s: %v", slug, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, m)
+}
+
+func (s *Server) refreshMirror(w http.ResponseWriter, r *http.Request, slug string) {
 	if !s.mirrorEnabled() {
 		http.Error(w, "Mirror disabled", http.StatusNotFound)
 		return
 	}
-	m, err := s.syncMirror(r.Context(), slug)
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+	m, err := s.syncMirror(ctx, slug)
 	if errors.Is(err, store.ErrNotFound) {
 		http.Error(w, "Not Found", http.StatusNotFound)
 		return

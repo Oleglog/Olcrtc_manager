@@ -450,7 +450,8 @@ input:disabled, input[readonly] {
   background: var(--color-surface-1);
 }
 
-.radio-row input[type="radio"] {
+.radio-row input[type="radio"],
+.radio-row input[type="checkbox"] {
   width: 18px;
   height: 18px;
   accent-color: var(--color-primary);

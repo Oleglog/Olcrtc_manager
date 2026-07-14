@@ -653,12 +653,9 @@ function renderSubRow(sub, instances, sys) {
   const viewBtn = el('button', 'btn btn-secondary btn-sm');
   viewBtn.innerHTML = icon('eye') + '<span>Просмотр</span>';
   viewBtn.onclick = () => window.open(subURL, '_blank');
-  const instBtn = el('button', 'btn btn-secondary btn-sm');
-  instBtn.innerHTML = icon('settings') + '<span>Инстансы</span>';
-  instBtn.onclick = () => showSubInstancesModal(sub);
-  const addBtn = el('button', 'btn btn-secondary btn-sm');
-  addBtn.innerHTML = icon('plus') + '<span>Добавить</span>';
-  addBtn.onclick = () => showAddToSubModal(sub, instances);
+  const compositionBtn = el('button', 'btn btn-secondary btn-sm');
+  compositionBtn.innerHTML = icon('settings') + '<span>Состав</span>';
+  compositionBtn.onclick = () => showManageSubInstancesModal(sub, instances);
   const qrBtn = el('button', 'btn btn-secondary btn-sm');
   qrBtn.innerHTML = icon('qr-code') + '<span>QR</span>';
   qrBtn.title = 'QR-бандл подписки: группа + текущие подключения';
@@ -666,13 +663,14 @@ function renderSubRow(sub, instances, sys) {
     await withLoading(qrBtn, async () => {
       try {
         const insts = await api('/subs/' + sub.slug + '/instances');
-        // Sync Yandex mirror and embed its metadata in the QR so Android can
-        // fall back to it when the primary subscription URL is unreachable.
-        // If mirror is disabled or sync fails, QR stays a primary-only bundle.
         let mirror = null;
-        try {
-          mirror = await api('/subs/' + sub.slug + '/mirror');
-        } catch (e) { /* mirror disabled or not synced — fall through */ }
+        if (sys.mirror_enabled) {
+          try {
+            mirror = await api('/subs/' + sub.slug + '/mirror', { method: 'POST', body: '{}' });
+          } catch (e) {
+            throw new Error('Yandex mirror включён, но синхронизация не удалась: ' + e.message);
+          }
+        }
         const bundle = buildSubscriptionBundle(sub, subURL, insts, mirror);
         showQRModal(bundle, { subscriptionBundle: true, name: sub.name });
       } catch (e) {
@@ -698,8 +696,7 @@ function renderSubRow(sub, instances, sys) {
     } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
   };
   right.appendChild(viewBtn);
-  right.appendChild(instBtn);
-  right.appendChild(addBtn);
+  right.appendChild(compositionBtn);
   right.appendChild(qrBtn);
   right.appendChild(delBtn);
   row.appendChild(left);
@@ -2182,70 +2179,195 @@ function makeReadonlyWithRotate(label, iconHTML, value, onRotate) {
   return { field, input };
 }
 
-// ── Subscription modals (kept conceptually identical to the old SPA) ────────
-function showAddToSubModal(sub, instances) {
+// ── Subscription modals ──────────────────────────────────────────────────────
+async function showManageSubInstancesModal(sub, instances) {
   const div = el('div', '');
-  div.innerHTML = '<h3 class="text-lg font-semibold mb-3">Добавить инстанс в подписку «' + sub.name + '»</h3>';
-  const list = el('div', 'space-y-2 mb-3');
-  const radios = [];
-  instances.forEach(inst => {
-    const row = el('label', 'radio-row');
-    const rb = el('input', ''); rb.type = 'radio'; rb.name = 'inst'; rb.value = inst.id;
-    rb.style.width = 'auto'; rb.style.minHeight = 'auto';
-    row.appendChild(rb);
-    row.appendChild(el('span', 'text-sm', inst.label + ' — ' + inst.carrier + ' / ' + inst.transport));
-    list.appendChild(row);
-    radios.push(rb);
-  });
-  const manualRow = el('label', 'radio-row');
-  const manualRb = el('input', ''); manualRb.type = 'radio'; manualRb.name = 'inst'; manualRb.value = 'manual';
-  manualRb.style.width = 'auto'; manualRb.style.minHeight = 'auto';
-  manualRow.appendChild(manualRb);
-  manualRow.appendChild(el('span', 'text-sm', 'Ввести URI вручную'));
-  list.appendChild(manualRow);
-  radios.push(manualRb);
+  const title = el('h3', 'text-lg font-semibold mb-1', 'Состав подписки «' + sub.name + '»');
+  div.appendChild(title);
+  div.appendChild(el('div', 'text-sm text-gray-400 mb-4', 'Отметьте нужные инстансы. Уже добавленные отмечены галочкой; изменения применятся одной кнопкой.'));
 
-  const manualInp = el('input', 'mb-3');
-  manualInp.placeholder = 'olcrtc://...';
-  manualInp.classList.add('hidden');
-  manualRb.onchange = () => { manualInp.classList.remove('hidden'); };
-  radios.filter(r => r !== manualRb).forEach(r => {
-    r.onchange = () => { manualInp.classList.add('hidden'); };
-  });
+  const list = el('div', 'space-y-2 mb-4 max-h-72 overflow-y-auto pr-1');
+  list.appendChild(el('div', 'text-sm text-gray-400', 'Загрузка...'));
   div.appendChild(list);
+
+  const manualTitle = el('div', 'font-medium text-sm mb-2', 'Добавить URI вручную');
+  const manualInp = el('textarea', 'w-full mb-1');
+  manualInp.rows = 3;
+  manualInp.placeholder = 'olcrtc://...\nПо одному URI на строку';
+  div.appendChild(manualTitle);
   div.appendChild(manualInp);
+  div.appendChild(el('div', 'text-xs text-gray-500 mb-4', 'Можно добавить несколько URI сразу — по одному на строку.'));
 
   const btnRow = el('div', 'flex gap-2 justify-end');
   const cancelBtn = el('button', 'btn btn-secondary');
   cancelBtn.textContent = 'Отмена';
-  const addBtn = el('button', 'btn btn-primary');
-  addBtn.textContent = 'Добавить';
+  const saveBtn = el('button', 'btn btn-primary');
+  saveBtn.textContent = 'Сохранить состав';
+  saveBtn.disabled = true;
   btnRow.appendChild(cancelBtn);
-  btnRow.appendChild(addBtn);
+  btnRow.appendChild(saveBtn);
   div.appendChild(btnRow);
 
   const overlay = showModal(div);
   cancelBtn.onclick = () => closeModal(overlay);
-  addBtn.onclick = async () => {
-    let rawUri = '';
-    const checked = radios.find(r => r.checked);
-    if (!checked) { showToast('Выберите инстанс', 'error'); return; }
-    if (checked.value === 'manual') rawUri = manualInp.value;
-    else {
-      const inst = instances.find(i => String(i.id) === checked.value);
-      rawUri = inst ? (inst.subscription_uri || inst.uri) : '';
+
+  let subscriptionInstances;
+  try {
+    subscriptionInstances = await api('/subs/' + sub.slug + '/instances');
+  } catch (e) {
+    list.innerHTML = '';
+    list.appendChild(el('div', 'text-rose-400 text-sm', 'Ошибка: ' + e.message));
+    return;
+  }
+
+  const linkedBySource = new Map();
+  const looseEntries = [];
+  const adminIDs = new Set((instances || []).map(inst => String(inst.id)));
+  (subscriptionInstances || []).forEach(entry => {
+    const hasSource = entry.source_instance_id !== null && entry.source_instance_id !== undefined;
+    const sourceKey = hasSource ? String(entry.source_instance_id) : '';
+    if (!hasSource || !adminIDs.has(sourceKey)) {
+      looseEntries.push(entry);
+      return;
     }
-    if (!rawUri) { showToast('URI не может быть пустым', 'error'); return; }
-    await withLoading(addBtn, async () => {
-      try {
-        const sourceID = checked.value === 'manual' ? null : Number(checked.value);
-        const body = { raw_uri: rawUri };
-        if (sourceID !== null) body.source_instance_id = sourceID;
-        await api('/subs/' + sub.slug + '/instances', { method: 'POST', body: JSON.stringify(body) });
-        showToast('Добавлено');
-        closeModal(overlay);
-        render();
-      } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
+    if (!linkedBySource.has(sourceKey)) linkedBySource.set(sourceKey, []);
+    linkedBySource.get(sourceKey).push(entry);
+  });
+
+  list.innerHTML = '';
+  const choices = [];
+  if (!instances || instances.length === 0) {
+    list.appendChild(el('div', 'text-gray-400 text-sm', 'В Admin UI пока нет инстансов.'));
+  }
+  (instances || []).forEach(inst => {
+    const linkedEntries = linkedBySource.get(String(inst.id)) || [];
+    const initiallyLinked = linkedEntries.length > 0;
+    const rawURI = inst.subscription_uri || inst.uri || '';
+    const row = el('label', 'radio-row card');
+    const checkbox = el('input', '');
+    checkbox.type = 'checkbox';
+    checkbox.checked = initiallyLinked;
+    checkbox.disabled = !initiallyLinked && !rawURI;
+    checkbox.style.width = 'auto';
+    checkbox.style.minHeight = 'auto';
+
+    const info = el('div', 'flex-1 min-w-0');
+    const nameRow = el('div', 'flex items-center justify-between gap-2');
+    nameRow.appendChild(el('span', 'text-sm font-medium truncate', inst.label || ('Инстанс #' + inst.id)));
+    const state = el('span', 'badge');
+    nameRow.appendChild(state);
+    info.appendChild(nameRow);
+    info.appendChild(el('div', 'text-xs text-gray-500 truncate', '#' + inst.id + ' — ' + (inst.carrier || '-') + ' / ' + (inst.transport || '-')));
+
+    const updateState = () => {
+      state.className = 'badge';
+      if (checkbox.disabled) {
+        state.textContent = 'URI недоступен';
+      } else if (initiallyLinked && checkbox.checked) {
+        state.classList.add('badge-emerald');
+        state.textContent = linkedEntries.length > 1 ? ('Добавлен ×' + linkedEntries.length) : 'Добавлен';
+      } else if (initiallyLinked) {
+        state.classList.add('badge-amber');
+        state.textContent = 'Будет удалён';
+      } else if (checkbox.checked) {
+        state.classList.add('badge-blue');
+        state.textContent = 'Будет добавлен';
+      } else {
+        state.textContent = 'Не добавлен';
+      }
+    };
+    checkbox.onchange = updateState;
+    updateState();
+    row.appendChild(checkbox);
+    row.appendChild(info);
+    list.appendChild(row);
+    choices.push({ checkbox, initiallyLinked, linkedEntries, rawURI, sourceInstanceID: inst.id });
+  });
+
+  const looseChoices = [];
+  if (looseEntries.length > 0) {
+    list.appendChild(el('div', 'font-medium text-sm pt-2', 'Ручные и недоступные записи'));
+    looseEntries.forEach(entry => {
+      const hasSource = entry.source_instance_id !== null && entry.source_instance_id !== undefined;
+      const row = el('label', 'radio-row card');
+      const checkbox = el('input', '');
+      checkbox.type = 'checkbox';
+      checkbox.checked = true;
+      checkbox.style.width = 'auto';
+      checkbox.style.minHeight = 'auto';
+      const info = el('div', 'flex-1 min-w-0');
+      info.appendChild(el('div', 'text-sm font-medium', hasSource ? ('Удалённый инстанс #' + entry.source_instance_id) : 'Ручной URI'));
+      info.appendChild(el('div', 'text-xs text-gray-500 truncate', entry.raw_uri || '-'));
+      const state = el('span', 'badge badge-emerald', hasSource ? 'Недоступен в Admin' : 'Добавлен');
+      checkbox.onchange = () => {
+        state.className = checkbox.checked ? 'badge badge-emerald' : 'badge badge-amber';
+        state.textContent = checkbox.checked ? (hasSource ? 'Недоступен в Admin' : 'Добавлен') : 'Будет удалён';
+      };
+      row.appendChild(checkbox);
+      row.appendChild(info);
+      row.appendChild(state);
+      list.appendChild(row);
+      looseChoices.push({ checkbox, entry });
+    });
+  }
+
+  saveBtn.disabled = false;
+  saveBtn.onclick = async () => {
+    const removals = [];
+    const additions = [];
+    choices.forEach(choice => {
+      if (choice.initiallyLinked && !choice.checkbox.checked) {
+        choice.linkedEntries.forEach(entry => removals.push(entry));
+      } else if (!choice.initiallyLinked && choice.checkbox.checked) {
+        additions.push({ rawURI: choice.rawURI, sourceInstanceID: choice.sourceInstanceID });
+      }
+    });
+    looseChoices.forEach(choice => {
+      if (!choice.checkbox.checked) removals.push(choice.entry);
+    });
+
+    const manualURIs = [...new Set(manualInp.value.split(/\r?\n/).map(uri => uri.trim()).filter(Boolean))];
+    const invalidURI = manualURIs.find(uri => !uri.toLowerCase().startsWith('olcrtc://'));
+    if (invalidURI) {
+      showToast('Ручной URI должен начинаться с olcrtc://', 'error');
+      return;
+    }
+    manualURIs.forEach(rawURI => additions.push({ rawURI, sourceInstanceID: null }));
+
+    if (removals.length === 0 && additions.length === 0) {
+      showToast('Изменений нет');
+      return;
+    }
+
+    await withLoading(saveBtn, async () => {
+      let removed = 0;
+      let added = 0;
+      const errors = [];
+      for (const entry of removals) {
+        try {
+          await api('/subs/' + sub.slug + '/instances/' + entry.id, { method: 'DELETE' });
+          removed++;
+        } catch (e) { errors.push(e); }
+      }
+      for (const addition of additions) {
+        try {
+          const body = { raw_uri: addition.rawURI };
+          if (addition.sourceInstanceID !== null && addition.sourceInstanceID !== undefined) {
+            body.source_instance_id = addition.sourceInstanceID;
+          }
+          await api('/subs/' + sub.slug + '/instances', { method: 'POST', body: JSON.stringify(body) });
+          added++;
+        } catch (e) { errors.push(e); }
+      }
+
+      closeModal(overlay);
+      render();
+      if (errors.length > 0) {
+        const prefix = added + removed > 0 ? ('Сохранено частично: добавлено ' + added + ', удалено ' + removed + '. ') : '';
+        showToast(prefix + 'Ошибок: ' + errors.length + '. ' + errors[0].message, 'error');
+      } else {
+        showToast('Состав сохранён: добавлено ' + added + ', удалено ' + removed);
+      }
     });
   };
 }
@@ -2294,52 +2416,6 @@ function showCreateSubModal() {
       } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
     });
   };
-}
-
-async function showSubInstancesModal(sub) {
-  const div = el('div', '');
-  div.innerHTML = '<h3 class="text-lg font-semibold mb-3">Инстансы в «' + sub.name + '»</h3>';
-  const list = el('div', 'space-y-2 mb-3');
-  list.appendChild(el('div', 'text-sm text-gray-400', 'Загрузка...'));
-  div.appendChild(list);
-  const btnRow = el('div', 'flex gap-2 justify-end');
-  const closeBtn = el('button', 'btn btn-primary btn-sm');
-  closeBtn.textContent = 'Закрыть';
-  btnRow.appendChild(closeBtn);
-  div.appendChild(btnRow);
-  const overlay = showModal(div);
-  closeBtn.onclick = () => closeModal(overlay);
-
-  try {
-    const insts = await api('/subs/' + sub.slug + '/instances');
-    list.innerHTML = '';
-    if (!insts || insts.length === 0) {
-      list.appendChild(el('div', 'text-gray-400 text-sm', 'Нет инстансов'));
-    } else {
-      insts.forEach(inst => {
-        const row = el('div', 'card p-2 flex items-center justify-between gap-2');
-        const left = el('div', 'flex-1 text-sm min-w-0');
-        left.innerHTML = '<div class="text-xs text-gray-500">ID: ' + inst.id + '</div><div class="copyable truncate">' + (inst.raw_uri || inst.label || '-') + '</div>';
-        const delBtn = el('button', 'btn btn-danger btn-sm btn-icon');
-        delBtn.setAttribute('aria-label', 'Удалить');
-        delBtn.innerHTML = icon('trash-2');
-        delBtn.onclick = async () => {
-          const ok = await showConfirm({ title: 'Убрать инстанс?', message: 'Инстанс будет отвязан от подписки.', danger: true });
-          if (!ok) return;
-          await api('/subs/' + sub.slug + '/instances/' + inst.id, { method: 'DELETE' });
-          showToast('Убрано');
-          closeModal(overlay);
-          render();
-        };
-        row.appendChild(left);
-        row.appendChild(delBtn);
-        list.appendChild(row);
-      });
-    }
-  } catch (e) {
-    list.innerHTML = '';
-    list.appendChild(el('div', 'text-rose-400 text-sm', 'Ошибка: ' + e.message));
-  }
 }
 
 async function showLogsModal(service) {
