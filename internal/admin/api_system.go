@@ -60,6 +60,7 @@ func (s *Server) handleSystemStatus(w http.ResponseWriter, r *http.Request) {
 
 	result := map[string]any{
 		"version":                 Version,
+		"release_branch":          ReleaseBranch,
 		"admin_version":           "0.1.0",
 		"hostname":                GetHostname(),
 		"public_ip":               s.cfg.PublicIP,

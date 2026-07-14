@@ -931,14 +931,34 @@ async function renderSettings(app) {
   updateBlock.innerHTML = '<h3 class="font-semibold mb-2 inline-flex items-center gap-2">' + icon('download', 16) + '<span>Обновления</span></h3>';
   const versionInfo = el('div', 'text-sm mb-3');
   const currentSysVersion = (sys.version || '').toString();
-  versionInfo.innerHTML = '<div class="text-gray-300">Текущая версия: <span class="copyable">' + (currentSysVersion || '-') + '</span></div>';
+  const currentSysBranch = (sys.release_branch || 'master').toString();
+  versionInfo.innerHTML = '<div class="text-gray-300">Текущая версия: <span class="copyable">' + (currentSysVersion || '-') + '</span></div>' +
+    '<div class="text-gray-300">Текущая ветка: <span class="copyable">' + currentSysBranch + '</span></div>';
   updateBlock.appendChild(versionInfo);
 
   const updateRow = el('div', 'flex gap-2 flex-wrap items-center');
   const checkBtn = el('button', 'btn btn-secondary');
   checkBtn.innerHTML = icon('refresh-cw') + '<span>Проверить обновления</span>';
 
-  // Version selector + install button row (rendered after check succeeds)
+  const branchRow = el('div', 'flex gap-2 flex-wrap items-center mt-3');
+  const branchLabel = el('span', 'text-sm text-gray-300');
+  branchLabel.textContent = 'Ветка бинарников:';
+  const branchSelect = el('select', 'bg-gray-800 text-white text-sm border border-gray-700 rounded px-2 py-1');
+  branchSelect.style.cssText = 'min-width:180px;';
+  branchSelect.setAttribute('aria-label', 'Ветка бинарников');
+  const releaseBranchStorageKey = 'olcrtc-release-branch';
+  let preferredBranch = 'master';
+  try { preferredBranch = localStorage.getItem(releaseBranchStorageKey) || 'master'; } catch (e) {}
+  ['master'].concat(preferredBranch === 'master' ? [] : [preferredBranch]).forEach((branch) => {
+    const opt = el('option', '', branch);
+    opt.textContent = branch === 'master' ? 'master (стабильная)' : branch;
+    branchSelect.appendChild(opt);
+  });
+  branchSelect.value = preferredBranch;
+  branchRow.appendChild(branchLabel);
+  branchRow.appendChild(branchSelect);
+
+  // Version selector + install button row (rendered after releases load)
   const selectorRow = el('div', 'flex gap-2 flex-wrap items-center mt-3');
   selectorRow.style.display = 'none';
   const selectorLabel = el('span', 'text-sm text-gray-300');
@@ -946,12 +966,17 @@ async function renderSettings(app) {
   const versionSelect = el('select', 'bg-gray-800 text-white text-sm border border-gray-700 rounded px-2 py-1');
   versionSelect.style.cssText = 'min-width:160px;';
   const installBtn = el('button', 'btn btn-primary');
+  let availableReleases = [];
 
   function normVer(v) { return ('' + (v || '')).replace(/^v/, ''); }
 
+  function selectedRelease() {
+    return availableReleases.find((release) => release.tag === versionSelect.value);
+  }
+
   function refreshInstallBtn() {
-    const target = versionSelect.value;
-    const isCurrent = normVer(target) === normVer(currentSysVersion);
+    const target = selectedRelease();
+    const isCurrent = !!target && target.branch === currentSysBranch && normVer(target.version) === normVer(currentSysVersion);
     installBtn.disabled = !target || isCurrent;
     installBtn.style.opacity = installBtn.disabled ? '0.5' : '1';
     installBtn.style.cursor = installBtn.disabled ? 'not-allowed' : 'pointer';
@@ -960,24 +985,24 @@ async function renderSettings(app) {
     } else if (isCurrent) {
       installBtn.innerHTML = icon('check-circle') + '<span>Версия установлена</span>';
     } else {
-      installBtn.innerHTML = icon('download') + '<span>Установить ' + target + '</span>';
+      installBtn.innerHTML = icon('download') + '<span>Установить ' + target.version + '</span>';
     }
   }
   versionSelect.onchange = refreshInstallBtn;
   installBtn.onclick = async () => {
-    const target = versionSelect.value;
-    if (!target || normVer(target) === normVer(currentSysVersion)) return;
-    const isDowngrade = compareSemverJS(normVer(target), normVer(currentSysVersion)) < 0;
+    const target = selectedRelease();
+    if (!target || (target.branch === currentSysBranch && normVer(target.version) === normVer(currentSysVersion))) return;
+    const isDowngrade = compareSemverJS(normVer(target.version), normVer(currentSysVersion)) < 0;
     const ok = await showConfirm({
       title: isDowngrade ? 'Откатить версию?' : 'Обновить сервер?',
-      message: (isDowngrade ? 'Будет установлена более старая версия ' : 'Будет установлена версия ') + target +
-        '. Сервер и админка будут остановлены, заменены и перезапущены. Это займёт 1-2 минуты.',
+      message: (isDowngrade ? 'Будет установлена более старая версия ' : 'Будет установлена версия ') + target.version +
+        ' из ветки ' + target.branch + '. Сервер и админка будут остановлены, заменены и перезапущены. Это займёт 1-2 минуты.',
       confirmText: isDowngrade ? 'Откатить' : 'Установить',
     });
     if (!ok) return;
-    showUpdateOverlay(target);
+    showUpdateOverlay(target.version, target.branch);
     try {
-      await api('/system/update', { method: 'POST', body: JSON.stringify({ version: target }) });
+      await api('/system/update', { method: 'POST', body: JSON.stringify({ tag: target.tag, branch: target.branch, version: target.version }) });
     } catch (e) {
       // expected during admin restart
     }
@@ -987,39 +1012,66 @@ async function renderSettings(app) {
   selectorRow.appendChild(versionSelect);
   selectorRow.appendChild(installBtn);
 
-  async function loadReleasesIntoSelect(latestVersion) {
+  function renderVersionsForBranch() {
+    const branch = branchSelect.value;
+    const list = availableReleases.filter((release) => release.branch === branch);
+    list.sort((a, b) => compareSemverJS(normVer(b.version), normVer(a.version)));
+    versionSelect.innerHTML = '';
+    if (!list.length) {
+      const opt = el('option', '');
+      opt.value = '';
+      opt.textContent = 'Нет доступных версий';
+      versionSelect.appendChild(opt);
+      refreshInstallBtn();
+      return;
+    }
+    list.forEach((release, index) => {
+      const opt = el('option', '');
+      opt.value = release.tag;
+      let label = release.version;
+      if (release.branch === currentSysBranch && normVer(release.version) === normVer(currentSysVersion)) label += ' (текущая)';
+      else if (index === 0) label += ' (последняя)';
+      opt.textContent = label;
+      versionSelect.appendChild(opt);
+    });
+    const current = list.find((release) => release.branch === currentSysBranch && normVer(release.version) === normVer(currentSysVersion));
+    const newest = list[0];
+    versionSelect.value = current && compareSemverJS(normVer(newest.version), normVer(currentSysVersion)) <= 0 ? current.tag : newest.tag;
+    refreshInstallBtn();
+  }
+
+  branchSelect.onchange = () => {
+    try { localStorage.setItem(releaseBranchStorageKey, branchSelect.value); } catch (e) {}
+    renderVersionsForBranch();
+  };
+
+  async function loadReleasesIntoSelect() {
     try {
       const rel = await api('/system/releases');
-      const list = (rel && rel.releases) || [];
-      versionSelect.innerHTML = '';
-      if (!list.length) {
+      availableReleases = (rel && rel.releases) || [];
+      const requestedBranch = branchSelect.value || preferredBranch;
+      const branches = Array.from(new Set(['master'].concat(availableReleases.map((release) => release.branch))));
+      branches.sort((a, b) => a === b ? 0 : (a === 'master' ? -1 : (b === 'master' ? 1 : a.localeCompare(b))));
+      branchSelect.innerHTML = '';
+      branches.forEach((branch) => {
         const opt = el('option', '');
-        opt.value = '';
-        opt.textContent = 'Нет доступных версий';
-        versionSelect.appendChild(opt);
-        return;
-      }
-      // Sort newest-first by semver desc
-      list.sort((a, b) => compareSemverJS(normVer(b.version), normVer(a.version)));
-      list.forEach((r) => {
-        const opt = el('option', '');
-        opt.value = r.version;
-        let label = r.version;
-        if (normVer(r.version) === normVer(currentSysVersion)) label += ' (текущая)';
-        else if (latestVersion && normVer(r.version) === normVer(latestVersion)) label += ' (последняя)';
-        opt.textContent = label;
-        versionSelect.appendChild(opt);
+        opt.value = branch;
+        opt.textContent = branch === 'master' ? 'master (стабильная)' : branch;
+        branchSelect.appendChild(opt);
       });
-      // Default selection: latest if newer than current, else current
-      const newest = list[0].version;
-      versionSelect.value = (compareSemverJS(normVer(newest), normVer(currentSysVersion)) > 0) ? newest : currentSysVersion;
-      refreshInstallBtn();
+      branchSelect.value = branches.includes(requestedBranch) ? requestedBranch : 'master';
+      renderVersionsForBranch();
+      selectorRow.style.display = '';
+      return true;
     } catch (e) {
+      availableReleases = [];
       versionSelect.innerHTML = '';
       const opt = el('option', '');
       opt.value = '';
       opt.textContent = 'Не удалось загрузить список версий';
       versionSelect.appendChild(opt);
+      refreshInstallBtn();
+      return false;
     }
   }
 
@@ -1027,7 +1079,18 @@ async function renderSettings(app) {
     await withLoading(checkBtn, async () => {
       try {
         const res = await api('/system/check-updates');
-        if (res.update_available) {
+        await loadReleasesIntoSelect();
+        const selectedBranch = branchSelect.value;
+        const selectedLatest = availableReleases
+          .filter((release) => release.branch === selectedBranch)
+          .sort((a, b) => compareSemverJS(normVer(b.version), normVer(a.version)))[0];
+        if (selectedBranch !== 'master' && selectedLatest) {
+          const isCurrent = selectedBranch === currentSysBranch && normVer(selectedLatest.version) === normVer(currentSysVersion);
+          showToast(isCurrent
+            ? 'У вас установлена последняя версия ветки ' + selectedBranch
+            : 'В ветке ' + selectedBranch + ' доступна версия ' + selectedLatest.version,
+          isCurrent ? 'success' : 'info');
+        } else if (res.update_available) {
           let toastMsg = 'Доступна новая версия: ' + res.latest_version;
           if (res.stale) toastMsg = 'GitHub недоступен. Последние известные данные: ' + res.latest_version;
           showToast(toastMsg, 'info');
@@ -1036,8 +1099,6 @@ async function renderSettings(app) {
           if (res.stale) msg = 'GitHub недоступен, проверка по последним известным данным: версия актуальна';
           showToast(msg, 'success');
         }
-        await loadReleasesIntoSelect(res.latest_version);
-        selectorRow.style.display = '';
       } catch (e) {
         let errMsg = e.message;
         try {
@@ -1051,8 +1112,10 @@ async function renderSettings(app) {
 
   updateRow.appendChild(checkBtn);
   updateBlock.appendChild(updateRow);
+  updateBlock.appendChild(branchRow);
   updateBlock.appendChild(selectorRow);
   card.appendChild(updateBlock);
+  loadReleasesIntoSelect();
 
   // WB Stream browser automation
   const wbBlock = el('div', 'pt-2 border-t border-white/10');
@@ -2505,7 +2568,7 @@ function phaseToStepIndex(phase) {
   return -1;
 }
 
-function showUpdateOverlay(targetVersion) {
+function showUpdateOverlay(targetVersion, targetBranch) {
   const existing = document.getElementById('update-overlay');
   if (existing) existing.remove();
 
@@ -2526,7 +2589,7 @@ function showUpdateOverlay(targetVersion) {
 
   const subtitle = el('p', '');
   subtitle.style.cssText = 'font-size:15px;color:var(--color-ink-muted);margin-bottom:28px;line-height:1.5;';
-  subtitle.textContent = 'Устанавливается версия v' + targetVersion;
+  subtitle.textContent = 'Устанавливается версия ' + targetVersion + ' из ветки ' + (targetBranch || 'master');
 
   const stepsList = el('div', '');
   stepsList.id = 'update-steps';
@@ -2706,9 +2769,10 @@ function showUpdateOverlay(targetVersion) {
             const sd = await sres.json();
             const v = (sd.version || '').replace(/^v/, '');
             const t = (targetVersion || '').replace(/^v/, '');
-            if (v && v === t) { complete(); return; }
+            const b = sd.release_branch || 'master';
+            if (v && v === t && b === (targetBranch || 'master')) { complete(); return; }
             // version still old — admin is up but binary not yet swapped from its perspective
-            status.textContent = 'Завершение обновления... (версия: ' + (sd.version || 'неизвестно') + ')';
+            status.textContent = 'Завершение обновления... (версия: ' + (sd.version || 'неизвестно') + ', ветка: ' + b + ')';
           }
         } catch (e) { /* ignore */ }
       }

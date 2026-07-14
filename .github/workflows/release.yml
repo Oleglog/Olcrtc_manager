@@ -4,10 +4,11 @@ on:
   push:
     tags:
       - "server-v*"
+      - "server-*-v*"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g. server-v1.5.4)"
+        description: "Release tag (e.g. server-v1.9.53 or server-latency-tuning-v1.9.53)"
         required: true
       prerelease:
         description: "Mark as pre-release (y/n)"
@@ -18,12 +19,18 @@ jobs:
   build:
     name: Build CLI binaries (cross)
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+      branch: ${{ steps.version.outputs.branch }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
     permissions:
       contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
           submodules: recursive
 
       - name: Setup Go
@@ -33,16 +40,37 @@ jobs:
 
       - name: Resolve version
         id: version
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
         run: |
+          set -euo pipefail
           if [ "${{ github.event_name }}" = "push" ]; then
             TAG="${GITHUB_REF##*/}"
           else
-            TAG="${{ github.event.inputs.tag }}"
+            TAG="$INPUT_TAG"
           fi
-          VERSION="${TAG#server-v}"
+
+          if [[ "$TAG" =~ ^server-v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            BRANCH="master"
+            VERSION="${BASH_REMATCH[1]}"
+          elif [[ "$TAG" =~ ^server-([a-z0-9][a-z0-9._-]{0,62})-v([0-9]+\.[0-9]+\.[0-9]+)$ ]] && [ "${BASH_REMATCH[1]}" != "master" ]; then
+            BRANCH="${BASH_REMATCH[1]}"
+            VERSION="${BASH_REMATCH[2]}"
+          else
+            echo "Invalid release tag: $TAG" >&2
+            exit 1
+          fi
+
+          PRERELEASE="false"
+          if [ "$BRANCH" != "master" ] || [ "$INPUT_PRERELEASE" = "y" ]; then
+            PRERELEASE="true"
+          fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Building version: $VERSION (tag: $TAG)"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "Building version: $VERSION (branch: $BRANCH, tag: $TAG)"
 
       - name: Install Mage
         run: go install github.com/magefile/mage@latest
@@ -55,9 +83,10 @@ jobs:
       - name: Build admin binaries (linux amd64/arm64)
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          RELEASE_BRANCH: ${{ steps.version.outputs.branch }}
         run: |
           mkdir -p build
-          LDFLAGS="-s -w -X github.com/openlibrecommunity/olcrtc/internal/admin.Version=${VERSION}"
+          LDFLAGS="-s -w -X github.com/openlibrecommunity/olcrtc/internal/admin.Version=${VERSION} -X github.com/openlibrecommunity/olcrtc/internal/admin.ReleaseBranch=${RELEASE_BRANCH}"
           GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "$LDFLAGS" -o build/olcrtc-admin-linux-amd64 ./cmd/olcrtc-admin
           GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "$LDFLAGS" -o build/olcrtc-admin-linux-arm64 ./cmd/olcrtc-admin
 
@@ -88,26 +117,11 @@ jobs:
           name: olcrtc-binaries
           path: artifacts
 
-      - name: Resolve release tag
-        id: tag
-        run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
-            echo "tag=${GITHUB_REF##*/}" >> "$GITHUB_OUTPUT"
-            echo "prerelease=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
-            if [ "${{ github.event.inputs.prerelease }}" = "y" ]; then
-              echo "prerelease=true" >> "$GITHUB_OUTPUT"
-            else
-              echo "prerelease=false" >> "$GITHUB_OUTPUT"
-            fi
-          fi
-
       - name: Create release
         run: |
           set -euo pipefail
-          TAG="${{ steps.tag.outputs.tag }}"
-          PRE="${{ steps.tag.outputs.prerelease }}"
+          TAG="${{ needs.build.outputs.tag }}"
+          PRE="${{ needs.build.outputs.prerelease }}"
           echo "Artifacts to upload:"
           ls -la artifacts/
 

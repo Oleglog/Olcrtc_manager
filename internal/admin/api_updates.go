@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -17,7 +18,11 @@ import (
 )
 
 // Version is set via ldflags at build time.
-var Version = "1.9.52"
+var Version = "1.9.53"
+
+// ReleaseBranch identifies the release channel used to build the admin binary.
+// Stable builds use master; branch builds override it via ldflags.
+var ReleaseBranch = "master"
 
 // MinUpdatableVersion is the floor for the version dropdown — versions below
 // this lack the auto-update endpoint, so installing them would brick the flow.
@@ -196,6 +201,8 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		Version string `json:"version"`
+		Tag     string `json:"tag"`
+		Branch  string `json:"branch"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -206,10 +213,11 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Version == "" {
+	target, err := resolveReleaseTarget(req.Tag, req.Branch, req.Version)
+	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error":   "version_required",
-			"message": "Version field is required",
+			"error":   "invalid_release",
+			"message": err.Error(),
 		})
 		return
 	}
@@ -243,9 +251,8 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generate update script
-	version := strings.TrimPrefix(req.Version, "v")
-	tag := "server-v" + version
-	repoURL := fmt.Sprintf("https://github.com/Oleglog/Olcrtc_manager/releases/download/%s", tag)
+	version := target.Version
+	repoURL := target.DownloadURL
 
 	additionalStartCmds := ""
 	for _, svc := range additionalServices {
@@ -463,6 +470,8 @@ func (s *Server) handleUpdateProgress(w http.ResponseWriter, r *http.Request) {
 type releaseInfo struct {
 	Tag         string `json:"tag"`
 	Version     string `json:"version"`
+	Branch      string `json:"branch"`
+	Prerelease  bool   `json:"prerelease"`
 	URL         string `json:"url"`
 	PublishedAt string `json:"published_at"`
 }
@@ -547,10 +556,6 @@ func fetchReleasesViaAtom() ([]releaseInfo, error) {
 			continue
 		}
 		tag := e.ID[idx+1:]
-		if !strings.HasPrefix(tag, "server-v") {
-			continue
-		}
-		version := strings.TrimPrefix(tag, "server-")
 		htmlURL := ""
 		for _, l := range e.Link {
 			if l.Rel == "alternate" || l.Rel == "" {
@@ -558,12 +563,9 @@ func fetchReleasesViaAtom() ([]releaseInfo, error) {
 				break
 			}
 		}
-		out = append(out, releaseInfo{
-			Tag:         tag,
-			Version:     version,
-			URL:         htmlURL,
-			PublishedAt: e.Updated,
-		})
+		if release, ok := releaseInfoFromTag(tag, htmlURL, e.Updated, false); ok {
+			out = append(out, release)
+		}
 	}
 	return out, nil
 }
@@ -599,17 +601,93 @@ func fetchReleasesViaAPI() ([]releaseInfo, error) {
 		if r.Draft {
 			continue
 		}
-		if !strings.HasPrefix(r.TagName, "server-v") {
-			continue
+		if release, ok := releaseInfoFromTag(r.TagName, r.HTMLURL, r.PublishedAt, r.Prerelease); ok {
+			out = append(out, release)
 		}
-		out = append(out, releaseInfo{
-			Tag:         r.TagName,
-			Version:     strings.TrimPrefix(r.TagName, "server-"),
-			URL:         r.HTMLURL,
-			PublishedAt: r.PublishedAt,
-		})
 	}
 	return out, nil
+}
+
+var releaseTagPattern = regexp.MustCompile(`^server(?:-([a-z0-9][a-z0-9._-]{0,62}))?-v([0-9]+\.[0-9]+\.[0-9]+)$`)
+
+type releaseTarget struct {
+	Tag         string
+	Branch      string
+	Version     string
+	DownloadURL string
+}
+
+func parseReleaseTag(tag string) (branch, version string, ok bool) {
+	parts := releaseTagPattern.FindStringSubmatch(tag)
+	if parts == nil {
+		return "", "", false
+	}
+	branch = parts[1]
+	if branch == "" {
+		branch = "master"
+	} else if branch == "master" {
+		return "", "", false
+	}
+	return branch, parts[2], true
+}
+
+func makeReleaseTag(branch, version string) (string, error) {
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		branch = "master"
+	}
+	version = strings.TrimPrefix(strings.TrimSpace(version), "v")
+	tag := "server-v" + version
+	if branch != "master" {
+		tag = "server-" + branch + "-v" + version
+	}
+	parsedBranch, parsedVersion, ok := parseReleaseTag(tag)
+	if !ok || parsedBranch != branch || parsedVersion != version {
+		return "", fmt.Errorf("invalid branch or version")
+	}
+	return tag, nil
+}
+
+func resolveReleaseTarget(tag, branch, version string) (releaseTarget, error) {
+	if tag == "" {
+		var err error
+		tag, err = makeReleaseTag(branch, version)
+		if err != nil {
+			return releaseTarget{}, err
+		}
+	}
+
+	parsedBranch, parsedVersion, ok := parseReleaseTag(tag)
+	if !ok {
+		return releaseTarget{}, fmt.Errorf("invalid release tag")
+	}
+	if branch != "" && branch != parsedBranch {
+		return releaseTarget{}, fmt.Errorf("release tag does not belong to branch %q", branch)
+	}
+	if version != "" && strings.TrimPrefix(version, "v") != parsedVersion {
+		return releaseTarget{}, fmt.Errorf("release tag does not match version %q", version)
+	}
+	return releaseTarget{
+		Tag:         tag,
+		Branch:      parsedBranch,
+		Version:     parsedVersion,
+		DownloadURL: "https://github.com/Oleglog/Olcrtc_manager/releases/download/" + tag,
+	}, nil
+}
+
+func releaseInfoFromTag(tag, releaseURL, publishedAt string, prerelease bool) (releaseInfo, bool) {
+	branch, version, ok := parseReleaseTag(tag)
+	if !ok {
+		return releaseInfo{}, false
+	}
+	return releaseInfo{
+		Tag:         tag,
+		Version:     "v" + version,
+		Branch:      branch,
+		Prerelease:  prerelease || branch != "master",
+		URL:         releaseURL,
+		PublishedAt: publishedAt,
+	}, true
 }
 
 // compareSemver compares two "X.Y.Z" strings (ignoring leading "v"). Returns
