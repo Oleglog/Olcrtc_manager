@@ -715,13 +715,16 @@ func (s *Server) refreshLinkedSubscriptionURIs(uris map[int]string) ([]string, e
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	endpoint := fmt.Sprintf("http://127.0.0.1:%d/api/subscriptions/refresh-linked", s.cfg.SubPort)
+	endpoint, ok := s.subscriptions.endpointURL("/api/subscriptions/refresh-linked")
+	if !ok {
+		return nil, errors.New("subscription backend is unavailable")
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(string(body)))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if apiToken := GetEnvValue(InstanceEnvPath(s.cfg.ConfigDir, 0), "OLCRTC_SUB_API_TOKEN"); apiToken != "" {
+	if apiToken := s.subscriptions.token(); apiToken != "" {
 		req.Header.Set("Authorization", "Bearer "+apiToken)
 	}
 	resp, err := (&http.Client{Timeout: 90 * time.Second}).Do(req)

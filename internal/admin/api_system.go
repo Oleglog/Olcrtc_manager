@@ -56,26 +56,29 @@ func (s *Server) handleSystemStatus(w http.ResponseWriter, r *http.Request) {
 	// Read SOCKS/WARP from main instance.
 	mainEnv := InstanceEnvPath(s.cfg.ConfigDir, 0)
 	vals := ReadInstanceEnv(mainEnv)
+	subEnabled := s.subscriptions.enabled()
 
 	result := map[string]any{
-		"version":           Version,
-		"admin_version":     "0.1.0",
-		"hostname":          GetHostname(),
-		"public_ip":         s.cfg.PublicIP,
-		"os":                osInfo,
-		"uptime":            uptime,
-		"admin_port":        s.cfg.Port,
+		"version":                 Version,
+		"admin_version":           "0.1.0",
+		"hostname":                GetHostname(),
+		"public_ip":               s.cfg.PublicIP,
+		"os":                      osInfo,
+		"uptime":                  uptime,
+		"admin_port":              s.cfg.Port,
 		"sub_port":                s.cfg.SubPort,
-		"sub_enabled":             true,
+		"sub_enabled":             subEnabled,
+		"sub_running":             s.subscriptions.running(),
+		"sub_backend":             "admin",
 		"subscription_public_url": s.cfg.SubPublicURL,
-		"socks_proxy":       vals["OLCRTC_SOCKS_PROXY"],
-		"warp_proxy":        vals["OLCRTC_WARP_PROXY"],
-		"domain":            s.cfg.Domain,
-		"tls_mode":          tlsMode,
-		"tls_expires":       tlsExpires,
-		"instances_total":   len(ids),
-		"instances_running": running,
-		"admin_url":         fmt.Sprintf("https://%s:%d", adminDomain, s.cfg.Port),
+		"socks_proxy":             vals["OLCRTC_SOCKS_PROXY"],
+		"warp_proxy":              vals["OLCRTC_WARP_PROXY"],
+		"domain":                  s.cfg.Domain,
+		"tls_mode":                tlsMode,
+		"tls_expires":             tlsExpires,
+		"instances_total":         len(ids),
+		"instances_running":       running,
+		"admin_url":               fmt.Sprintf("https://%s:%d", adminDomain, s.cfg.Port),
 	}
 	mEnabled, mProvider, mToken, mBase := ReadMirrorConfig(s.cfg.ConfigDir)
 	result["mirror_enabled"] = mEnabled
@@ -348,11 +351,11 @@ func (s *Server) handleSystemMirrorConfig(w http.ResponseWriter, r *http.Request
 			provider = "yandex_disk"
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"enabled":        enabled,
-			"provider":       provider,
-			"base_path":      basePath,
-			"token_masked":   maskToken(oauthToken),
-			"token_present":  oauthToken != "",
+			"enabled":       enabled,
+			"provider":      provider,
+			"base_path":     basePath,
+			"token_masked":  maskToken(oauthToken),
+			"token_present": oauthToken != "",
 		})
 	case http.MethodPost:
 		var req struct {
@@ -401,6 +404,7 @@ func (s *Server) handleSystemMirrorConfig(w http.ResponseWriter, r *http.Request
 			})
 			return
 		}
+		s.subscriptions.reloadMirror()
 		// Detached restart of olcrtc-server so mirror manager picks up the new
 		// env vars. systemd-run --no-block returns immediately; the actual restart
 		// fires after a short sleep so the HTTP response reaches the client first.
@@ -418,13 +422,13 @@ func (s *Server) handleSystemMirrorConfig(w http.ResponseWriter, r *http.Request
 			}
 		}()
 		writeJSON(w, http.StatusOK, map[string]any{
-			"ok":         true,
-			"enabled":    req.Enabled,
-			"provider":   provider,
-			"base_path":  basePath,
+			"ok":           true,
+			"enabled":      req.Enabled,
+			"provider":     provider,
+			"base_path":    basePath,
 			"token_masked": maskToken(token),
 			"restarting":   true,
-			"message":    "Настройки зеркала сохранены. olcrtc-server автоматически перезапускается.",
+			"message":      "Настройки зеркала сохранены. olcrtc-server автоматически перезапускается.",
 		})
 	default:
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)

@@ -36,6 +36,13 @@ func Open(dbPath string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite %s: %w", dbPath, err)
 	}
+	// ponytail: subscription traffic is small; one connection keeps SQLite
+	// pragmas deterministic while the legacy instance and Admin may share WAL.
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("set SQLite busy timeout: %w", err)
+	}
 
 	// WAL mode for better concurrent read performance.
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
@@ -122,6 +129,9 @@ func ensureInstanceSourceColumn(db *sql.DB) error {
 		return nil
 	}
 	if _, err := db.Exec("ALTER TABLE instances ADD COLUMN source_instance_id INTEGER"); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+			return nil
+		}
 		return fmt.Errorf("add source_instance_id: %w", err)
 	}
 	return nil

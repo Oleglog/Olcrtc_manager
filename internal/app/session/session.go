@@ -18,14 +18,14 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/names"
 	"github.com/openlibrecommunity/olcrtc/internal/runtime"
 	"github.com/openlibrecommunity/olcrtc/internal/server"
+	"github.com/openlibrecommunity/olcrtc/internal/subscription/mirror"
+	subserver "github.com/openlibrecommunity/olcrtc/internal/subscription/server"
+	"github.com/openlibrecommunity/olcrtc/internal/subscription/store"
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
 	"github.com/openlibrecommunity/olcrtc/internal/transport/datachannel"
 	"github.com/openlibrecommunity/olcrtc/internal/transport/seichannel"
 	"github.com/openlibrecommunity/olcrtc/internal/transport/videochannel"
 	"github.com/openlibrecommunity/olcrtc/internal/transport/vp8channel"
-	"github.com/openlibrecommunity/olcrtc/internal/subscription/mirror"
-	subserver "github.com/openlibrecommunity/olcrtc/internal/subscription/server"
-	"github.com/openlibrecommunity/olcrtc/internal/subscription/store"
 )
 
 const (
@@ -176,48 +176,48 @@ type SEIConfig struct {
 
 // Config holds runtime session settings.
 type Config struct {
-	Mode                  string
-	Transport             string
-	Auth                  string
-	AuthToken             string
-	Engine                string
-	URL                   string
-	Token                 string
-	RoomID                string
-	ChannelID             string
-	KeyHex                string
-	SOCKSHost             string
-	SOCKSPort             int
-	SOCKSUser             string
-	SOCKSPass             string
-	DNSServer             string
-	SOCKSProxyAddr        string
-	SOCKSProxyPort        int
-	SOCKSProxyUser        string
-	SOCKSProxyPass        string
-	Insecure              bool
-	Video                 VideoConfig
-	VP8                   VP8Config
-	SEI                   SEIConfig
-	LivenessInterval      string
-	LivenessTimeout       string
-	LivenessFailures      int
-	MaxSessionDuration    string
-	TrafficMaxPayloadSize int
-	TrafficMinDelay       string
-	TrafficMaxDelay       string
-	Amount                int
-	WarpProxyAddr         string
-	WarpProxyPort         int
-	SubEnabled            bool
-	SubPort               int
-	SubDBPath             string
-	SubAPIToken                string
-	SubPublicURL               string
-	SubMirrorEnabled           bool
-	SubMirrorProvider          string
-	SubMirrorYandexOAuthToken  string
-	SubMirrorYandexBasePath    string
+	Mode                      string
+	Transport                 string
+	Auth                      string
+	AuthToken                 string
+	Engine                    string
+	URL                       string
+	Token                     string
+	RoomID                    string
+	ChannelID                 string
+	KeyHex                    string
+	SOCKSHost                 string
+	SOCKSPort                 int
+	SOCKSUser                 string
+	SOCKSPass                 string
+	DNSServer                 string
+	SOCKSProxyAddr            string
+	SOCKSProxyPort            int
+	SOCKSProxyUser            string
+	SOCKSProxyPass            string
+	Insecure                  bool
+	Video                     VideoConfig
+	VP8                       VP8Config
+	SEI                       SEIConfig
+	LivenessInterval          string
+	LivenessTimeout           string
+	LivenessFailures          int
+	MaxSessionDuration        string
+	TrafficMaxPayloadSize     int
+	TrafficMinDelay           string
+	TrafficMaxDelay           string
+	Amount                    int
+	WarpProxyAddr             string
+	WarpProxyPort             int
+	SubEnabled                bool
+	SubPort                   int
+	SubDBPath                 string
+	SubAPIToken               string
+	SubPublicURL              string
+	SubMirrorEnabled          bool
+	SubMirrorProvider         string
+	SubMirrorYandexOAuthToken string
+	SubMirrorYandexBasePath   string
 }
 
 // RegisterDefaults registers built-in carriers and transports.
@@ -675,6 +675,7 @@ func startSubscriptionServer(ctx context.Context, cfg Config) error {
 	}
 	srv := subserver.New(st, port, cfg.SubAPIToken, mm)
 	go func() {
+		defer func() { _ = st.Close() }()
 		if err := srv.Start(ctx); err != nil {
 			logger.Errorf("subscription server stopped: %v", err)
 		}

@@ -284,10 +284,16 @@ the first additional instance is added.
 
 ## Subscriptions
 
-A subscription is a permanent URL (e.g. `http://<IP>:2096/sub/xJGHpw`) that
+A subscription is a permanent URL (e.g. `https://<IP>:8443/sub/xJGHpw`) that
 the client adds **once**. After recreating or migrating the server, import
 the subscription DB, attach the new instance URI, and clients pick up the
 change automatically — no QR re-scan.
+
+Since `server-v1.9.48`, Admin UI owns a private loopback subscription backend.
+It stays available when the main `olcrtc-server.service` instance is stopped,
+failed or being reconfigured. The legacy server-side listener remains only for
+standalone compatibility; Admin UI and its public `/sub/...` route do not rely
+on it.
 
 ### Enabling
 
@@ -298,9 +304,10 @@ Enable subscription server? (y/N): y
 Subscription server port [Enter = 2096]: 2096
 ```
 
-This sets `OLCRTC_SUB_ENABLED=1` and `OLCRTC_SUB_PORT=2096` in
-`/etc/olcrtc/env`. The HTTP server starts alongside `olcrtc-server` on port
-2096.
+This sets `OLCRTC_SUB_ENABLED=1` in `/etc/olcrtc/env`. Admin UI starts the
+authoritative backend on a private dynamic loopback port and exposes it through
+the Admin HTTPS endpoint. `OLCRTC_SUB_PORT=2096` is retained for standalone and
+backward compatibility.
 
 ### Managing
 
@@ -313,7 +320,7 @@ or remove instances, and export/import the JSON dump.
 |------|----------|
 | `/var/lib/olcrtc/subscriptions.db` | SQLite DB (created on first run) |
 | `OLCRTC_SUB_ENABLED=1` | Enables the HTTP server |
-| `OLCRTC_SUB_PORT=2096` | HTTP listen port |
+| `OLCRTC_SUB_PORT=2096` | Legacy standalone listen port |
 
 `olcrtc-uninstall.sh` asks whether to delete the DB; saying **N** copies it
 to `/tmp/olcrtc-subscriptions.db` for safe-keeping.
@@ -342,8 +349,9 @@ Localhost-only management API (used by the Admin UI):
 
 ### Custom domain for subscriptions (optional)
 
-By default clients hit `http://<IP>:2096/sub/{slug}`. Binding a domain adds
-HTTPS and hides the port: `https://sub.example.com/sub/{slug}`.
+By default clients use the Admin HTTPS endpoint
+`https://<IP>:8443/sub/{slug}`. Binding a domain gives
+`https://sub.example.com/sub/{slug}`.
 
 #### 1. DNS
 
@@ -376,7 +384,8 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/sub.example.com/privkey.pem;
 
     location / {
-        proxy_pass http://127.0.0.1:2096;
+        proxy_pass https://127.0.0.1:8443;
+        proxy_ssl_verify off;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
     }
@@ -614,10 +623,11 @@ tunnel-трафик** через локальный SOCKS5 (поверх Cloudfl
 
 ### Подписки
 
-Постоянный URL вида `http://IP:2096/sub/xJGHpw` — клиент добавляет один раз,
+Постоянный URL вида `https://IP:8443/sub/xJGHpw` — клиент добавляет один раз,
 после пересоздания сервера достаточно импортировать БД и привязать новый
-инстанс. Управление через Admin UI → **Subscriptions**. Привязка домена и
-nginx — см. английский раздел выше.
+инстанс. С `server-v1.9.48` подписки работают внутри Admin UI и не зависят от
+состояния основного инстанса. Управление через Admin UI → **Subscriptions**.
+Привязка домена и nginx — см. английский раздел выше.
 
 ### Удаление
 

@@ -367,7 +367,7 @@ async function renderDashboard(app) {
       <div><div class="text-gray-500 text-xs uppercase tracking-wider mb-0.5">Uptime</div><div>${sys.uptime || '-'}</div></div>
       <div><div class="text-gray-500 text-xs uppercase tracking-wider mb-0.5">TLS</div><div>${sys.tls_mode || '-'} ${sys.domain ? '('+sys.domain+')' : ''}</div></div>
       <div><div class="text-gray-500 text-xs uppercase tracking-wider mb-0.5">Admin port</div><div>${sys.admin_port || '-'}</div></div>
-      <div><div class="text-gray-500 text-xs uppercase tracking-wider mb-0.5">Подписки</div><div>${sys.sub_enabled ? 'вкл ('+sys.sub_port+')' : 'выкл'}</div></div>
+      <div><div class="text-gray-500 text-xs uppercase tracking-wider mb-0.5">Подписки</div><div>${sys.sub_enabled ? (sys.sub_running ? 'работают (Admin)' : 'ошибка запуска') : 'выкл'}</div></div>
       <div><div class="text-gray-500 text-xs uppercase tracking-wider mb-0.5">Инстансы</div><div>${sys.instances_running || 0}/${sys.instances_total || 0}</div></div>
       <div><div class="text-gray-500 text-xs uppercase tracking-wider mb-0.5">Версия</div><div>${sys.version || '-'}</div></div>
     </div>`;
@@ -924,7 +924,8 @@ async function renderSettings(app) {
   const portBlock = el('div', '');
   portBlock.innerHTML = `<h3 class="font-semibold mb-2 inline-flex items-center gap-2">${icon('wifi', 16)}<span>Порты</span></h3>
     <div class="text-sm text-gray-300">Admin UI: <span class="copyable">${sys.admin_port || '-'}</span></div>
-    <div class="text-sm text-gray-300">Подписки: <span class="copyable">${sys.sub_port || '-'}</span></div>`;
+    <div class="text-sm text-gray-300">Подписки: через Admin UI <span class="copyable">/sub/&lt;slug&gt;</span></div>
+    <div class="text-xs text-gray-500">Legacy sub port: ${sys.sub_port || '-'}</div>`;
   card.appendChild(portBlock);
 
   // Server Updates

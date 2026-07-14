@@ -28,6 +28,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
@@ -42,6 +43,7 @@ type Server struct {
 	port     int
 	apiToken string
 	mirror   *mirror.Manager
+	mirrorMu sync.RWMutex
 	srv      *http.Server
 }
 
@@ -57,6 +59,17 @@ func New(st *store.Store, port int, apiToken string, mirrorManager ...*mirror.Ma
 
 // Start starts the HTTP server and blocks until ctx is cancelled.
 func (s *Server) Start(ctx context.Context) error {
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", s.port))
+	if err != nil {
+		return fmt.Errorf("subscription server: %w", err)
+	}
+	defer func() { _ = listener.Close() }()
+	return s.Serve(ctx, listener)
+}
+
+// Serve starts the HTTP server on an already-bound listener. Admin UI uses
+// this to keep its private subscription backend independent from instances.
+func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
 	mux := http.NewServeMux()
 
 	// Public.
@@ -71,27 +84,50 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/api/export", s.localhostOnly(s.handleExport))
 	mux.HandleFunc("/api/import", s.localhostOnly(s.handleImport))
 
-	addr := fmt.Sprintf(":%d", s.port)
 	s.srv = &http.Server{
-		Addr:         addr,
+		Addr:         listener.Addr().String(),
 		Handler:      mux,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 	}
 
 	// Graceful shutdown on context cancellation.
+	done := make(chan struct{})
+	defer close(done)
 	go func() {
-		<-ctx.Done()
-		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = s.srv.Shutdown(shutCtx)
+		select {
+		case <-ctx.Done():
+			shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = s.srv.Shutdown(shutCtx)
+		case <-done:
+		}
 	}()
 
-	logger.Infof("subscription server listening on %s", addr)
-	if err := s.srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	logger.Infof("subscription server listening on %s", listener.Addr())
+	if err := s.srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("subscription server: %w", err)
 	}
 	return nil
+}
+
+// SetMirror replaces mirror settings without restarting the subscription HTTP
+// server. Manager instances are immutable after construction.
+func (s *Server) SetMirror(manager *mirror.Manager) {
+	s.mirrorMu.Lock()
+	s.mirror = manager
+	s.mirrorMu.Unlock()
+}
+
+func (s *Server) currentMirror() *mirror.Manager {
+	s.mirrorMu.RLock()
+	defer s.mirrorMu.RUnlock()
+	return s.mirror
+}
+
+func (s *Server) mirrorEnabled() bool {
+	manager := s.currentMirror()
+	return manager != nil && manager.Enabled()
 }
 
 // ── Middleware ───────────────────────────────────────────────────────────────
@@ -351,7 +387,7 @@ func (s *Server) handleRefreshLinked(w http.ResponseWriter, r *http.Request) {
 	}
 	mirrorErrors := make(map[string]string)
 	for _, slug := range slugs {
-		if s.mirror == nil || !s.mirror.Enabled() {
+		if !s.mirrorEnabled() {
 			continue
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
@@ -418,7 +454,7 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getMirror(w http.ResponseWriter, r *http.Request, slug string) {
-	if s.mirror == nil || !s.mirror.Enabled() {
+	if !s.mirrorEnabled() {
 		http.Error(w, "Mirror disabled", http.StatusNotFound)
 		return
 	}
@@ -436,7 +472,7 @@ func (s *Server) getMirror(w http.ResponseWriter, r *http.Request, slug string) 
 }
 
 func (s *Server) syncMirrorAsync(ctx context.Context, slug string) {
-	if s.mirror == nil || !s.mirror.Enabled() {
+	if !s.mirrorEnabled() {
 		return
 	}
 	go func() {
@@ -449,6 +485,10 @@ func (s *Server) syncMirrorAsync(ctx context.Context, slug string) {
 }
 
 func (s *Server) syncMirror(ctx context.Context, slug string) (*model.Mirror, error) {
+	manager := s.currentMirror()
+	if manager == nil || !manager.Enabled() {
+		return nil, errors.New("mirror manager is disabled")
+	}
 	key, err := s.store.GetOrCreateMirrorKey(slug, mirror.GenerateKey)
 	if err != nil {
 		return nil, err
@@ -457,7 +497,7 @@ func (s *Server) syncMirror(ctx context.Context, slug string) (*model.Mirror, er
 	if err != nil {
 		return nil, err
 	}
-	publicURL, err := s.mirror.Publish(ctx, slug, uris, key)
+	publicURL, err := manager.Publish(ctx, slug, uris, key)
 	if err != nil {
 		return nil, err
 	}

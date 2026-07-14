@@ -39,13 +39,18 @@ func (s *Server) proxySubRequestInternal(w http.ResponseWriter, r *http.Request,
 	body, _ := io.ReadAll(r.Body)
 	defer r.Body.Close()
 
-	urlStr := "http://127.0.0.1:" + itoa(s.cfg.SubPort) + target
+	urlStr, ok := s.subscriptions.endpointURL(target)
+	if !ok {
+		s.writeSubscriptionUnavailable(w)
+		return
+	}
 	req, err := http.NewRequest(r.Method, urlStr, bytes.NewReader(body))
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 	req.Header = r.Header.Clone()
+	req.Header.Del("Authorization")
 	s.doProxy(w, req)
 }
 
@@ -57,14 +62,31 @@ func (s *Server) proxySubRequest(w http.ResponseWriter, r *http.Request, targetP
 	}
 	defer r.Body.Close()
 
-	urlStr := "http://127.0.0.1:" + itoa(s.cfg.SubPort) + targetPath
+	urlStr, ok := s.subscriptions.endpointURL(targetPath)
+	if !ok {
+		s.writeSubscriptionUnavailable(w)
+		return
+	}
 	req, err := http.NewRequest(r.Method, urlStr, bytes.NewReader(body))
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 	req.Header = r.Header.Clone()
+	req.Header.Del("Authorization")
+	if token := s.subscriptions.token(); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	s.doProxy(w, req)
+}
+
+func (s *Server) writeSubscriptionUnavailable(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusServiceUnavailable)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"error":   "subscription_service_unavailable",
+		"message": "Внутренний сервис подписок Admin UI не запущен.",
+	})
 }
 
 func (s *Server) doProxy(w http.ResponseWriter, req *http.Request) {
@@ -72,13 +94,7 @@ func (s *Server) doProxy(w http.ResponseWriter, req *http.Request) {
 	resp, err := client.Do(req)
 	if err != nil {
 		if strings.Contains(err.Error(), "connection refused") {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"error":    "subscription_service_unavailable",
-				"message":  "Сервис подписок не запущен на порту " + itoa(s.cfg.SubPort) + ". Убедитесь, что olcrtc-server работает с включёнными подписками.",
-				"sub_port": s.cfg.SubPort,
-			})
+			s.writeSubscriptionUnavailable(w)
 			return
 		}
 		http.Error(w, "Subscription API unreachable: "+err.Error(), http.StatusBadGateway)
@@ -93,26 +109,4 @@ func (s *Server) doProxy(w http.ResponseWriter, req *http.Request) {
 	}
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
-}
-
-func itoa(n int) string {
-	var buf [20]byte
-	i := len(buf)
-	if n == 0 {
-		return "0"
-	}
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	if neg {
-		i--
-		buf[i] = '-'
-	}
-	return string(buf[i:])
 }

@@ -8,8 +8,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
 	"sync"
 	"time"
 )
@@ -33,27 +31,24 @@ type Config struct {
 
 // Server is the admin HTTP server.
 type Server struct {
-	cfg          Config
-	mux          *http.ServeMux
-	srv          *http.Server
-	subProxy     *httputil.ReverseProxy
-	mu           sync.RWMutex
-	lastBadIPs   map[string]time.Time // simple rate-limit memory
-	wbAutomation *wbAutomationManager
+	cfg           Config
+	mux           *http.ServeMux
+	srv           *http.Server
+	subscriptions *adminSubscriptionBackend
+	mu            sync.RWMutex
+	lastBadIPs    map[string]time.Time // simple rate-limit memory
+	wbAutomation  *wbAutomationManager
 }
 
 // NewServer creates a new admin server.
 func NewServer(cfg Config) *Server {
 	s := &Server{
-		cfg:          cfg,
-		mux:          http.NewServeMux(),
-		lastBadIPs:   make(map[string]time.Time),
-		wbAutomation: newWBAutomationManager(),
+		cfg:           cfg,
+		mux:           http.NewServeMux(),
+		subscriptions: newAdminSubscriptionBackend(cfg),
+		lastBadIPs:    make(map[string]time.Time),
+		wbAutomation:  newWBAutomationManager(),
 	}
-
-	target := fmt.Sprintf("http://127.0.0.1:%d", cfg.SubPort)
-	u, _ := url.Parse(target)
-	s.subProxy = httputil.NewSingleHostReverseProxy(u)
 
 	s.setupRoutes()
 	return s
@@ -94,6 +89,9 @@ func (s *Server) Start(ctx context.Context) error {
 	tlsConfig, err := s.buildTLS(ctx)
 	if err != nil {
 		return fmt.Errorf("tls setup: %w", err)
+	}
+	if err := s.subscriptions.start(ctx); err != nil {
+		log.Printf("Subscription backend unavailable: %v", err)
 	}
 
 	addr := fmt.Sprintf(":%d", s.cfg.Port)
