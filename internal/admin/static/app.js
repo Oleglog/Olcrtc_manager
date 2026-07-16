@@ -766,6 +766,23 @@ async function optimizeQRPayload(payload) {
   return { text: original, compressed: false, originalLength: original.length };
 }
 
+async function splitSubscriptionQRPayload(payload) {
+  if (payload.length <= 900) return [payload];
+  if (!/^[\x20-\x7e]+$/.test(payload)) throw new Error('multipart QR требует gzip payload');
+  if (typeof crypto === 'undefined' || !crypto.subtle || typeof TextEncoder === 'undefined') {
+    throw new Error('браузер не поддерживает SHA-256 для multipart QR');
+  }
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(payload));
+  const hash = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
+  const bundleID = hash.slice(0, 16);
+  const chunkSize = 900;
+  const total = Math.ceil(payload.length / chunkSize);
+  if (total > 128) throw new Error('подписка слишком большая для multipart QR');
+  return Array.from({ length: total }, (_, index) =>
+    `olcrtc+part:1:${bundleID}:${index + 1}/${total}:${hash}:${payload.slice(index * chunkSize, (index + 1) * chunkSize)}`
+  );
+}
+
 
 function roomTailOrDefault(current) {
   const value = (current || '').trim();
@@ -1598,33 +1615,64 @@ function showQRModal(uri, inst) {
       note.textContent = 'QR оптимизирован: ' + optimized.originalLength + ' → ' + qrText.length + ' символов. Требуется клиент с поддержкой olcrtc+gz.';
       div.insertBefore(note, qrWrap.nextSibling);
     }
-    if (!qrText || qrText.length > 4000) {
-      qrDiv.innerHTML = '<div class="text-red-400 text-xs p-2">Данные слишком длинные для QR-кода (' + (qrText ? qrText.length : 0) + ' символов)</div>';
-      return;
-    }
+    let frames;
     try {
-      const qrSize = qrText.length > 1200 ? 720 : (qrText.length > 650 ? 560 : 360);
-      const correctLevel = QRCode.CorrectLevel.L;
-      new QRCode(qrDiv, { text: qrText, width: qrSize, height: qrSize, colorDark: '#000000', colorLight: '#ffffff', correctLevel });
+      frames = isBundle ? await splitSubscriptionQRPayload(qrText) : [qrText];
     } catch (e) {
       qrDiv.innerHTML = '<div class="text-red-400 text-xs p-2">Ошибка генерации QR: ' + e.message + '</div>';
       return;
     }
+    if (!frames[0] || frames.some(frame => frame.length > 1200)) {
+      qrDiv.innerHTML = '<div class="text-red-400 text-xs p-2">Данные слишком длинные для QR-кода</div>';
+      return;
+    }
+
+    let frameIndex = 0;
+    let frameLabel = null;
+    const renderFrame = () => {
+      qrDiv.innerHTML = '';
+      const frame = frames[frameIndex];
+      const qrSize = frame.length > 650 ? 560 : 360;
+      try {
+        new QRCode(qrDiv, { text: frame, width: qrSize, height: qrSize, colorDark: '#000000', colorLight: '#ffffff', correctLevel: QRCode.CorrectLevel.L });
+      } catch (e) {
+        qrDiv.innerHTML = '<div class="text-red-400 text-xs p-2">Ошибка генерации QR: ' + e.message + '</div>';
+      }
+      if (frameLabel) frameLabel.textContent = `Часть ${frameIndex + 1} из ${frames.length}`;
+    };
+
+    if (frames.length > 1) {
+      const multipart = el('div', 'flex items-center justify-center gap-2 mb-2');
+      const prev = el('button', 'btn btn-secondary btn-sm');
+      prev.textContent = 'Назад';
+      frameLabel = el('span', 'text-sm text-gray-300');
+      const next = el('button', 'btn btn-secondary btn-sm');
+      next.textContent = 'Далее';
+      prev.onclick = () => { frameIndex = (frameIndex + frames.length - 1) % frames.length; renderFrame(); };
+      next.onclick = () => { frameIndex = (frameIndex + 1) % frames.length; renderFrame(); };
+      multipart.appendChild(prev);
+      multipart.appendChild(frameLabel);
+      multipart.appendChild(next);
+      div.insertBefore(multipart, qrWrap.nextSibling);
+    }
+
+    renderFrame();
     downloadBtn.onclick = () => {
       const canvas = qrDiv.querySelector('canvas');
       const img = qrDiv.querySelector('img');
+      const suffix = frames.length > 1 ? `-${frameIndex + 1}-of-${frames.length}` : '';
       if (canvas) {
         canvas.toBlob((blob) => {
           if (!blob) { showToast('Не удалось сгенерировать PNG', 'error'); return; }
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
-          a.href = url; a.download = isBundle ? 'olcrtc-subscription-qr.png' : 'olcrtc-qr.png'; a.click();
+          a.href = url; a.download = isBundle ? `olcrtc-subscription-qr${suffix}.png` : 'olcrtc-qr.png'; a.click();
           URL.revokeObjectURL(url);
           showToast('PNG сохранён');
         }, 'image/png');
       } else if (img) {
         const a = document.createElement('a');
-        a.href = img.src; a.download = isBundle ? 'olcrtc-subscription-qr.png' : 'olcrtc-qr.png'; a.click();
+        a.href = img.src; a.download = isBundle ? `olcrtc-subscription-qr${suffix}.png` : 'olcrtc-qr.png'; a.click();
         showToast('PNG сохранён');
       } else {
         showToast('Не удалось получить QR', 'error');

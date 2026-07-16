@@ -72,6 +72,9 @@ jobs:
           echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
           echo "Building version: $VERSION (branch: $BRANCH, tag: $TAG)"
 
+      - name: Check admin JavaScript
+        run: node --check internal/admin/static/app.js
+
       - name: Install Mage
         run: go install github.com/magefile/mage@latest
 
