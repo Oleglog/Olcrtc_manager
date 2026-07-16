@@ -446,6 +446,15 @@ func (p *streamTransport) SupportsPeerRouting() bool {
 	return p.onPeerData != nil
 }
 
+// DropPeer immediately removes a server-side peer epoch after its tunnel
+// session closes, so a reconnect cannot reuse buffered KCP/control frames.
+func (p *streamTransport) DropPeer(peerID string) {
+	epoch, err := parsePeerID(peerID)
+	if err == nil {
+		p.evictPeer(epoch)
+	}
+}
+
 func (p *streamTransport) Close() error {
 	if p.closed.CompareAndSwap(false, true) {
 		close(p.closeCh)

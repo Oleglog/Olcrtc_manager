@@ -68,6 +68,7 @@ type Server struct {
 	controlStop    context.CancelFunc
 	sessMu         sync.RWMutex
 	peerSessions   map[string]*peerSession
+	peerOpenMu     sync.Mutex
 	peersMu        sync.Mutex
 	peerStats      map[string]peerStat
 	reinstallMu    sync.Mutex
@@ -447,10 +448,42 @@ func (s *Server) closeSession() {
 func (s *Server) removePeerSession(peerID, reason string) {
 	s.sessMu.Lock()
 	ps := s.peerSessions[peerID]
-	delete(s.peerSessions, peerID)
+	if ps != nil {
+		delete(s.peerSessions, peerID)
+		s.dropTransportPeer(peerID)
+	}
 	s.sessMu.Unlock()
 	if ps != nil {
 		s.closePeerSession(ps, reason)
+	}
+}
+
+func (s *Server) replacePeerSessionForDevice(ps *peerSession, deviceID, sessionID string) bool {
+	var replaced []*peerSession
+	s.sessMu.Lock()
+	if s.peerSessions[ps.peerID] != ps {
+		s.sessMu.Unlock()
+		return false
+	}
+	ps.deviceID = deviceID
+	ps.sessionID = sessionID
+	for peerID, current := range s.peerSessions {
+		if current != ps && current.deviceID == deviceID {
+			delete(s.peerSessions, peerID)
+			s.dropTransportPeer(peerID)
+			replaced = append(replaced, current)
+		}
+	}
+	s.sessMu.Unlock()
+	for _, current := range replaced {
+		s.closePeerSession(current, "reconnect")
+	}
+	return true
+}
+
+func (s *Server) dropTransportPeer(peerID string) {
+	if dropper, ok := s.peerLn.(interface{ DropPeer(string) }); ok {
+		dropper.DropPeer(peerID)
 	}
 }
 
@@ -756,13 +789,19 @@ func (s *Server) acceptPeerHandshake(ps *peerSession) bool {
 			return false
 		}
 		ps.controlStrm = stream
-		ps.deviceID = hello.DeviceID
-		ps.sessionID = sid
+		// ponytail: one global activation lock; shard by device only if handshake throughput matters.
+		s.peerOpenMu.Lock()
+		if !s.replacePeerSessionForDevice(ps, hello.DeviceID, sid) {
+			s.peerOpenMu.Unlock()
+			_ = stream.Close()
+			return false
+		}
 		s.recordSession(sid)
 		s.onOpen(sid, hello.DeviceID, hello.Claims)
 		s.trackPeerOpen(sid, hello.DeviceID)
 		logger.Infof("session %s opened (device=%s peer=%s)", sid, hello.DeviceID, ps.peerID)
 		s.startPeerControlLoop(ps, stream)
+		s.peerOpenMu.Unlock()
 		return true
 	}
 	return false

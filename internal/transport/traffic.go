@@ -122,6 +122,12 @@ func (t *trafficTransport) ResetPeer() {
 	}
 }
 
+func (t *trafficTransport) DropPeer(peerID string) {
+	if dropper, ok := t.inner.(interface{ DropPeer(string) }); ok {
+		dropper.DropPeer(peerID)
+	}
+}
+
 func (t *trafficTransport) Reconnect(reason string) { t.inner.Reconnect(reason) }
 
 func (t *trafficTransport) SetReconnectCallback(cb func()) { t.inner.SetReconnectCallback(cb) }

@@ -215,6 +215,7 @@ type serverLinkStub struct {
 	closed     bool
 	resetCount int
 	resetCh    chan struct{}
+	dropped    []string
 }
 
 func (s *serverLinkStub) Connect(context.Context) error   { return nil }
@@ -227,6 +228,9 @@ func (s *serverLinkStub) WatchConnection(context.Context) {}
 func (s *serverLinkStub) CanSend() bool                   { return true }
 func (s *serverLinkStub) Features() transport.Features    { return transport.Features{} }
 func (s *serverLinkStub) Reconnect(string)                {}
+func (s *serverLinkStub) SendTo(string, []byte) error     { return nil }
+func (s *serverLinkStub) SupportsPeerRouting() bool       { return true }
+func (s *serverLinkStub) DropPeer(peerID string)          { s.dropped = append(s.dropped, peerID) }
 func (s *serverLinkStub) ResetPeer() {
 	s.resetCount++
 	if s.resetCh != nil {
@@ -234,6 +238,45 @@ func (s *serverLinkStub) ResetPeer() {
 		case s.resetCh <- struct{}{}:
 		default:
 		}
+	}
+}
+
+func TestReplacePeerSessionForDeviceClosesPreviousPeer(t *testing.T) {
+	ln := &serverLinkStub{}
+	old := &peerSession{peerID: "old-peer", deviceID: "device", sessionID: "old-session"}
+	current := &peerSession{peerID: "new-peer"}
+	var closedSession, closedReason string
+	s := &Server{
+		peerLn: ln,
+		peerSessions: map[string]*peerSession{
+			old.peerID:     old,
+			current.peerID: current,
+		},
+		peerStats: map[string]peerStat{
+			old.sessionID: peerStat{deviceID: old.deviceID, openedAt: time.Now()},
+		},
+		onClose: func(sessionID, reason string) {
+			closedSession, closedReason = sessionID, reason
+		},
+	}
+
+	if !s.replacePeerSessionForDevice(current, "device", "new-session") {
+		t.Fatal("replacePeerSessionForDevice() rejected current peer")
+	}
+	if len(s.peerSessions) != 1 || s.peerSessions[current.peerID] != current {
+		t.Fatalf("peerSessions = %#v, want only current peer", s.peerSessions)
+	}
+	if current.deviceID != "device" || current.sessionID != "new-session" {
+		t.Fatalf("current peer = %+v", current)
+	}
+	if closedSession != old.sessionID || closedReason != "reconnect" {
+		t.Fatalf("closed session = %q reason = %q", closedSession, closedReason)
+	}
+	if len(ln.dropped) != 1 || ln.dropped[0] != old.peerID {
+		t.Fatalf("dropped peers = %v, want [%s]", ln.dropped, old.peerID)
+	}
+	if _, ok := s.peerStats[old.sessionID]; ok {
+		t.Fatal("old peer remains in live peer stats")
 	}
 }
 
