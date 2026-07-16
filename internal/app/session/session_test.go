@@ -3,15 +3,48 @@ package session
 import (
 	"context"
 	"errors"
+	"net"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/openlibrecommunity/olcrtc/internal/control"
+	"github.com/openlibrecommunity/olcrtc/internal/protect"
 	"github.com/openlibrecommunity/olcrtc/internal/runtime"
 )
 
 const testBadDuration = "nope"
+
+func TestConfigureDefaultResolverProtectsDNSSocket(t *testing.T) {
+	listener, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	oldResolver := net.DefaultResolver
+	oldProtector := protect.Protector
+	t.Cleanup(func() {
+		net.DefaultResolver = oldResolver
+		protect.Protector = oldProtector
+	})
+
+	var calls atomic.Int32
+	protect.Protector = func(int) bool {
+		calls.Add(1)
+		return true
+	}
+	configureDefaultResolver(listener.LocalAddr().String())
+
+	conn, err := net.DefaultResolver.Dial(context.Background(), "udp4", "ignored")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.Close()
+	if calls.Load() != 1 {
+		t.Fatalf("Protector calls = %d, want 1", calls.Load())
+	}
+}
 
 func TestApplyTransportDefaults(t *testing.T) {
 	tests := []struct {
