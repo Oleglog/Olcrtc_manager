@@ -659,11 +659,10 @@ function renderSubRow(sub, instances, sys) {
   compositionBtn.onclick = () => showManageSubInstancesModal(sub, instances);
   const qrBtn = el('button', 'btn btn-secondary btn-sm');
   qrBtn.innerHTML = icon('qr-code') + '<span>QR</span>';
-  qrBtn.title = 'QR-бандл подписки: группа + текущие подключения';
+  qrBtn.title = 'QR подписки: URL + encrypted mirror';
   qrBtn.onclick = async () => {
     await withLoading(qrBtn, async () => {
       try {
-        const insts = await api('/subs/' + sub.slug + '/instances');
         let mirror = null;
         if (sys.mirror_enabled) {
           try {
@@ -672,7 +671,7 @@ function renderSubRow(sub, instances, sys) {
             throw new Error('Yandex mirror включён, но синхронизация не удалась: ' + e.message);
           }
         }
-        const bundle = buildSubscriptionBundle(sub, subURL, insts, mirror);
+        const bundle = buildSubscriptionBundle(sub, subURL, mirror);
         showQRModal(bundle, { subscriptionBundle: true, name: sub.name });
       } catch (e) {
         showToast('Ошибка QR подписки: ' + e.message, 'error');
@@ -705,14 +704,7 @@ function renderSubRow(sub, instances, sys) {
   return row;
 }
 
-function buildSubscriptionBundle(sub, subURL, insts, mirror) {
-  const profiles = (insts || [])
-    .map(inst => inst.raw_uri || inst.uri || '')
-    .filter(uri => uri && uri.toLowerCase().startsWith('olcrtc://'));
-  if (profiles.length === 0) throw new Error('в подписке нет olcrtc:// подключений');
-
-  // Compact keys keep subscription QR codes scannable. Android accepts both
-  // this compact form and the older verbose JSON.
+function buildSubscriptionBundle(sub, subURL, mirror) {
   return JSON.stringify({
     type: 'olcrtc-sub',
     v: 2,
@@ -723,7 +715,6 @@ function buildSubscriptionBundle(sub, subURL, insts, mirror) {
     mk: mirror && mirror.key ? mirror.key : '',
     uc: true,
     d: true,
-    p: profiles,
   });
 }
 
