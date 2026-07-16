@@ -713,7 +713,7 @@ function buildSubscriptionBundle(sub, subURL, mirror) {
     u: subURL,
     m: mirror && mirror.url && mirror.key ? [{ t: mirror.type || 'yandex_disk', u: mirror.url, e: true, a: 'AES-256-GCM' }] : [],
     mk: mirror && mirror.key ? mirror.key : '',
-    uc: true,
+    uc: false,
     d: true,
   });
 }

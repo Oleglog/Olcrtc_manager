@@ -82,3 +82,37 @@ func TestGetMirrorReturnsStoredMetadataWithoutPublishing(t *testing.T) {
 		t.Fatalf("GET mirror = %+v, want URL=%q key=%q type=%q", got, want.URL, want.Key, want.Type)
 	}
 }
+
+func TestPublicSubscriptionDisablesCachesAndReturnsCurrentProfiles(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "subscriptions.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+
+	if _, err := st.CreateSubscription("example", "Example"); err != nil {
+		t.Fatal(err)
+	}
+	profiles := []string{
+		"olcrtc://wbstream@r/room-one?k=one&c=client-one",
+		"olcrtc://telemost@r/room-two?k=two&c=client-two",
+	}
+	for _, profile := range profiles {
+		if _, err := st.AddInstance("example", profile); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	recorder := httptest.NewRecorder()
+	New(st, 0, "").handleSub(recorder, httptest.NewRequest(http.MethodGet, "/sub/example", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("GET subscription status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if got := recorder.Header().Get("Cache-Control"); got != "no-store, max-age=0" {
+		t.Fatalf("Cache-Control = %q", got)
+	}
+	if got := recorder.Body.String(); got != strings.Join(profiles, "\n")+"\n" {
+		t.Fatalf("subscription body = %q", got)
+	}
+}

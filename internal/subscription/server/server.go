@@ -205,6 +205,9 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store, max-age=0")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
 	for _, u := range uris {
 		_, _ = fmt.Fprintln(w, u)
 	}
