@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -28,12 +29,38 @@ func (s *Server) handleSubsSlug(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePublicSub(w http.ResponseWriter, r *http.Request) {
+	if strings.HasSuffix(strings.TrimSuffix(r.URL.Path, "/"), "/open") {
+		s.handlePublicSubOpen(w, r)
+		return
+	}
 	// Proxy /sub/{slug} to subscription server.
 	target := r.URL.Path
 	if r.URL.RawQuery != "" {
 		target = target + "?" + r.URL.RawQuery
 	}
 	s.proxySubRequestInternal(w, r, target)
+}
+
+func (s *Server) handlePublicSubOpen(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	normalizedPath := strings.TrimSuffix(r.URL.Path, "/")
+	sourcePath := strings.TrimSuffix(normalizedPath, "/open")
+	slug := strings.TrimPrefix(sourcePath, "/sub/")
+	if sourcePath == normalizedPath || slug == "" || strings.Contains(slug, "/") || r.Host == "" {
+		http.NotFound(w, r)
+		return
+	}
+	source := url.URL{Scheme: "https", Host: r.Host, Path: sourcePath}
+	query := url.Values{"url": {source.String()}}
+	if name := strings.TrimSpace(r.URL.Query().Get("name")); name != "" && len(name) <= 120 {
+		query.Set("name", name)
+	}
+	deepLink := url.URL{Scheme: "olcrtc", Host: "subscription", RawQuery: query.Encode()}
+	w.Header().Set("Cache-Control", "no-store, max-age=0")
+	http.Redirect(w, r, deepLink.String(), http.StatusFound)
 }
 
 func (s *Server) proxySubRequestInternal(w http.ResponseWriter, r *http.Request, target string) {

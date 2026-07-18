@@ -78,8 +78,8 @@ jobs:
       - name: Install Mage
         run: go install github.com/magefile/mage@latest
 
-      - name: Test reconnect/session packages
-        run: go test ./internal/server ./internal/transport/vp8channel
+      - name: Test release packages
+        run: go test ./internal/admin ./internal/server ./internal/transport/vp8channel
 
       - name: Build cross binaries
         env:

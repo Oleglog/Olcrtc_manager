@@ -645,10 +645,12 @@ function renderSubRow(sub, instances, sys) {
   const row = el('div', 'card p-3 flex flex-col md:flex-row md:items-center justify-between gap-2');
   const subBase = (sys.subscription_public_url || sys.admin_url || location.origin).replace(/\/+$/, '');
   const subURL = subBase + '/sub/' + sub.slug;
+  const openURL = subURL + '/open?name=' + encodeURIComponent(sub.name || 'olcRTC subscription');
   const left = el('div', 'flex-1 min-w-0');
   left.innerHTML = `
     <div class="font-medium">${sub.name} <span class="text-gray-500">[${sub.slug}]</span></div>
     <div class="text-gray-400 text-xs mt-1 copyable truncate" title="${subURL}">${subURL}</div>
+    <div class="text-gray-500 text-xs mt-1 copyable truncate" title="${openURL}">Для клиента: ${openURL}</div>
   `;
   const right = el('div', 'flex gap-1.5 flex-wrap');
   const viewBtn = el('button', 'btn btn-secondary btn-sm');
@@ -678,6 +680,13 @@ function renderSubRow(sub, instances, sys) {
       }
     });
   };
+  const linkBtn = el('button', 'btn btn-secondary btn-sm');
+  linkBtn.innerHTML = icon('link') + '<span>Ссылка</span>';
+  linkBtn.title = 'Скопировать ссылку для открытия подписки в приложении';
+  linkBtn.onclick = async () => {
+    await navigator.clipboard.writeText(openURL);
+    showToast('Ссылка для клиента скопирована');
+  };
   const delBtn = el('button', 'btn btn-danger btn-sm btn-icon');
   delBtn.setAttribute('aria-label', 'Удалить подписку');
   delBtn.title = 'Удалить';
@@ -698,6 +707,7 @@ function renderSubRow(sub, instances, sys) {
   right.appendChild(viewBtn);
   right.appendChild(compositionBtn);
   right.appendChild(qrBtn);
+  right.appendChild(linkBtn);
   right.appendChild(delBtn);
   row.appendChild(left);
   row.appendChild(right);
