@@ -79,7 +79,7 @@ jobs:
         run: go install github.com/magefile/mage@latest
 
       - name: Test release packages
-        run: go test ./internal/admin ./internal/server ./internal/transport/vp8channel
+        run: go test ./internal/admin ./internal/subscription/server ./internal/server ./internal/transport/vp8channel
 
       - name: Build cross binaries
         env:

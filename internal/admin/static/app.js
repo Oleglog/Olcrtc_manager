@@ -645,7 +645,7 @@ function renderSubRow(sub, instances, sys) {
   const row = el('div', 'card p-3 flex flex-col md:flex-row md:items-center justify-between gap-2');
   const subBase = (sys.subscription_public_url || sys.admin_url || location.origin).replace(/\/+$/, '');
   const subURL = subBase + '/sub/' + sub.slug;
-  const openURL = subURL + '/open?name=' + encodeURIComponent(sub.name || 'olcRTC subscription');
+  const openURL = subURL + '/open';
   const left = el('div', 'flex-1 min-w-0');
   left.innerHTML = `
     <div class="font-medium">${sub.name} <span class="text-gray-500">[${sub.slug}]</span></div>

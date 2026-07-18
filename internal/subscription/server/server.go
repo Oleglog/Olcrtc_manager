@@ -3,6 +3,7 @@
 // Public endpoint:
 //
 //	GET /sub/{slug}        — plain-text list of olcrtc:// URIs
+//	GET /sub/{slug}/open   — redirect into the Android client
 //
 // Management endpoints (localhost only):
 //
@@ -28,6 +29,7 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -183,6 +185,10 @@ func (s *Server) localhostOnly(next http.HandlerFunc) http.HandlerFunc {
 // ── Public handler ──────────────────────────────────────────────────────────
 
 func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
+	if strings.HasSuffix(strings.TrimSuffix(r.URL.Path, "/"), "/open") {
+		s.handleSubOpen(w, r)
+		return
+	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
@@ -211,6 +217,38 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 	for _, u := range uris {
 		_, _ = fmt.Fprintln(w, u)
 	}
+}
+
+func (s *Server) handleSubOpen(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	normalizedPath := strings.TrimSuffix(r.URL.Path, "/")
+	sourcePath := strings.TrimSuffix(normalizedPath, "/open")
+	slug := strings.TrimPrefix(sourcePath, "/sub/")
+	if sourcePath == normalizedPath || slug == "" || strings.Contains(slug, "/") || r.Host == "" {
+		http.NotFound(w, r)
+		return
+	}
+	subscription, err := s.store.GetSubscriptionBySlug(slug)
+	if errors.Is(err, store.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		logger.Errorf("handleSubOpen %s: %v", slug, err)
+		return
+	}
+	source := url.URL{Scheme: "https", Host: r.Host, Path: sourcePath}
+	deepLink := url.URL{
+		Scheme:   "olcrtc",
+		Host:     "subscription",
+		RawQuery: url.Values{"url": {source.String()}, "name": {subscription.Name}}.Encode(),
+	}
+	w.Header().Set("Cache-Control", "no-store, max-age=0")
+	http.Redirect(w, r, deepLink.String(), http.StatusFound)
 }
 
 // ── Management handlers ─────────────────────────────────────────────────────

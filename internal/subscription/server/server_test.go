@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -114,5 +115,37 @@ func TestPublicSubscriptionDisablesCachesAndReturnsCurrentProfiles(t *testing.T)
 	}
 	if got := recorder.Body.String(); got != strings.Join(profiles, "\n")+"\n" {
 		t.Fatalf("subscription body = %q", got)
+	}
+}
+
+func TestPublicSubscriptionOpenRedirectsToAndroidClient(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "subscriptions.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+	if _, err := st.CreateSubscription("example", "Example subscription"); err != nil {
+		t.Fatal(err)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "https://myolcrtc.mooo.com/sub/example/open", nil)
+	recorder := httptest.NewRecorder()
+	New(st, 0, "").handleSub(recorder, request)
+
+	if recorder.Code != http.StatusFound {
+		t.Fatalf("GET subscription open status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	location, err := url.Parse(recorder.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if location.Scheme != "olcrtc" || location.Host != "subscription" {
+		t.Fatalf("redirect location = %q", location.String())
+	}
+	if got := location.Query().Get("url"); got != "https://myolcrtc.mooo.com/sub/example" {
+		t.Fatalf("subscription URL = %q", got)
+	}
+	if got := location.Query().Get("name"); got != "Example subscription" {
+		t.Fatalf("subscription name = %q", got)
 	}
 }
