@@ -650,7 +650,7 @@ function renderSubRow(sub, instances, sys) {
   left.innerHTML = `
     <div class="font-medium">${sub.name} <span class="text-gray-500">[${sub.slug}]</span></div>
     <div class="text-gray-400 text-xs mt-1 copyable truncate" title="${subURL}">${subURL}</div>
-    <div class="text-gray-500 text-xs mt-1 copyable truncate" title="${openURL}">Для клиента: ${openURL}</div>
+    <div class="text-gray-500 text-xs mt-1 copyable truncate" title="${openURL}">Обычная ссылка: ${openURL}</div>
   `;
   const right = el('div', 'flex gap-1.5 flex-wrap');
   const viewBtn = el('button', 'btn btn-secondary btn-sm');
@@ -682,10 +682,19 @@ function renderSubRow(sub, instances, sys) {
   };
   const linkBtn = el('button', 'btn btn-secondary btn-sm');
   linkBtn.innerHTML = icon('link') + '<span>Ссылка</span>';
-  linkBtn.title = 'Скопировать ссылку для открытия подписки в приложении';
+  linkBtn.title = 'Скопировать прямую bootstrap-ссылку с ключом Yandex mirror. Передавайте только получателю подписки.';
   linkBtn.onclick = async () => {
-    await navigator.clipboard.writeText(openURL);
-    showToast('Ссылка для клиента скопирована');
+    await withLoading(linkBtn, async () => {
+      try {
+        if (!sys.mirror_enabled) throw new Error('сначала включите Yandex Disk mirror в настройках');
+        const mirror = await api('/subs/' + sub.slug + '/mirror', { method: 'POST', body: '{}' });
+        const bootstrapURL = buildSubscriptionBootstrapLink(sub, subURL, mirror);
+        await navigator.clipboard.writeText(bootstrapURL);
+        showToast('Прямая bootstrap-ссылка скопирована');
+      } catch (e) {
+        showToast('Ошибка bootstrap-ссылки: ' + e.message, 'error');
+      }
+    });
   };
   const delBtn = el('button', 'btn btn-danger btn-sm btn-icon');
   delBtn.setAttribute('aria-label', 'Удалить подписку');
@@ -726,6 +735,18 @@ function buildSubscriptionBundle(sub, subURL, mirror) {
     uc: false,
     d: true,
   });
+}
+
+function buildSubscriptionBootstrapLink(sub, subURL, mirror) {
+  if (!mirror || !mirror.url || !mirror.key) throw new Error('Yandex mirror не содержит URL или ключ');
+  const query = new URLSearchParams({
+    url: subURL,
+    name: sub.name || 'olcRTC subscription',
+    mirror_type: mirror.type || 'yandex_disk',
+    mirror_url: mirror.url,
+    mirror_key: mirror.key,
+  });
+  return 'olcrtc://subscription?' + query.toString();
 }
 
 async function gzipBytes(text) {
