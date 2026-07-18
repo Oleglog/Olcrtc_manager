@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-INSTALLER_VERSION="1.9.63"
+INSTALLER_VERSION="1.9.64"
 CARRIER_DEFAULT="jitsi"
 TRANSPORT_DEFAULT="vp8channel"
 DNS_DEFAULT="8.8.8.8:53"
@@ -711,6 +711,9 @@ User=olcrtc
 Group=olcrtc
 StateDirectory=olcrtc
 StateDirectoryMode=0750
+RuntimeDirectory=olcrtc
+RuntimeDirectoryMode=0750
+Environment=OLCRTC_STATUS_FILE=/run/olcrtc/status.json
 WorkingDirectory=/var/lib/olcrtc
 ExecStart=/usr/local/bin/olcrtc-launcher
 ProtectSystem=strict
@@ -751,6 +754,9 @@ User=olcrtc
 Group=olcrtc
 StateDirectory=olcrtc-%i
 StateDirectoryMode=0750
+RuntimeDirectory=olcrtc-%i
+RuntimeDirectoryMode=0750
+Environment=OLCRTC_STATUS_FILE=/run/olcrtc-%i/status.json
 WorkingDirectory=/var/lib/olcrtc-%i
 ExecStart=/usr/local/bin/olcrtc-launcher
 ProtectSystem=strict

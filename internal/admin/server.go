@@ -62,6 +62,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/auth/change-credentials", s.withAuth(s.withCORS(s.handleChangeCredentials)))
 
 	s.mux.HandleFunc("/api/instances", s.withAuth(s.withCORS(s.handleInstancesList)))
+	s.mux.HandleFunc("/api/instances/usage", s.withAuth(s.withCORS(s.handleInstanceUsage)))
 	s.mux.HandleFunc("/api/instances/", s.withAuth(s.withCORS(s.handleInstances)))
 
 	s.mux.HandleFunc("/api/subs", s.withAuth(s.withCORS(s.handleSubs)))

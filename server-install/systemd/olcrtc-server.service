@@ -13,6 +13,9 @@ User=olcrtc
 Group=olcrtc
 StateDirectory=olcrtc
 StateDirectoryMode=0750
+RuntimeDirectory=olcrtc
+RuntimeDirectoryMode=0750
+Environment=OLCRTC_STATUS_FILE=/run/olcrtc/status.json
 WorkingDirectory=/var/lib/olcrtc
 ExecStart=/usr/local/bin/olcrtc-launcher
 

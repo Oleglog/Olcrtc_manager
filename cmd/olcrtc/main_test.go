@@ -323,6 +323,15 @@ func TestLoadNames(t *testing.T) {
 	}
 }
 
+func TestStatusFileFromWorkingDirectory(t *testing.T) {
+	if got := statusFileFromWorkingDirectory("/var/lib/olcrtc-7"); got != "/var/lib/olcrtc-7/status.json" {
+		t.Fatalf("statusFileFromWorkingDirectory() = %q", got)
+	}
+	if got := statusFileFromWorkingDirectory("/tmp/project"); got != "" {
+		t.Fatalf("statusFileFromWorkingDirectory(unrelated) = %q", got)
+	}
+}
+
 func TestWaitForShutdown(t *testing.T) {
 	errCh := make(chan error, 1)
 	errCh <- nil

@@ -52,6 +52,10 @@ type Instance struct {
 	TrafficMaxDelay         string `json:"traffic_max_delay"`
 	VP8FPS                  string `json:"vp8_fps"`
 	VP8Batch                string `json:"vp8_batch"`
+	ActivePeers             int    `json:"active_peers"`
+	UsageKnown              bool   `json:"usage_known"`
+	OldestConnectedAt       string `json:"oldest_connected_at,omitempty"`
+	UsageUpdatedAt          string `json:"usage_updated_at,omitempty"`
 }
 
 func (s *Server) handleInstancesList(w http.ResponseWriter, r *http.Request) {
@@ -697,6 +701,7 @@ func (s *Server) buildInstance(id int) Instance {
 		status = st.State
 		uptime = st.Uptime
 	}
+	usage := readInstanceUsage(id, status == "running" || status == "active")
 
 	return Instance{
 		ID:                      id,
@@ -724,6 +729,10 @@ func (s *Server) buildInstance(id int) Instance {
 		TrafficMaxDelay:         vals["OLCRTC_TRAFFIC_MAX_DELAY"],
 		VP8FPS:                  vals["OLCRTC_VP8_FPS"],
 		VP8Batch:                vals["OLCRTC_VP8_BATCH"],
+		ActivePeers:             usage.ActivePeers,
+		UsageKnown:              usage.UsageKnown,
+		OldestConnectedAt:       usage.OldestConnectedAt,
+		UsageUpdatedAt:          usage.UpdatedAt,
 	}
 }
 

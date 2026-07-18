@@ -25,10 +25,15 @@ func (s *Server) handleSystemStatus(w http.ResponseWriter, r *http.Request) {
 
 	ids, _ := ListInstances(s.cfg.ConfigDir)
 	running := 0
+	activePeers := 0
 	for _, id := range ids {
 		st, _ := SystemctlStatusInfo(InstanceService(id))
 		if st != nil && st.State == "running" {
 			running++
+			usage := readInstanceUsage(id, true)
+			if usage.UsageKnown {
+				activePeers += usage.ActivePeers
+			}
 		}
 	}
 
@@ -79,6 +84,7 @@ func (s *Server) handleSystemStatus(w http.ResponseWriter, r *http.Request) {
 		"tls_expires":             tlsExpires,
 		"instances_total":         len(ids),
 		"instances_running":       running,
+		"active_peers":            activePeers,
 		"admin_url":               fmt.Sprintf("https://%s:%d", adminDomain, s.cfg.Port),
 	}
 	mEnabled, mProvider, mToken, mBase := ReadMirrorConfig(s.cfg.ConfigDir)

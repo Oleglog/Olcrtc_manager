@@ -280,6 +280,33 @@ func TestReplacePeerSessionForDeviceClosesPreviousPeer(t *testing.T) {
 	}
 }
 
+func TestPeerStatusTracksOpenAndClose(t *testing.T) {
+	var statuses []PeerStatus
+	s := &Server{
+		peerStats: make(map[string]peerStat),
+		onPeerStatus: func(status PeerStatus) {
+			statuses = append(statuses, status)
+		},
+	}
+
+	s.trackPeerOpen("session-1", "device-1")
+	s.trackPeerOpen("session-2", "device-2")
+	s.trackPeerClose("session-1", "closed")
+
+	if len(statuses) != 3 {
+		t.Fatalf("statuses = %d, want 3", len(statuses))
+	}
+	if statuses[0].ActivePeers != 1 || statuses[0].OldestConnectedAt.IsZero() {
+		t.Fatalf("first status = %+v", statuses[0])
+	}
+	if statuses[1].ActivePeers != 2 || statuses[1].OldestConnectedAt != statuses[0].OldestConnectedAt {
+		t.Fatalf("second status = %+v", statuses[1])
+	}
+	if statuses[2].ActivePeers != 1 || statuses[2].OldestConnectedAt.IsZero() {
+		t.Fatalf("last status = %+v", statuses[2])
+	}
+}
+
 func TestShutdownClosesLinkAndConn(t *testing.T) {
 	cipher, err := cryptopkg.NewCipher("01234567890123456789012345678901")
 	if err != nil {

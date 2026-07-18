@@ -57,6 +57,15 @@ type TrafficFunc func(sessionID, addr string, bytesIn, bytesOut uint64)
 // HealthFunc is called when the server control health snapshot changes.
 type HealthFunc func(control.Status)
 
+// PeerStatus is the privacy-safe live usage snapshot for one server instance.
+type PeerStatus struct {
+	ActivePeers       int
+	OldestConnectedAt time.Time
+}
+
+// PeerStatusFunc is called when the live peer count changes.
+type PeerStatusFunc func(PeerStatus)
+
 // Server handles incoming tunnel connections and proxies their traffic.
 type Server struct {
 	ln             transport.Transport
@@ -70,6 +79,7 @@ type Server struct {
 	peerSessions   map[string]*peerSession
 	peerOpenMu     sync.Mutex
 	peersMu        sync.Mutex
+	peerStatusMu   sync.Mutex
 	peerStats      map[string]peerStat
 	reinstallMu    sync.Mutex
 	wg             sync.WaitGroup
@@ -77,6 +87,7 @@ type Server struct {
 	onOpen         SessionOpenFunc
 	onClose        SessionCloseFunc
 	onTraffic      TrafficFunc
+	onPeerStatus   PeerStatusFunc
 	deviceID       string
 	sessionID      string
 	dnsServer      string
@@ -155,6 +166,8 @@ type Config struct {
 	OnTraffic TrafficFunc
 	// OnHealth fires when liveness/reconnect status changes. Nil means no-op.
 	OnHealth HealthFunc
+	// OnPeerStatus fires after link startup and whenever a peer opens or closes.
+	OnPeerStatus PeerStatusFunc
 }
 
 // Run starts the server with the given configuration.
@@ -183,12 +196,17 @@ func Run(ctx context.Context, cfg Config) error {
 	if onTraffic == nil {
 		onTraffic = func(string, string, uint64, uint64) {}
 	}
+	onPeerStatus := cfg.OnPeerStatus
+	if onPeerStatus == nil {
+		onPeerStatus = func(PeerStatus) {}
+	}
 	s := &Server{
 		cipher:         cipher,
 		authHook:       hook,
 		onOpen:         onOpen,
 		onClose:        onClose,
 		onTraffic:      onTraffic,
+		onPeerStatus:   onPeerStatus,
 		dnsServer:      cfg.DNSServer,
 		socksProxyAddr: cfg.SOCKSProxyAddr,
 		socksProxyPort: cfg.SOCKSProxyPort,
@@ -509,10 +527,14 @@ func (s *Server) closePeerSession(ps *peerSession, reason string) {
 
 // trackPeerOpen records a newly opened session and logs the live peer summary.
 func (s *Server) trackPeerOpen(sessionID, deviceID string) {
+	s.peerStatusMu.Lock()
 	s.peersMu.Lock()
 	s.peerStats[sessionID] = peerStat{deviceID: deviceID, openedAt: time.Now()}
 	line := s.peersLineLocked()
+	status := s.peerStatusLocked()
 	s.peersMu.Unlock()
+	s.publishPeerStatus(status)
+	s.peerStatusMu.Unlock()
 	logger.Infof("peer connected: device=%s session=%s", deviceID, sessionID)
 	logger.Infof("%s", line)
 }
@@ -520,15 +542,20 @@ func (s *Server) trackPeerOpen(sessionID, deviceID string) {
 // trackPeerClose drops a closed session and logs a disconnect summary plus the
 // live peer summary.
 func (s *Server) trackPeerClose(sessionID, reason string) {
+	s.peerStatusMu.Lock()
 	s.peersMu.Lock()
 	st, ok := s.peerStats[sessionID]
 	if !ok {
 		s.peersMu.Unlock()
+		s.peerStatusMu.Unlock()
 		return // session was never tracked (or already removed) - avoid double count
 	}
 	delete(s.peerStats, sessionID)
 	line := s.peersLineLocked()
+	status := s.peerStatusLocked()
 	s.peersMu.Unlock()
+	s.publishPeerStatus(status)
+	s.peerStatusMu.Unlock()
 	logger.Infof("peer disconnected: device=%s session=%s reason=%s duration=%s",
 		st.deviceID, sessionID, reason, time.Since(st.openedAt).Round(time.Second))
 	logger.Infof("%s", line)
@@ -545,11 +572,31 @@ func (s *Server) peersLineLocked() string {
 	return fmt.Sprintf("Current peers count: %d, Devices: [%s]", len(s.peerStats), strings.Join(devices, ", "))
 }
 
+func (s *Server) peerStatusLocked() PeerStatus {
+	status := PeerStatus{ActivePeers: len(s.peerStats)}
+	for _, peer := range s.peerStats {
+		if status.OldestConnectedAt.IsZero() || peer.openedAt.Before(status.OldestConnectedAt) {
+			status.OldestConnectedAt = peer.openedAt
+		}
+	}
+	return status
+}
+
+func (s *Server) publishPeerStatus(status PeerStatus) {
+	if s.onPeerStatus != nil {
+		s.onPeerStatus(status)
+	}
+}
+
 // logPeersLine logs the current peer summary line (count + device list).
 func (s *Server) logPeersLine() {
+	s.peerStatusMu.Lock()
 	s.peersMu.Lock()
 	line := s.peersLineLocked()
+	status := s.peerStatusLocked()
 	s.peersMu.Unlock()
+	s.publishPeerStatus(status)
+	s.peerStatusMu.Unlock()
 	logger.Infof("%s", line)
 }
 

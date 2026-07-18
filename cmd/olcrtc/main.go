@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -94,6 +95,12 @@ func loadConfig(path string) (loadedConfig, error) {
 		return loadedConfig{}, fmt.Errorf("load config: %w", err)
 	}
 	base := configpkg.Apply(session.Config{}, f)
+	base.StatusFile = strings.TrimSpace(os.Getenv("OLCRTC_STATUS_FILE"))
+	if base.StatusFile == "" {
+		if workingDirectory, err := os.Getwd(); err == nil {
+			base.StatusFile = statusFileFromWorkingDirectory(workingDirectory)
+		}
+	}
 	profiles := make([]supervisor.Profile, 0, len(f.Profiles))
 	for i, profile := range f.Profiles {
 		name := profile.Name
@@ -117,6 +124,14 @@ func loadConfig(path string) (loadedConfig, error) {
 		debug:      f.Debug,
 		ffmpegPath: f.FFmpeg,
 	}, nil
+}
+
+func statusFileFromWorkingDirectory(path string) string {
+	name := filepath.Base(filepath.Clean(path))
+	if name == "olcrtc" || strings.HasPrefix(name, "olcrtc-") {
+		return filepath.Join(path, "status.json")
+	}
+	return ""
 }
 
 func parseFailoverConfig(f configpkg.Failover) (failoverConfig, error) {

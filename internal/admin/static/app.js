@@ -4,6 +4,8 @@
 
 const API = '/api';
 let creds = JSON.parse(localStorage.getItem('olcrtc_creds') || 'null'); // {username, password}
+let usagePollTimer = null;
+const latestInstanceUsage = new Map();
 
 const JITSI_PRESETS = [
   { host: 'meet.jit.si', label: 'meet.jit.si', preferred: true, note: 'official, baseline' },
@@ -229,6 +231,7 @@ function route(path) {
 }
 
 function render() {
+  stopUsagePolling();
   const path = location.pathname;
   const app = document.getElementById('app');
   app.innerHTML = '';
@@ -350,6 +353,7 @@ async function renderDashboard(app) {
 
   try { sys = await api('/system/status'); } catch (e) { console.error(e); }
   try { instances = await api('/instances'); } catch (e) { console.error(e); }
+  instances.forEach(instance => latestInstanceUsage.set(String(instance.id), instance));
   try { subs = await api('/subs'); } catch (e) {
     try {
       const errData = JSON.parse(e.message);
@@ -380,8 +384,10 @@ async function renderDashboard(app) {
       <div><div class="text-gray-500 text-xs uppercase tracking-wider mb-0.5">Admin port</div><div>${sys.admin_port || '-'}</div></div>
       <div><div class="text-gray-500 text-xs uppercase tracking-wider mb-0.5">Подписки</div><div>${sys.sub_enabled ? (sys.sub_running ? 'работают (Admin)' : 'ошибка запуска') : 'выкл'}</div></div>
       <div><div class="text-gray-500 text-xs uppercase tracking-wider mb-0.5">Инстансы</div><div>${sys.instances_running || 0}/${sys.instances_total || 0}</div></div>
+      <div><div class="text-gray-500 text-xs uppercase tracking-wider mb-0.5">Активные подключения</div><div id="active-peer-count">0</div></div>
       <div><div class="text-gray-500 text-xs uppercase tracking-wider mb-0.5">Версия</div><div>${sys.version || '-'}</div></div>
     </div>`;
+  sysCard.querySelector('#active-peer-count').textContent = String(Number(sys.active_peers) || 0);
   wrap.appendChild(sysCard);
 
   // Instances
@@ -448,6 +454,78 @@ async function renderDashboard(app) {
   wrap.appendChild(subSection);
 
   app.appendChild(wrap);
+  startUsagePolling();
+}
+
+function stopUsagePolling() {
+  if (usagePollTimer !== null) {
+    clearInterval(usagePollTimer);
+    usagePollTimer = null;
+  }
+}
+
+function startUsagePolling() {
+  stopUsagePolling();
+  const poll = async () => {
+    if (document.hidden || location.pathname === '/settings' || location.pathname === '/login') return;
+    try {
+      applyUsageSnapshot(await api('/instances/usage'));
+    } catch (e) {
+      console.error('Не удалось обновить использование инстансов', e);
+    }
+  };
+  usagePollTimer = setInterval(poll, 10000);
+}
+
+function applyUsageSnapshot(snapshot) {
+  (snapshot.instances || []).forEach(usage => {
+    latestInstanceUsage.set(String(usage.id), usage);
+    document.querySelectorAll('[data-instance-usage="' + usage.id + '"]').forEach(node => {
+      setUsageBadge(node, usage);
+    });
+  });
+  const total = document.getElementById('active-peer-count');
+  if (total) total.textContent = String(Number(snapshot.active_peers) || 0);
+}
+
+function setUsageBadge(node, usage) {
+  node.className = 'badge';
+  if (!usage.usage_known) {
+    node.textContent = 'Нет данных';
+    node.title = 'Сервис ещё не опубликовал состояние подключений';
+    return;
+  }
+  if (usage.active_peers > 0) {
+    node.classList.add('badge-amber');
+    node.textContent = 'Используется · ' + usage.active_peers;
+    node.title = usage.oldest_connected_at
+      ? 'Самое раннее подключение: ' + new Date(usage.oldest_connected_at).toLocaleString()
+      : 'Есть активные подключения';
+    return;
+  }
+  node.classList.add('badge-emerald');
+  node.textContent = 'Свободен';
+  node.title = 'Активных подключений нет';
+}
+
+async function confirmBusyInstance(inst, action) {
+  const usage = await refreshInstanceUsage(inst);
+  if (!usage.usage_known || usage.active_peers <= 0) return true;
+  return showConfirm({
+    title: 'Инстанс сейчас используется',
+    message: 'Активных подключений: ' + usage.active_peers + '. Действие «' + action + '» оборвёт их соединение.',
+    danger: true,
+    confirmText: action,
+  });
+}
+
+async function refreshInstanceUsage(inst) {
+  try {
+    applyUsageSnapshot(await api('/instances/usage'));
+  } catch (e) {
+    console.error('Не удалось проверить использование инстанса', e);
+  }
+  return latestInstanceUsage.get(String(inst.id)) || inst;
 }
 
 function renderInstanceGroups(instances, memberships) {
@@ -616,10 +694,14 @@ function renderInstanceCard(inst, context = {}) {
 
   // Badges
   const badges = el('div', 'flex flex-wrap gap-1.5');
+  const usageBadge = el('span', 'badge');
+  usageBadge.dataset.instanceUsage = String(inst.id);
+  setUsageBadge(usageBadge, inst);
   const carrierBadge = el('span', 'badge badge-blue');
   carrierBadge.innerHTML = icon('tag', 12) + '<span>' + (inst.carrier || '-') + '</span>';
   const transportBadge = el('span', 'badge');
   transportBadge.innerHTML = icon('wifi', 12) + '<span>' + (inst.transport || '-') + '</span>';
+  badges.appendChild(usageBadge);
   badges.appendChild(carrierBadge);
   badges.appendChild(transportBadge);
   if (context.subscription) {
@@ -722,9 +804,10 @@ function renderInstanceCard(inst, context = {}) {
   startStopBtn.title = inst.status === 'running' ? 'Остановить' : 'Запустить';
   startStopBtn.innerHTML = inst.status === 'running' ? icon('square') : icon('play');
   startStopBtn.onclick = async () => {
+    const action = inst.status === 'running' ? 'stop' : 'start';
+    if (action === 'stop' && !(await confirmBusyInstance(inst, 'Остановить'))) return;
     await withLoading(startStopBtn, async () => {
       try {
-        const action = inst.status === 'running' ? 'stop' : 'start';
         await api('/instances/' + inst.id + '/' + action, { method: 'POST' });
         showToast(action === 'stop' ? 'Остановлено' : 'Запущено');
         render();
@@ -736,6 +819,7 @@ function renderInstanceCard(inst, context = {}) {
   restartBtn.title = 'Перезапустить';
   restartBtn.innerHTML = icon('refresh-cw');
   restartBtn.onclick = async () => {
+    if (!(await confirmBusyInstance(inst, 'Перезапустить'))) return;
     await withLoading(restartBtn, async () => {
       try {
         await api('/instances/' + inst.id + '/restart', { method: 'POST' });
@@ -756,9 +840,13 @@ function renderInstanceCard(inst, context = {}) {
     delBtn.title = 'Удалить инстанс';
     delBtn.innerHTML = icon('trash-2');
     delBtn.onclick = async () => {
+      const usage = await refreshInstanceUsage(inst);
+      const busyWarning = usage.usage_known && usage.active_peers > 0
+        ? 'Сейчас подключено пользователей: ' + usage.active_peers + '. Их соединения будут оборваны. '
+        : '';
       const ok = await showConfirm({
         title: 'Удалить инстанс #' + inst.id + '?',
-        message: 'Сервис и его systemd-артефакты будут удалены, env-файл будет стёрт, а инстанс будет убран из всех подписок. Обычная остановка других инстансов их файлы не затрагивает.',
+        message: busyWarning + 'Сервис и его systemd-артефакты будут удалены, env-файл будет стёрт, а инстанс будет убран из всех подписок. Обычная остановка других инстансов их файлы не затрагивает.',
         danger: true,
         confirmText: 'Удалить',
       });
@@ -1187,10 +1275,21 @@ async function renderSettings(app) {
     const target = selectedRelease();
     if (!target || (target.branch === currentSysBranch && normVer(target.version) === normVer(currentSysVersion))) return;
     const isDowngrade = compareSemverJS(normVer(target.version), normVer(currentSysVersion)) < 0;
+    let activePeers = 0;
+    try {
+      const usage = await api('/instances/usage');
+      activePeers = Number(usage.active_peers) || 0;
+    } catch (e) {
+      console.error('Не удалось проверить активные подключения перед обновлением', e);
+    }
+    const busyWarning = activePeers > 0
+      ? 'Сейчас активно подключений: ' + activePeers + '. Они будут оборваны. '
+      : '';
     const ok = await showConfirm({
       title: isDowngrade ? 'Откатить версию?' : 'Обновить сервер?',
-      message: (isDowngrade ? 'Будет установлена более старая версия ' : 'Будет установлена версия ') + target.version +
+      message: busyWarning + (isDowngrade ? 'Будет установлена более старая версия ' : 'Будет установлена версия ') + target.version +
         ' из ветки ' + target.branch + '. Сервер и админка будут остановлены, заменены и перезапущены. Это займёт 1-2 минуты.',
+      danger: activePeers > 0,
       confirmText: isDowngrade ? 'Откатить' : 'Установить',
     });
     if (!ok) return;

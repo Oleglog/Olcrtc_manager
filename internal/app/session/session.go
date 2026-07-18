@@ -219,6 +219,7 @@ type Config struct {
 	SubMirrorProvider         string
 	SubMirrorYandexOAuthToken string
 	SubMirrorYandexBasePath   string
+	StatusFile                string
 }
 
 // RegisterDefaults registers built-in carriers and transports.
@@ -708,6 +709,10 @@ func runOnce(
 	opts := buildTransportOptions(cfg)
 	switch cfg.Mode {
 	case modeSRV:
+		peerStatus := newPeerStatusPublisher(cfg.StatusFile)
+		if peerStatus != nil {
+			peerStatus(server.PeerStatus{})
+		}
 		if err := server.Run(ctx, server.Config{
 			Transport:        cfg.Transport,
 			Carrier:          cfg.Auth,
@@ -738,6 +743,7 @@ func runOnce(
 			OnTraffic: func(sessionID, addr string, bytesIn, bytesOut uint64) {
 				logger.Infof("traffic: session=%s addr=%s in=%d out=%d", sessionID, addr, bytesIn, bytesOut)
 			},
+			OnPeerStatus: peerStatus,
 		}); err != nil {
 			return fmt.Errorf("server: %w", err)
 		}
