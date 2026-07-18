@@ -346,6 +346,7 @@ async function renderDashboard(app) {
   let instances = [];
   let subs = [];
   let subsError = null;
+  let instanceMemberships = null;
 
   try { sys = await api('/system/status'); } catch (e) { console.error(e); }
   try { instances = await api('/instances'); } catch (e) { console.error(e); }
@@ -356,6 +357,16 @@ async function renderDashboard(app) {
         subsError = errData.message;
       }
     } catch { console.error(e); }
+  }
+  if (!subsError) {
+    try {
+      instanceMemberships = await Promise.all((subs || []).map(async subscription => ({
+        subscription,
+        entries: await api('/subs/' + subscription.slug + '/instances'),
+      })));
+    } catch (e) {
+      console.error('Не удалось загрузить связи подписок с инстансами', e);
+    }
   }
 
   // System card
@@ -384,14 +395,12 @@ async function renderDashboard(app) {
   instHeader.appendChild(addInstBtn);
   instSection.appendChild(instHeader);
 
-  const grid = el('div', 'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4');
-  instances.forEach(inst => grid.appendChild(renderInstanceCard(inst)));
   if (instances.length === 0) {
     const empty = el('div', 'card p-6 text-center text-gray-400 text-sm');
     empty.textContent = 'Инстансов нет. Создайте первый кнопкой выше.';
     instSection.appendChild(empty);
   } else {
-    instSection.appendChild(grid);
+    instSection.appendChild(renderInstanceGroups(instances, instanceMemberships));
   }
   wrap.appendChild(instSection);
 
@@ -441,8 +450,147 @@ async function renderDashboard(app) {
   app.appendChild(wrap);
 }
 
-function renderInstanceCard(inst) {
-  const card = el('div', 'card card-hover p-4 flex flex-col gap-3');
+function renderInstanceGroups(instances, memberships) {
+  const root = el('div', 'space-y-4');
+  if (!memberships) {
+    root.appendChild(renderInstanceGroup('Все инстансы', instances, null));
+    root.appendChild(el('div', 'text-xs text-gray-500', 'Принадлежность к подпискам временно недоступна. Показан общий список.'));
+    return root;
+  }
+
+  const instancesByID = new Map(instances.map(instance => [String(instance.id), instance]));
+  const linkedIDs = new Set();
+  memberships.forEach(group => {
+    const groupIDs = new Set();
+    const linked = [];
+    (group.entries || []).forEach(entry => {
+      if (entry.source_instance_id === null || entry.source_instance_id === undefined) return;
+      const id = String(entry.source_instance_id);
+      const instance = instancesByID.get(id);
+      if (!instance || groupIDs.has(id)) return;
+      groupIDs.add(id);
+      linked.push(instance);
+    });
+    if (linked.length === 0) return;
+    linked.forEach(instance => linkedIDs.add(String(instance.id)));
+    root.appendChild(renderInstanceGroup(group.subscription.name, linked, group.subscription, group.entries));
+  });
+
+  const unassigned = instances.filter(instance => !linkedIDs.has(String(instance.id)));
+  if (unassigned.length > 0) {
+    root.appendChild(renderInstanceGroup('Без подписки', unassigned, null));
+  }
+  return root;
+}
+
+function renderInstanceGroup(title, instances, subscription, entries) {
+  const group = el('section', 'instance-group');
+  const color = subscription ? subscriptionGroupColor(subscription.slug) : null;
+  if (color) {
+    group.classList.add('instance-group-subscription');
+    group.style.setProperty('--instance-group-accent', color.accent);
+    group.style.setProperty('--instance-group-border', color.border);
+    group.style.setProperty('--instance-group-bg', color.background);
+  }
+
+  const header = el('div', 'instance-group-header');
+  const heading = el('div', 'flex items-center gap-2 min-w-0');
+  if (color) {
+    const marker = el('span', 'instance-group-marker');
+    heading.appendChild(marker);
+  }
+  const text = el('div', 'min-w-0');
+  text.appendChild(el('div', 'font-semibold truncate', title));
+  text.appendChild(el('div', 'text-xs text-gray-500', instances.length + ' ' + pluralInstances(instances.length)));
+  heading.appendChild(text);
+  header.appendChild(heading);
+  if (subscription) {
+    const slug = el('span', 'badge');
+    slug.textContent = subscription.slug;
+    slug.style.borderColor = color.border;
+    header.appendChild(slug);
+  }
+  group.appendChild(header);
+
+  const aliases = buildInstanceAliases(instances, subscription ? subscription.name : null, entries);
+  const grid = el('div', 'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4');
+  instances.forEach(instance => grid.appendChild(renderInstanceCard(instance, {
+    displayName: aliases.get(String(instance.id)),
+    subscription,
+    color,
+  })));
+  group.appendChild(grid);
+  return group;
+}
+
+function buildInstanceAliases(instances, subscriptionName, entries = []) {
+  const subscriptionGroup = subscriptionName !== null;
+  const items = subscriptionGroup ? entries : instances;
+  const providers = items.map(item => subscriptionGroup
+    ? uriProvider(item.raw_uri)
+    : (cleanInstanceNamePart(item.carrier || 'olcrtc').toLowerCase() || 'olcrtc'));
+  const totals = new Map();
+  providers.forEach(provider => totals.set(provider, (totals.get(provider) || 0) + 1));
+  const seen = new Map();
+  const suffix = subscriptionGroup ? (cleanInstanceNamePart(subscriptionName) || 'subscription') : 'olcrtc';
+  const result = new Map();
+  items.forEach((item, index) => {
+    const provider = providers[index];
+    const ordinal = (seen.get(provider) || 0) + 1;
+    seen.set(provider, ordinal);
+    let name = provider + '_' + suffix;
+    if ((totals.get(provider) || 0) > 1) name += '_' + ordinal;
+    const id = subscriptionGroup ? item.source_instance_id : item.id;
+    if (id !== null && id !== undefined) result.set(String(id), name);
+  });
+  return result;
+}
+
+function uriProvider(rawURI) {
+  try {
+    const parsed = new URL(rawURI);
+    if (parsed.protocol.toLowerCase() !== 'olcrtc:' || !parsed.username) return 'olcrtc';
+    return cleanInstanceNamePart(decodeURIComponent(parsed.username)).toLowerCase() || 'olcrtc';
+  } catch {
+    return 'olcrtc';
+  }
+}
+
+function cleanInstanceNamePart(value) {
+  return String(value || '')
+    .trim()
+    .replace(/[^\p{L}\p{N}]+/gu, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function subscriptionGroupColor(value) {
+  let hash = 0;
+  for (const char of String(value || 'subscription')) hash = ((hash * 31) + char.codePointAt(0)) | 0;
+  const hue = Math.abs(hash) % 360;
+  return {
+    accent: `hsl(${hue} 70% 58%)`,
+    border: `hsl(${hue} 55% 45% / .55)`,
+    background: `hsl(${hue} 55% 45% / .08)`,
+  };
+}
+
+function pluralInstances(count) {
+  const mod10 = count % 10;
+  const mod100 = count % 100;
+  if (mod10 === 1 && mod100 !== 11) return 'инстанс';
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return 'инстанса';
+  return 'инстансов';
+}
+
+function withInstanceName(rawURI, name) {
+  if (!rawURI || !name) return rawURI || '';
+  return rawURI.replace(/#.*$/, '') + '#' + encodeURIComponent(name);
+}
+
+function renderInstanceCard(inst, context = {}) {
+  const card = el('div', 'card card-hover instance-card p-4 flex flex-col gap-3');
+  const displayName = context.displayName || inst.name || inst.label;
+  const displayURI = withInstanceName(inst.uri, displayName);
 
   // Header: status + label
   const head = el('div', 'flex items-center justify-between gap-2');
@@ -451,9 +599,10 @@ function renderInstanceCard(inst) {
   dot.setAttribute('aria-hidden', 'true');
   const labelWrap = el('div', 'flex flex-col min-w-0');
   const labelEl = el('div', 'font-semibold truncate');
-  labelEl.textContent = inst.label;
+  labelEl.textContent = displayName;
   const idEl = el('div', 'text-xs text-gray-500');
-  idEl.textContent = '#' + inst.id + ' · ' + (inst.name || '');
+  idEl.textContent = '#' + inst.id + ' · ' + (inst.label || '');
+  if (inst.name && inst.name !== displayName) idEl.title = 'Имя в конфигурации: ' + inst.name;
   labelWrap.appendChild(labelEl);
   labelWrap.appendChild(idEl);
   left.appendChild(dot);
@@ -473,6 +622,12 @@ function renderInstanceCard(inst) {
   transportBadge.innerHTML = icon('wifi', 12) + '<span>' + (inst.transport || '-') + '</span>';
   badges.appendChild(carrierBadge);
   badges.appendChild(transportBadge);
+  if (context.subscription) {
+    const subscriptionBadge = el('span', 'badge');
+    subscriptionBadge.textContent = context.subscription.name;
+    if (context.color) subscriptionBadge.style.borderColor = context.color.border;
+    badges.appendChild(subscriptionBadge);
+  }
   if (inst.carrier === 'jitsi') {
     const bridgeBadge = el('span', 'badge');
     bridgeBadge.innerHTML = icon('sliders-horizontal', 12) + '<span>bridge: ' + (inst.jitsi_bridge_mode || 'auto') + '</span>';
@@ -517,7 +672,7 @@ function renderInstanceCard(inst) {
   uriBtn.setAttribute('aria-label', 'Копировать URI');
   uriBtn.innerHTML = icon('copy') + '<span>URI</span>';
   uriBtn.onclick = () => {
-    navigator.clipboard.writeText(inst.uri);
+    navigator.clipboard.writeText(displayURI);
     showToast('URI скопирован');
   };
   const qrBtn = el('button', 'btn btn-secondary btn-sm');
@@ -527,7 +682,7 @@ function renderInstanceCard(inst) {
     await withLoading(qrBtn, async () => {
       try {
         const res = await api('/instances/' + inst.id + '/qr');
-        showQRModal(res.uri || inst.uri, inst);
+        showQRModal(withInstanceName(res.uri || inst.uri, displayName), { ...inst, name: displayName });
       } catch (e) {
         showToast('Ошибка QR: ' + e.message, 'error');
       }
@@ -2370,13 +2525,15 @@ async function showManageSubInstancesModal(sub, instances) {
 
   list.innerHTML = '';
   const choices = [];
+  const subscriptionPart = cleanInstanceNamePart(sub.name) || 'subscription';
   if (!instances || instances.length === 0) {
     list.appendChild(el('div', 'text-gray-400 text-sm', 'В Admin UI пока нет инстансов.'));
   }
   (instances || []).forEach(inst => {
     const linkedEntries = linkedBySource.get(String(inst.id)) || [];
     const initiallyLinked = linkedEntries.length > 0;
-    const rawURI = inst.subscription_uri || inst.uri || '';
+    const baseName = (cleanInstanceNamePart(inst.carrier || 'olcrtc').toLowerCase() || 'olcrtc') + '_' + subscriptionPart;
+    const rawURI = withInstanceName(inst.subscription_uri || inst.uri || '', baseName);
     const row = el('label', 'radio-row card');
     const checkbox = el('input', '');
     checkbox.type = 'checkbox';

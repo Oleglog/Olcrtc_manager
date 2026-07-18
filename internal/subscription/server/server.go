@@ -34,6 +34,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 	"github.com/openlibrecommunity/olcrtc/internal/subscription/mirror"
@@ -199,7 +200,7 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	uris, err := s.store.InstanceURIs(slug)
+	uris, err := s.namedSubscriptionURIs(slug)
 	if errors.Is(err, store.ErrNotFound) {
 		http.Error(w, "Not Found", http.StatusNotFound)
 		return
@@ -633,7 +634,7 @@ func (s *Server) syncMirror(ctx context.Context, slug string) (*model.Mirror, er
 	if err != nil {
 		return nil, err
 	}
-	uris, err := s.store.InstanceURIs(slug)
+	uris, err := s.namedSubscriptionURIs(slug)
 	if err != nil {
 		return nil, err
 	}
@@ -660,6 +661,81 @@ func (s *Server) syncMirror(ctx context.Context, slug string) (*model.Mirror, er
 		return nil, err
 	}
 	return stored, nil
+}
+
+func (s *Server) namedSubscriptionURIs(slug string) ([]string, error) {
+	subscription, err := s.store.GetSubscriptionBySlug(slug)
+	if err != nil {
+		return nil, err
+	}
+	uris, err := s.store.InstanceURIs(slug)
+	if err != nil {
+		return nil, err
+	}
+	return nameSubscriptionURIs(subscription.Name, uris), nil
+}
+
+func nameSubscriptionURIs(subscriptionName string, uris []string) []string {
+	providers := make([]string, len(uris))
+	totals := make(map[string]int)
+	for i, raw := range uris {
+		providers[i] = uriProvider(raw)
+		totals[providers[i]]++
+	}
+
+	subscriptionPart := cleanInstanceNamePart(subscriptionName)
+	if subscriptionPart == "" {
+		subscriptionPart = "subscription"
+	}
+	seen := make(map[string]int)
+	result := make([]string, len(uris))
+	for i, raw := range uris {
+		provider := providers[i]
+		seen[provider]++
+		name := provider + "_" + subscriptionPart
+		if totals[provider] > 1 {
+			name += "_" + strconv.Itoa(seen[provider])
+		}
+		result[i] = withURIFragment(raw, name)
+	}
+	return result
+}
+
+func uriProvider(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil || !strings.EqualFold(parsed.Scheme, "olcrtc") || parsed.User == nil {
+		return "olcrtc"
+	}
+	provider := cleanInstanceNamePart(strings.ToLower(parsed.User.Username()))
+	if provider == "" {
+		return "olcrtc"
+	}
+	return provider
+}
+
+func cleanInstanceNamePart(value string) string {
+	var result strings.Builder
+	separator := false
+	for _, r := range strings.TrimSpace(value) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			result.WriteRune(r)
+			separator = false
+		} else if result.Len() > 0 && !separator {
+			result.WriteByte('_')
+			separator = true
+		}
+	}
+	return strings.Trim(result.String(), "_")
+}
+
+func withURIFragment(raw, fragment string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil || !strings.EqualFold(parsed.Scheme, "olcrtc") {
+		return raw
+	}
+	parsed.Fragment = fragment
+	parsed.RawFragment = ""
+	return parsed.String()
 }
 
 func reqContext(r *http.Request) context.Context {

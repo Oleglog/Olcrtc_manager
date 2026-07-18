@@ -96,6 +96,7 @@ func TestPublicSubscriptionDisablesCachesAndReturnsCurrentProfiles(t *testing.T)
 	}
 	profiles := []string{
 		"olcrtc://wbstream@r/room-one?k=one&c=client-one",
+		"olcrtc://wbstream@r/room-two?k=two&c=client-two#old-name",
 		"olcrtc://telemost@r/room-two?k=two&c=client-two",
 	}
 	for _, profile := range profiles {
@@ -113,8 +114,30 @@ func TestPublicSubscriptionDisablesCachesAndReturnsCurrentProfiles(t *testing.T)
 	if got := recorder.Header().Get("Cache-Control"); got != "no-store, max-age=0" {
 		t.Fatalf("Cache-Control = %q", got)
 	}
-	if got := recorder.Body.String(); got != strings.Join(profiles, "\n")+"\n" {
+	want := []string{
+		"olcrtc://wbstream@r/room-one?k=one&c=client-one#wbstream_Example_1",
+		"olcrtc://wbstream@r/room-two?k=two&c=client-two#wbstream_Example_2",
+		"olcrtc://telemost@r/room-two?k=two&c=client-two#telemost_Example",
+	}
+	if got := recorder.Body.String(); got != strings.Join(want, "\n")+"\n" {
 		t.Fatalf("subscription body = %q", got)
+	}
+}
+
+func TestNameSubscriptionURIsSanitizesNameAndKeepsInvalidEntries(t *testing.T) {
+	profiles := []string{
+		"olcrtc://wbstream@r/room?k=one#old",
+		"not-a-uri",
+	}
+	want := []string{
+		"olcrtc://wbstream@r/room?k=one#wbstream_%D0%9C%D0%BE%D1%8F_%D1%81%D0%B5%D0%BC%D1%8C%D1%8F",
+		"not-a-uri",
+	}
+	got := nameSubscriptionURIs(" Моя семья! ", profiles)
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("named URI %d = %q, want %q", i, got[i], want[i])
+		}
 	}
 }
 

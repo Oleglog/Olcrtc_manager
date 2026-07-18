@@ -125,6 +125,37 @@ body {
   box-shadow: 0 4px 12px rgba(0,0,0,0.3);
 }
 
+.instance-group {
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--rounded-md);
+  padding: var(--spacing-md);
+}
+
+.instance-group-subscription {
+  background: var(--instance-group-bg);
+  border-color: var(--instance-group-border);
+}
+
+.instance-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-md);
+}
+
+.instance-group-marker {
+  width: 8px;
+  height: 28px;
+  flex: 0 0 auto;
+  border-radius: 4px;
+  background: var(--instance-group-accent);
+}
+
+.instance-group-subscription .instance-card {
+  border-left: 3px solid var(--instance-group-accent);
+}
+
 .section-title {
   font-size: 13px;
   font-weight: 500;
