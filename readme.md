@@ -49,6 +49,18 @@ https://<VPS-IP>:8443
 
 При первом входе смени пароль. Сертификат по умолчанию самоподписанный, браузер попросит подтвердить переход.
 
+Полное удаление (сервис, бинарники, конфигурация, ключи, инстансы, подписки):
+
+```bash
+sudo bash server-install/olcrtc-uninstall.sh
+```
+
+Или через curl:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/master/server-install/olcrtc-uninstall.sh | sudo bash
+```
+
 ## Что есть в этом форке
 
 - Web Admin UI для инстансов, carrier, transport, WARP, SOCKS, подписок и обновлений.
