@@ -182,7 +182,6 @@ func (c *Client) bringUpLink(
 		Engine:    cfg.Engine,
 		URL:       cfg.URL,
 		Token:     cfg.Token,
-		AuthToken: cfg.AuthToken,
 		ChannelID: cfg.ChannelID,
 		DeviceID:  c.deviceID,
 		Name:      names.Generate(),

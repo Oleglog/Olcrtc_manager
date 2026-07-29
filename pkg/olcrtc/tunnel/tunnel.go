@@ -127,7 +127,6 @@ func (s *Server) Run(ctx context.Context) error {
 		Engine:           s.cfg.Engine,
 		URL:              s.cfg.URL,
 		Token:            s.cfg.Token,
-		AuthToken:        s.cfg.AuthToken,
 		KeyHex:           s.cfg.KeyHex,
 		DNSServer:        s.cfg.DNSServer,
 		SOCKSProxyAddr:   s.cfg.SOCKSProxyAddr,

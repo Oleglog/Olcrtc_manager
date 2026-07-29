@@ -186,7 +186,6 @@ func New(ctx context.Context, cfg transport.Config) (transport.Transport, error)
 		Engine:    cfg.Engine,
 		URL:       cfg.URL,
 		Token:     cfg.Token,
-		AuthToken: cfg.AuthToken,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("open engine session: %w", err)
