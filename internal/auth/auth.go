@@ -45,9 +45,6 @@ type Config struct {
 	RoomURL string
 	// Name is the display name to register with.
 	Name string
-	// Token is an optional provider-specific account/access token. For wbstream,
-	// it skips anonymous guest registration and joins as that account.
-	Token string
 	// DNSServer / ProxyAddr / ProxyPort are network knobs for outbound HTTP.
 	DNSServer string
 	ProxyAddr string

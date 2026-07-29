@@ -180,7 +180,6 @@ type Config struct {
 	Mode                      string
 	Transport                 string
 	Auth                      string
-	AuthToken                 string
 	Engine                    string
 	URL                       string
 	Token                     string
@@ -731,7 +730,6 @@ func runOnce(
 			Engine:           cfg.Engine,
 			URL:              cfg.URL,
 			Token:            cfg.Token,
-			AuthToken:        cfg.AuthToken,
 			Liveness:         liveness,
 			Traffic:          traffic,
 			OnSessionOpen: func(sessionID, deviceID string, claims map[string]any) {
@@ -764,7 +762,6 @@ func runOnce(
 			Engine:           cfg.Engine,
 			URL:              cfg.URL,
 			Token:            cfg.Token,
-			AuthToken:        cfg.AuthToken,
 			Liveness:         liveness,
 			Traffic:          traffic,
 		}); err != nil {

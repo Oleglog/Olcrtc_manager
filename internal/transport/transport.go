@@ -102,7 +102,6 @@ type Config struct {
 	Engine     string
 	URL        string
 	Token      string
-	AuthToken  string
 	ChannelID  string
 	DeviceID   string
 	Name       string

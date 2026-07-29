@@ -44,7 +44,6 @@ type Config struct {
 	Engine    string
 	URL       string
 	Token     string
-	AuthToken string
 }
 
 // Factory creates an engine session for a given carrier.
@@ -116,7 +115,6 @@ func registerEngineAuth(name string, provider auth.Provider) {
 		authCfg := auth.Config{
 			RoomURL:   cfg.RoomURL,
 			Name:      cfg.Name,
-			Token:     cfg.AuthToken,
 			DNSServer: cfg.DNSServer,
 			ProxyAddr: cfg.ProxyAddr,
 			ProxyPort: cfg.ProxyPort,
