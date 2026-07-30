@@ -320,7 +320,7 @@ func (s *Server) handleSubOpen(w http.ResponseWriter, r *http.Request) {
 		Host:     "subscription",
 		RawQuery: url.Values{"url": {source.String()}, "name": {subscription.Name}}.Encode(),
 	}
-	openSubscriptionLink(w, deepLink.String())
+	OpenSubscriptionLink(w, deepLink.String())
 }
 
 // ── Management handlers ─────────────────────────────────────────────────────
