@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -178,16 +179,25 @@ func TestPublicSubscriptionOpenServesClientDeepLink(t *testing.T) {
 		t.Fatalf("Content-Type = %q, want text/html", ct)
 	}
 	body := recorder.Body.String()
+	// The subscription source URL is carried URL-encoded inside the deep link
+	// query (url.Values.Encode), so assert the encoded form plus the deep-link
+	// scheme rather than the plain URL, which never appears verbatim.
+	encodedSource := url.QueryEscape("https://myolcrtc.mooo.com/sub/example")
 	if !strings.Contains(body, "olcrtc://subscription?") {
 		t.Fatalf("body does not embed olcrtc deep link: %q", body)
 	}
-	if !strings.Contains(body, "https://myolcrtc.mooo.com/sub/example") {
-		t.Fatalf("body does not embed subscription source URL")
+	if !strings.Contains(body, "url="+encodedSource) {
+		t.Fatalf("body does not embed encoded subscription source URL")
 	}
 	if !strings.Contains(body, "Example subscription") {
 		t.Fatalf("body does not embed subscription name")
 	}
 	if !strings.Contains(body, "Открыть в приложении") {
 		t.Fatalf("body does not contain the open button")
+	}
+	// Both __LINK__ placeholders must be filled (href + JS); a leftover
+	// placeholder means the auto-open script would set link to the literal.
+	if strings.Contains(body, "__LINK__") {
+		t.Fatalf("body still contains unfilled __LINK__ placeholder: %q", body)
 	}
 }

@@ -3,6 +3,7 @@ package admin
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -24,17 +25,23 @@ func TestPublicSubscriptionOpenServesClientDeepLink(t *testing.T) {
 		t.Fatalf("Content-Type = %q, want text/html", ct)
 	}
 	body := recorder.Body.String()
+	// The source URL is carried URL-encoded inside the deep link query, so
+	// assert the encoded form rather than the plain URL (never verbatim).
+	encodedSource := url.QueryEscape("https://myolcrtc.mooo.com/sub/example")
 	if !strings.Contains(body, "olcrtc://subscription?") {
 		t.Fatalf("body does not embed olcrtc deep link: %q", body)
 	}
-	if !strings.Contains(body, "https://myolcrtc.mooo.com/sub/example") {
-		t.Fatalf("body does not embed source URL")
+	if !strings.Contains(body, "url="+encodedSource) {
+		t.Fatalf("body does not embed encoded source URL")
 	}
 	if !strings.Contains(body, "name=Example") {
 		t.Fatalf("body does not embed name")
 	}
 	if !strings.Contains(body, "Открыть в приложении") {
 		t.Fatalf("body does not contain the open button")
+	}
+	if strings.Contains(body, "__LINK__") {
+		t.Fatalf("body still contains unfilled __LINK__ placeholder: %q", body)
 	}
 }
 

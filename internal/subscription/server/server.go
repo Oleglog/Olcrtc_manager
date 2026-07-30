@@ -237,22 +237,12 @@ func subscriptionOpenHTML(deepLink string) []byte {
 </script>
 </body>
 </html>`
-	// ponytail: __LINK__ placeholder keeps the URL out of the template literal so
-	// the deep link is never interpreted as a JS template/escape — inserted once.
-	page := strings.Replace(tpl, "__LINK__", templateJSString(deepLink), 1)
+	// ponytail: the deep link is built with url.Values.Encode(), so it carries
+	// only url-safe chars — no raw quotes/backslashes that could break the HTML
+	// attribute or the JS string. Insert it raw into both placeholders; no extra
+	// escaping is correct here, and a hand-rolled escaper would be overbuilding.
+	page := strings.ReplaceAll(tpl, "__LINK__", deepLink)
 	return []byte(page)
-}
-
-// templateJSString makes a string safe to drop into a single-quoted JS literal
-// embedded in the HTML body. The deep link is server-built and trusted, but we
-// neutralize quotes and the sequence "</" so an injected value can never break
-// out of the script/attribute context.
-func templateJSString(s string) string {
-	s = strings.ReplaceAll(s, "\\", "\\\\")
-	s = strings.ReplaceAll(s, "'", "\\'")
-	s = strings.ReplaceAll(s, "\"", "\\\"")
-	s = strings.ReplaceAll(s, "</", "<\\/")
-	return s
 }
 
 
