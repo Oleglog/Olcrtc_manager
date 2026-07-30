@@ -716,8 +716,8 @@ func (s *Server) buildInstance(id int) Instance {
 		Name:                    name,
 		Status:                  status,
 		Uptime:                  uptime,
-		URI:                     s.buildURIWith(vals, clientID, false),
-		SubscriptionURI:         s.buildURIWith(vals, clientID, true),
+		URI:                     s.buildURIWith(vals, clientID),
+		SubscriptionURI:         s.buildURIWith(vals, clientID),
 		SocksProxy:              vals["OLCRTC_SOCKS_PROXY"],
 		WarpProxy:               vals["OLCRTC_WARP_PROXY"],
 		DNS:                     vals["OLCRTC_DNS"],
@@ -740,17 +740,17 @@ func (s *Server) buildURI(id int) string {
 	envPath := InstanceEnvPath(s.cfg.ConfigDir, id)
 	vals := ReadInstanceEnv(envPath)
 	clientID := s.ensureClientID(envPath, vals["OLCRTC_CLIENT_ID"])
-	return s.buildURIWith(vals, clientID, false)
+	return s.buildURIWith(vals, clientID)
 }
 
 func (s *Server) buildURIForQR(id int) string {
 	envPath := InstanceEnvPath(s.cfg.ConfigDir, id)
 	vals := ReadInstanceEnv(envPath)
 	clientID := s.ensureClientID(envPath, vals["OLCRTC_CLIENT_ID"])
-	return s.buildCompactURIWith(vals, clientID, true)
+	return s.buildCompactURIWith(vals, clientID)
 }
 
-func (s *Server) buildCompactURIWith(vals map[string]string, clientID string, includeAuthToken bool) string {
+func (s *Server) buildCompactURIWith(vals map[string]string, clientID string) string {
 	carrier := vals["OLCRTC_CARRIER"]
 	if carrier == "" {
 		carrier = vals["OLCRTC_PROVIDER"]
@@ -780,11 +780,6 @@ func (s *Server) buildCompactURIWith(vals map[string]string, clientID string, in
 	if clientID != "" {
 		uri += "&c=" + url.QueryEscape(clientID)
 	}
-	if includeAuthToken && carrier == "wbstream" {
-		if authToken := strings.TrimSpace(vals["OLCRTC_AUTH_TOKEN"]); authToken != "" {
-			uri += "&a=" + url.QueryEscape(authToken)
-		}
-	}
 	if dns := strings.TrimSpace(vals["OLCRTC_DNS"]); dns != "" && dns != "77.88.8.8:53" {
 		uri += "&d=" + url.QueryEscape(dns)
 	}
@@ -794,7 +789,7 @@ func (s *Server) buildCompactURIWith(vals map[string]string, clientID string, in
 
 // buildURIWith renders the deep-link URI from a pre-loaded env map. It is
 // extracted so buildInstance does not have to read the env file twice.
-func (s *Server) buildURIWith(vals map[string]string, clientID string, includeAuthToken bool) string {
+func (s *Server) buildURIWith(vals map[string]string, clientID string) string {
 	carrier := vals["OLCRTC_CARRIER"]
 	if carrier == "" {
 		carrier = vals["OLCRTC_PROVIDER"]
@@ -823,11 +818,6 @@ func (s *Server) buildURIWith(vals map[string]string, clientID string, includeAu
 	}
 	if clientID != "" {
 		uri += "&client_id=" + url.QueryEscape(clientID)
-	}
-	if includeAuthToken && carrier == "wbstream" {
-		if authToken := strings.TrimSpace(vals["OLCRTC_AUTH_TOKEN"]); authToken != "" {
-			uri += "&auth_token=" + url.QueryEscape(authToken)
-		}
 	}
 	uri += "#" + name
 	return uri

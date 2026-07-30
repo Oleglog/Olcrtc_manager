@@ -682,7 +682,7 @@ func (s *Server) applyWBAccountToken(token string) (*wbTokenApplyResult, error) 
 		}
 		vals["OLCRTC_AUTH_TOKEN"] = token
 		clientID := s.ensureClientID(envPath, vals["OLCRTC_CLIENT_ID"])
-		linkedURIs[id] = s.buildURIWith(vals, clientID, true)
+		linkedURIs[id] = s.buildURIWith(vals, clientID)
 		result.UpdatedInstances = append(result.UpdatedInstances, id)
 		if status, _ := SystemctlStatusInfo(InstanceService(id)); status != nil && status.State == "running" {
 			running = append(running, id)

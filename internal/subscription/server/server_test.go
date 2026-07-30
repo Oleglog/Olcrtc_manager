@@ -141,6 +141,23 @@ func TestNameSubscriptionURIsSanitizesNameAndKeepsInvalidEntries(t *testing.T) {
 	}
 }
 
+func TestStripAuthTokenParams(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"olcrtc://wbstream@r/room?k=one&a=secret#main", "olcrtc://wbstream@r/room?k=one#main"},
+		{"olcrtc://wbstream@room/r?key=x&auth_token=y#frag", "olcrtc://wbstream@room/r?key=x#frag"},
+		{"olcrtc://wbstream@r/r?auth.token=z&k=one", "olcrtc://wbstream@r/r?k=one"},
+		{"olcrtc://wbstream@r/r?a=only", "olcrtc://wbstream@r/r"},
+		{"olcrtc://wbstream@r/r?k=one", "olcrtc://wbstream@r/r?k=one"},
+		{"olcrtc://wbstream@r/r#frag", "olcrtc://wbstream@r/r#frag"},
+		{"olcrtc://wbstream@r/r?k=one&auth_token=t&a=x&c=cli", "olcrtc://wbstream@r/r?k=one&c=cli"},
+	}
+	for _, tt := range tests {
+		if got := stripAuthTokenParams(tt.in); got != tt.want {
+			t.Errorf("stripAuthTokenParams(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
 func TestPublicSubscriptionOpenRedirectsToAndroidClient(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "subscriptions.db"))
 	if err != nil {

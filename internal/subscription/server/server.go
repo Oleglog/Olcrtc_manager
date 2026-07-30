@@ -696,7 +696,7 @@ func nameSubscriptionURIs(subscriptionName string, uris []string) []string {
 		if totals[provider] > 1 {
 			name += "_" + strconv.Itoa(seen[provider])
 		}
-		result[i] = withURIFragment(raw, name)
+		result[i] = withURIFragment(stripAuthTokenParams(raw), name)
 	}
 	return result
 }
@@ -736,6 +736,38 @@ func withURIFragment(raw, fragment string) string {
 	parsed.Fragment = fragment
 	parsed.RawFragment = ""
 	return parsed.String()
+}
+
+// stripAuthTokenParams drops the wbstream auth-token query parameters
+// (auth_token / auth.token / a) from an olcrtc:// URI. The token must never
+// reach the Android client — it rejects unknown parameters, and the token is
+// only for the server's own room join. This also cleans URIs that were
+// persisted in the store before the token was removed from published links.
+func stripAuthTokenParams(raw string) string {
+	q := strings.IndexByte(raw, '?')
+	if q < 0 {
+		return raw
+	}
+	head, query := raw[:q], raw[q+1:]
+	fragment := ""
+	if h := strings.IndexByte(query, '#'); h >= 0 {
+		query, fragment = query[:h], query[h:]
+	}
+	kept := make([]string, 0, 4)
+	for _, pair := range strings.Split(query, "&") {
+		key := pair
+		if eq := strings.IndexByte(pair, '='); eq >= 0 {
+			key = pair[:eq]
+		}
+		if key == "auth_token" || key == "auth.token" || key == "a" {
+			continue
+		}
+		kept = append(kept, pair)
+	}
+	if len(kept) == 0 {
+		return head + fragment
+	}
+	return head + "?" + strings.Join(kept, "&") + fragment
 }
 
 func reqContext(r *http.Request) context.Context {
