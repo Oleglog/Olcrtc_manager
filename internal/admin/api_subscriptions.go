@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	subserver "github.com/openlibrecommunity/olcrtc/internal/subscription/server"
 )
 
 func (s *Server) handleSubs(w http.ResponseWriter, r *http.Request) {
@@ -59,8 +61,7 @@ func (s *Server) handlePublicSubOpen(w http.ResponseWriter, r *http.Request) {
 		query.Set("name", name)
 	}
 	deepLink := url.URL{Scheme: "olcrtc", Host: "subscription", RawQuery: query.Encode()}
-	w.Header().Set("Cache-Control", "no-store, max-age=0")
-	http.Redirect(w, r, deepLink.String(), http.StatusFound)
+	subserver.OpenSubscriptionLink(w, deepLink.String())
 }
 
 func (s *Server) proxySubRequestInternal(w http.ResponseWriter, r *http.Request, target string) {

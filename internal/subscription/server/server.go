@@ -183,7 +183,79 @@ func (s *Server) localhostOnly(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// ── Public handler ──────────────────────────────────────────────────────────
+// openSubscriptionLink serves an HTML interstitial that hands the olcrtc://
+// deep link to the Android client. Browsers cannot follow a 302 to a custom
+// scheme (no handler / blocked without user gesture), so instead of a bare
+// redirect we render a page that auto-tries the link and offers a button — a
+// real user gesture that lets the client's BROWSABLE intent filter fire.
+// OpenSubscriptionLink writes the HTML interstitial that hands the olcrtc://
+// deep link to the Android client. Browsers cannot follow a 302 to a custom
+// scheme (no handler / blocked without user gesture), so instead of a bare
+// redirect we render a page that auto-tries the link and offers a button — a
+// real user gesture that lets the client's BROWSABLE intent filter fire.
+// Exported so the admin public /open handler and this server share one path.
+func OpenSubscriptionLink(w http.ResponseWriter, deepLink string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store, max-age=0")
+	body := subscriptionOpenHTML(deepLink)
+	_, _ = w.Write(body)
+}
+
+func subscriptionOpenHTML(deepLink string) []byte {
+	const tpl = `<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Открыть в olcRTC</title>
+<style>
+  html,body{margin:0;height:100%;background:#0e1113;color:#dce5ea;
+    font:16px/1.5 -apple-system,Segoe UI,Roboto,Arial,sans-serif}
+  .wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;
+    min-height:100%;padding:24px;text-align:center}
+  .box{max-width:420px}
+  h1{font-size:20px;margin:0 0 12px}
+  p{color:#aeb9c0;margin:0 0 24px}
+  .btn{display:inline-block;width:100%;max-width:320px;padding:16px 24px;
+    background:#3c485f;color:#fff;text-decoration:none;border-radius:12px;
+    font-size:17px;font-weight:600;box-sizing:border-box}
+  .hint{margin-top:18px;font-size:13px;color:#7d8890}
+</style>
+</head>
+<body>
+<div class="wrap"><div class="box">
+  <h1>Открыть подписку в olcRTC</h1>
+  <p>Нажмите кнопку ниже. Если приложение не установлено — скачайте его и попробуйте снова.</p>
+  <a class="btn" href="__LINK__">Открыть в приложении</a>
+  <p class="hint">Если ничего не произошло — откройте ссылку из этого браузера в olcRTC вручную.</p>
+</div></div>
+<script>
+(function(){
+  var link="__LINK__";
+  try{window.location.replace(link);}catch(e){}
+})();
+</script>
+</body>
+</html>`
+	// ponytail: __LINK__ placeholder keeps the URL out of the template literal so
+	// the deep link is never interpreted as a JS template/escape — inserted once.
+	page := strings.Replace(tpl, "__LINK__", templateJSString(deepLink), 1)
+	return []byte(page)
+}
+
+// templateJSString makes a string safe to drop into a single-quoted JS literal
+// embedded in the HTML body. The deep link is server-built and trusted, but we
+// neutralize quotes and the sequence "</" so an injected value can never break
+// out of the script/attribute context.
+func templateJSString(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "'", "\\'")
+	s = strings.ReplaceAll(s, "\"", "\\\"")
+	s = strings.ReplaceAll(s, "</", "<\\/")
+	return s
+}
+
+
 
 func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 	if strings.HasSuffix(strings.TrimSuffix(r.URL.Path, "/"), "/open") {
@@ -248,8 +320,7 @@ func (s *Server) handleSubOpen(w http.ResponseWriter, r *http.Request) {
 		Host:     "subscription",
 		RawQuery: url.Values{"url": {source.String()}, "name": {subscription.Name}}.Encode(),
 	}
-	w.Header().Set("Cache-Control", "no-store, max-age=0")
-	http.Redirect(w, r, deepLink.String(), http.StatusFound)
+	openSubscriptionLink(w, deepLink.String())
 }
 
 // ── Management handlers ─────────────────────────────────────────────────────

@@ -3,11 +3,11 @@ package admin
 import (
 	"net/http"
 	"net/http/httptest"
-	"net/url"
+	"strings"
 	"testing"
 )
 
-func TestPublicSubscriptionOpenRedirectsToClient(t *testing.T) {
+func TestPublicSubscriptionOpenServesClientDeepLink(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(
 		http.MethodGet,
@@ -17,21 +17,24 @@ func TestPublicSubscriptionOpenRedirectsToClient(t *testing.T) {
 
 	(&Server{}).handlePublicSub(recorder, request)
 
-	if recorder.Code != http.StatusFound {
+	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
-	location, err := url.Parse(recorder.Header().Get("Location"))
-	if err != nil {
-		t.Fatal(err)
+	if ct := recorder.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Fatalf("Content-Type = %q, want text/html", ct)
 	}
-	if location.Scheme != "olcrtc" || location.Host != "subscription" {
-		t.Fatalf("location = %q", location.String())
+	body := recorder.Body.String()
+	if !strings.Contains(body, "olcrtc://subscription?") {
+		t.Fatalf("body does not embed olcrtc deep link: %q", body)
 	}
-	if got := location.Query().Get("url"); got != "https://myolcrtc.mooo.com/sub/example" {
-		t.Fatalf("source URL = %q", got)
+	if !strings.Contains(body, "https://myolcrtc.mooo.com/sub/example") {
+		t.Fatalf("body does not embed source URL")
 	}
-	if got := location.Query().Get("name"); got != "Example" {
-		t.Fatalf("name = %q", got)
+	if !strings.Contains(body, "name=Example") {
+		t.Fatalf("body does not embed name")
+	}
+	if !strings.Contains(body, "Открыть в приложении") {
+		t.Fatalf("body does not contain the open button")
 	}
 }
 
