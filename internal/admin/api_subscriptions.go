@@ -39,6 +39,10 @@ func (s *Server) handlePublicSub(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) proxySubRequestInternal(w http.ResponseWriter, r *http.Request, target string) {
+	if s.subscriptions == nil || !s.subscriptions.enabled() {
+		s.writeSubscriptionUnavailable(w)
+		return
+	}
 	body, _ := io.ReadAll(r.Body)
 	defer r.Body.Close()
 
