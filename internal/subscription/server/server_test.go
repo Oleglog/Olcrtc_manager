@@ -189,8 +189,8 @@ func TestPublicSubscriptionOpenServesClientDeepLink(t *testing.T) {
 	if !strings.Contains(body, "url="+encodedSource) {
 		t.Fatalf("body does not embed encoded subscription source URL")
 	}
-	if !strings.Contains(body, "Example subscription") {
-		t.Fatalf("body does not embed subscription name")
+	if !strings.Contains(body, "name="+url.QueryEscape("Example subscription")) {
+		t.Fatalf("body does not embed encoded subscription name")
 	}
 	if !strings.Contains(body, "Открыть в приложении") {
 		t.Fatalf("body does not contain the open button")
