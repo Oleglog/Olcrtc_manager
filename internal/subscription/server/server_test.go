@@ -201,3 +201,38 @@ func TestPublicSubscriptionOpenServesClientDeepLink(t *testing.T) {
 		t.Fatalf("body still contains unfilled __LINK__ placeholder: %q", body)
 	}
 }
+
+func TestPublicSubscriptionOpenEmbedsYandexMirror(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "subscriptions.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+	if _, err := st.CreateSubscription("example", "Example subscription"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertMirror("example", "yandex_disk",
+		"https://disk.yandex.ru/d/example", "mirror-key-43chars__________________"); err != nil {
+		t.Fatal(err)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "https://myolcrtc.mooo.com/sub/example/open", nil)
+	recorder := httptest.NewRecorder()
+	New(st, 0, "").handleSub(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	body := recorder.Body.String()
+	// The /open deep link must carry the Yandex mirror so the client can reach
+	// the subscription even when the primary server is down or allow-listed.
+	if !strings.Contains(body, "mirror_type=yandex_disk") {
+		t.Fatalf("body does not embed mirror_type: %q", body)
+	}
+	if !strings.Contains(body, "mirror_url="+url.QueryEscape("https://disk.yandex.ru/d/example")) {
+		t.Fatalf("body does not embed encoded mirror_url: %q", body)
+	}
+	if !strings.Contains(body, "mirror_key=mirror-key-43chars__________________") {
+		t.Fatalf("body does not embed mirror_key: %q", body)
+	}
+}

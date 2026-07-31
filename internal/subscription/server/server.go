@@ -305,10 +305,24 @@ func (s *Server) handleSubOpen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	source := url.URL{Scheme: "https", Host: r.Host, Path: sourcePath}
+	query := url.Values{"url": {source.String()}, "name": {subscription.Name}}
+	// Embed the Yandex mirror so an /open import is self-sufficient: even if
+	// the primary server is later down or blocked, the client can still pull
+	// the subscription from Disk using the mirror carried in the deep link.
+	if m, mErr := s.store.GetMirror(slug); mErr == nil && m != nil &&
+		strings.TrimSpace(m.URL) != "" && strings.TrimSpace(m.Key) != "" {
+		typ := strings.TrimSpace(m.Type)
+		if typ == "" {
+			typ = "yandex_disk"
+		}
+		query.Set("mirror_type", typ)
+		query.Set("mirror_url", m.URL)
+		query.Set("mirror_key", m.Key)
+	}
 	deepLink := url.URL{
 		Scheme:   "olcrtc",
 		Host:     "subscription",
-		RawQuery: url.Values{"url": {source.String()}, "name": {subscription.Name}}.Encode(),
+		RawQuery: query.Encode(),
 	}
 	OpenSubscriptionLink(w, deepLink.String())
 }

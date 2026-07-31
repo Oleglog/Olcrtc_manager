@@ -3,12 +3,18 @@ package admin
 import (
 	"net/http"
 	"net/http/httptest"
-	"net/url"
-	"strings"
 	"testing"
 )
 
-func TestPublicSubscriptionOpenServesClientDeepLink(t *testing.T) {
+// After 1.9.69 the admin public /sub/{slug}/open no longer renders the
+// deep-link interstitial itself — it proxies the embedded subscription
+// server, which owns the HTML interstitial (with mirror params) so there is
+// one /open path server-wide. With no subscription backend started, the
+// proxy returns 503 (writeSubscriptionUnavailable). This assert just guards
+// that the /open path is proxied rather than handled inline, i.e. the
+// deprecated admin-side render is gone.
+
+func TestPublicSubOpenProxiedToSubscriptionServer(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(
 		http.MethodGet,
@@ -18,40 +24,10 @@ func TestPublicSubscriptionOpenServesClientDeepLink(t *testing.T) {
 
 	(&Server{}).handlePublicSub(recorder, request)
 
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
-	}
-	if ct := recorder.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
-		t.Fatalf("Content-Type = %q, want text/html", ct)
-	}
-	body := recorder.Body.String()
-	// The source URL is carried URL-encoded inside the deep link query, so
-	// assert the encoded form rather than the plain URL (never verbatim).
-	encodedSource := url.QueryEscape("https://myolcrtc.mooo.com/sub/example")
-	if !strings.Contains(body, "olcrtc://subscription?") {
-		t.Fatalf("body does not embed olcrtc deep link: %q", body)
-	}
-	if !strings.Contains(body, "url="+encodedSource) {
-		t.Fatalf("body does not embed encoded source URL")
-	}
-	if !strings.Contains(body, "name=Example") {
-		t.Fatalf("body does not embed name")
-	}
-	if !strings.Contains(body, "Открыть в приложении") {
-		t.Fatalf("body does not contain the open button")
-	}
-	if strings.Contains(body, "__LINK__") {
-		t.Fatalf("body still contains unfilled __LINK__ placeholder: %q", body)
-	}
-}
-
-func TestPublicSubscriptionOpenRejectsNestedSlug(t *testing.T) {
-	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "https://example.com/sub/a/b/open", nil)
-
-	(&Server{}).handlePublicSub(recorder, request)
-
-	if recorder.Code != http.StatusNotFound {
-		t.Fatalf("status = %d", recorder.Code)
+	// No backend running -> proxy reports the subscription service unavailable,
+	// not 200 with an inline-rendered page (the old behaviour we removed).
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, body = %s; want 503 (proxied, not inline-rendered)",
+			recorder.Code, recorder.Body.String())
 	}
 }

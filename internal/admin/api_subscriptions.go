@@ -6,11 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
-
-	subserver "github.com/openlibrecommunity/olcrtc/internal/subscription/server"
 )
 
 func (s *Server) handleSubs(w http.ResponseWriter, r *http.Request) {
@@ -31,37 +28,14 @@ func (s *Server) handleSubsSlug(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePublicSub(w http.ResponseWriter, r *http.Request) {
-	if strings.HasSuffix(strings.TrimSuffix(r.URL.Path, "/"), "/open") {
-		s.handlePublicSubOpen(w, r)
-		return
-	}
-	// Proxy /sub/{slug} to subscription server.
+	// Proxy /sub/{slug}[/open] to the embedded subscription server. It owns the
+	// /open deep-link rendering (HTML interstitial with mirror params), so we no
+	// longer reimplement the redirect here — one /open path server-wide.
 	target := r.URL.Path
 	if r.URL.RawQuery != "" {
 		target = target + "?" + r.URL.RawQuery
 	}
 	s.proxySubRequestInternal(w, r, target)
-}
-
-func (s *Server) handlePublicSubOpen(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	normalizedPath := strings.TrimSuffix(r.URL.Path, "/")
-	sourcePath := strings.TrimSuffix(normalizedPath, "/open")
-	slug := strings.TrimPrefix(sourcePath, "/sub/")
-	if sourcePath == normalizedPath || slug == "" || strings.Contains(slug, "/") || r.Host == "" {
-		http.NotFound(w, r)
-		return
-	}
-	source := url.URL{Scheme: "https", Host: r.Host, Path: sourcePath}
-	query := url.Values{"url": {source.String()}}
-	if name := strings.TrimSpace(r.URL.Query().Get("name")); name != "" && len(name) <= 120 {
-		query.Set("name", name)
-	}
-	deepLink := url.URL{Scheme: "olcrtc", Host: "subscription", RawQuery: query.Encode()}
-	subserver.OpenSubscriptionLink(w, deepLink.String())
 }
 
 func (s *Server) proxySubRequestInternal(w http.ResponseWriter, r *http.Request, target string) {
