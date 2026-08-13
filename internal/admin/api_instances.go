@@ -777,6 +777,7 @@ func (s *Server) buildCompactURIWith(vals map[string]string, clientID string) st
 			}
 		}
 	}
+	uri += "&core=legacy"
 	if clientID != "" {
 		uri += "&c=" + url.QueryEscape(clientID)
 	}
@@ -816,6 +817,7 @@ func (s *Server) buildURIWith(vals map[string]string, clientID string) string {
 			}
 		}
 	}
+	uri += "&core=legacy"
 	if clientID != "" {
 		uri += "&client_id=" + url.QueryEscape(clientID)
 	}

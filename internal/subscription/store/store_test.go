@@ -194,3 +194,49 @@ func hasColumn(t *testing.T, db *sql.DB, table, column string) bool {
 	}
 	return false
 }
+
+func TestEnsureCoreParam(t *testing.T) {
+	tests := []struct {
+		name string
+		uri  string
+		want string
+	}{
+		{
+			"adds core to bare uri",
+			"olcrtc://wbstream@r/room?k=abc&c=cli",
+			"olcrtc://wbstream@r/room?k=abc&c=cli&core=legacy",
+		},
+		{
+			"adds core before fragment",
+			"olcrtc://wbstream@r/room?k=abc&c=cli#room%20name",
+			"olcrtc://wbstream@r/room?k=abc&c=cli&core=legacy#room%20name",
+		},
+		{
+			"adds core when no query yet",
+			"olcrtc://jitsi@r/room#name",
+			"olcrtc://jitsi@r/room?core=legacy#name",
+		},
+		{
+			"preserves already-encoded values",
+			"olcrtc://wbstream@r/room?k=ab%20cd&c=cli",
+			"olcrtc://wbstream@r/room?k=ab%20cd&c=cli&core=legacy",
+		},
+		{
+			"does not duplicate existing core",
+			"olcrtc://wbstream@r/room?k=abc&core=current",
+			"olcrtc://wbstream@r/room?k=abc&core=current",
+		},
+		{
+			"preserves existing core with fragment",
+			"olcrtc://wbstream@r/room?core=legacy&c=cli#x",
+			"olcrtc://wbstream@r/room?core=legacy&c=cli#x",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ensureCoreParam(tt.uri); got != tt.want {
+				t.Errorf("ensureCoreParam(%q) = %q, want %q", tt.uri, got, tt.want)
+			}
+		})
+	}
+}

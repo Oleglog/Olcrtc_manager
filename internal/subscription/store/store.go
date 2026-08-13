@@ -218,6 +218,7 @@ func (s *Store) AddInstanceWithSource(slug, rawURI string, sourceInstanceID *int
 	if !strings.HasPrefix(rawURI, "olcrtc://") {
 		return nil, ErrInvalidURI
 	}
+	rawURI = ensureCoreParam(rawURI)
 
 	sub, err := s.GetSubscriptionBySlug(slug)
 	if err != nil {
@@ -561,4 +562,46 @@ func extractLabel(uri string) string {
 		return ""
 	}
 	return uri[idx+1:]
+}
+
+// ensureCoreParam appends core=legacy to an olcrtc:// URI when no core=
+// parameter is present, so manual URIs the operator pastes into a subscription
+// pick the manager wire format (32-byte VP8) without relying on the client
+// default. Linked URIs already carry core=legacy from the admin builders, and
+// existing core= values are preserved verbatim.
+//
+// ponytail: scissors-only string math, no net/url — url.URL.String()
+// percent-encodes the fragment a second time and re-sorts query pairs,
+// corrupting an already-encoded olcrtc:// URI. The scheme check goes through
+// the cheap prefix guard in AddInstanceWithSource, so here we only inspect the
+// query (between '?' and the first '#' after it).
+func ensureCoreParam(rawURI string) string {
+	quest := strings.IndexByte(rawURI, '?')
+	hash := strings.IndexByte(rawURI, '#')
+	if quest < 0 {
+		return appendCoreParam(rawURI, hash)
+	}
+	queryEnd := len(rawURI)
+	if hash > quest {
+		queryEnd = hash
+	}
+	query := rawURI[quest+1 : queryEnd]
+	for _, pair := range strings.Split(query, "&") {
+		key, _, _ := strings.Cut(pair, "=")
+		if key == "core" {
+			return rawURI
+		}
+	}
+	return appendCoreParam(rawURI, hash)
+}
+
+func appendCoreParam(rawURI string, hash int) string {
+	param := "&core=legacy"
+	if !strings.Contains(rawURI, "?") {
+		param = "?core=legacy"
+	}
+	if hash < 0 {
+		return rawURI + param
+	}
+	return rawURI[:hash] + param + rawURI[hash:]
 }
