@@ -268,3 +268,29 @@ WTFPL, как upstream olcRTC.
 ### Jitsi presets in Admin UI
 
 Admin UI includes a curated list of tested public Jitsi hosts such as `meet.jit.si`, `jitsi.hamburg.ccc.de`, `meet.ffmuc.net`, `meet.systemli.org`, `jitsi.debian.social`, `meet.opensuse.org` and others. Use the preset buttons when creating or editing a Jitsi instance. The check button fetches `/config.js` server-side and reports BOSH/WebSocket/Colibri hints. Colibri WS is still confirmed only at runtime after Jingle advertises a bridge URL, so use `bridge=auto` for normal operation and `bridge=colibri-ws` only for diagnostics.
+
+---
+
+<div align="center">
+
+## ❤️ Поддержать разработку
+
+olcRTC Manager — свободное ПО под лицензией WTFPL. Проект развивается в свободное время, без грантов и коммерческого заказчика. WebRTC-инженерия, стабилизация провайдеров (Jitsi, Telemost, WB Stream), новые транспорты и быстрые фиксы требуют реальных часов работы и тестов на реальном железе.
+
+Если проект приносит пользу — любая поддержка помогает тратить больше времени на разработку, а не на сторонние подработки. Средства идут на хостинг для тестов, обновление зависимостей и новые релизы.
+
+<br/>
+
+<a href="https://pay.cloudtips.ru/p/6e5e5a94">
+  <img src="https://img.shields.io/badge/♥-Поддержать_разработчика-FF4F8B?style=for-the-badge" alt="Поддержать разработчика — CloudTips" />
+</a>
+
+<br/>
+
+<a href="https://pay.cloudtips.ru/p/6e5e5a94">pay.cloudtips.ru/p/6e5e5a94</a>
+
+<br/>
+
+_Спасибо, что пользуетесь olcRTC и доверяете ему свой трафик. Звезда на GitHub ⭐ и репост — тоже поддержка._
+
+</div>
