@@ -54,6 +54,10 @@ func Open(dbPath string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if err := backfillCoreParam(db); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("backfill core param: %w", err)
+	}
 
 	return &Store{db: db}, nil
 }
@@ -604,4 +608,48 @@ func appendCoreParam(rawURI string, hash int) string {
 		return rawURI + param
 	}
 	return rawURI[:hash] + param + rawURI[hash:]
+}
+
+// backfillCoreParam migrates instances persisted before the manager pinned
+// core=legacy into every URI: it rewrites stored raw_uri values that lack a
+// core= parameter so the public /sub/{slug} feed, QR subscription and export
+// all carry core=legacy without re-adding the instance. Idempotent.
+//
+// ponytail: one pass over raw_uri; ensureCoreParam is a no-op once core=
+// is present, so re-running on already-migrated stores touches no rows.
+func backfillCoreParam(db *sql.DB) error {
+	rows, err := db.Query("SELECT id, raw_uri FROM instances")
+	if err != nil {
+		return fmt.Errorf("select instances for core backfill: %w", err)
+	}
+	var stale []struct {
+		id     int64
+		rawURI string
+	}
+	for rows.Next() {
+		var id int64
+		var rawURI string
+		if err := rows.Scan(&id, &rawURI); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan instance for core backfill: %w", err)
+		}
+		if fixed := ensureCoreParam(rawURI); fixed != rawURI {
+			stale = append(stale, struct {
+				id     int64
+				rawURI string
+			}{id, fixed})
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close core backfill cursor: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("read core backfill cursor: %w", err)
+	}
+	for _, s := range stale {
+		if _, err := db.Exec("UPDATE instances SET raw_uri = ? WHERE id = ?", s.rawURI, s.id); err != nil {
+			return fmt.Errorf("rewrite instance %d core param: %w", s.id, err)
+		}
+	}
+	return nil
 }

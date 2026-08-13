@@ -240,3 +240,91 @@ func TestEnsureCoreParam(t *testing.T) {
 		})
 	}
 }
+
+func TestBackfillCoreParamMigratesStaleInstances(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "subscriptions.db")
+	legacy, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = legacy.Exec(`
+CREATE TABLE subscriptions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    slug TEXT UNIQUE NOT NULL,
+    name TEXT NOT NULL,
+    created_at DATETIME NOT NULL
+);
+CREATE TABLE instances (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subscription_id INTEGER NOT NULL REFERENCES subscriptions(id) ON DELETE CASCADE,
+    source_instance_id INTEGER,
+    raw_uri TEXT NOT NULL,
+    label TEXT,
+    created_at DATETIME NOT NULL
+);`)
+	if err != nil {
+		_ = legacy.Close()
+		t.Fatal(err)
+	}
+	if _, err := legacy.Exec(`INSERT INTO subscriptions (slug, name, created_at) VALUES ('beta', 'beta', '2026-01-01')`); err != nil {
+		_ = legacy.Close()
+		t.Fatal(err)
+	}
+	staleURIs := []string{
+		"olcrtc://wbstream@r/room?k=one&c=cli",
+		"olcrtc://wbstream@r/room-two?k=two&c=cli#old-name",
+		"olcrtc://jitsi@r/room-three#bare-fragment",
+	}
+	for _, u := range staleURIs {
+		if _, err := legacy.Exec(`INSERT INTO instances (subscription_id, raw_uri, label, created_at) VALUES (1, ?, '', '2026-01-01')`, u); err != nil {
+			_ = legacy.Close()
+			t.Fatal(err)
+		}
+	}
+	// Already carries core=current: must be left untouched.
+	preserved := "olcrtc://wbstream@r/room-four?k=four&c=cli&core=current"
+	if _, err := legacy.Exec(`INSERT INTO instances (subscription_id, raw_uri, label, created_at) VALUES (1, ?, '', '2026-01-01')`, preserved); err != nil {
+		_ = legacy.Close()
+		t.Fatal(err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open() backfill error = %v", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	got, err := s.InstanceURIs("beta")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"olcrtc://wbstream@r/room?k=one&c=cli&core=legacy",
+		"olcrtc://wbstream@r/room-two?k=two&c=cli&core=legacy#old-name",
+		"olcrtc://jitsi@r/room-three?core=legacy#bare-fragment",
+		preserved,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("after backfill = %v, want %v", got, want)
+	}
+
+	// Reopening runs the backfill again over already-migrated rows: idempotent.
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s2, err := Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s2.Close() }()
+	got2, err := s2.InstanceURIs("beta")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got2, want) {
+		t.Fatalf("after reopen = %v, want %v", got2, want)
+	}
+}
