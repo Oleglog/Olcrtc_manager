@@ -115,9 +115,9 @@ func TestPublicSubscriptionDisablesCachesAndReturnsCurrentProfiles(t *testing.T)
 		t.Fatalf("Cache-Control = %q", got)
 	}
 	want := []string{
-		"olcrtc://wbstream@r/room-one?k=one&c=client-one#wbstream_Example_1",
-		"olcrtc://wbstream@r/room-two?k=two&c=client-two#wbstream_Example_2",
-		"olcrtc://telemost@r/room-two?k=two&c=client-two#telemost_Example",
+		"olcrtc://wbstream@r/room-one?k=one&c=client-one&core=legacy#wbstream_Example_1",
+		"olcrtc://wbstream@r/room-two?k=two&c=client-two&core=legacy#wbstream_Example_2",
+		"olcrtc://telemost@r/room-two?k=two&c=client-two&core=legacy#telemost_Example",
 	}
 	if got := recorder.Body.String(); got != strings.Join(want, "\n")+"\n" {
 		t.Fatalf("subscription body = %q", got)
