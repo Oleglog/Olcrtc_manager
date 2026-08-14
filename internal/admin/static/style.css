@@ -3,9 +3,9 @@
 /* ── Design Tokens ────────────────────────────────────────────────────────── */
 :root {
   /* Dark theme (default) */
-  --color-primary: #5f657a;
-  --color-primary-hover: #6f778d;
-  --color-primary-focus: #4a4f60;
+  --color-primary: #7c3aed;
+  --color-primary-hover: #8b5cf6;
+  --color-primary-focus: #5b21b6;
   --color-ink: #f7f8f8;
   --color-ink-muted: #d0d6e0;
   --color-ink-subtle: #8a8f98;
@@ -38,9 +38,9 @@
 
 /* Light theme */
 [data-theme="light"] {
-  --color-primary: #5f657a;
-  --color-primary-hover: #54596b;
-  --color-primary-focus: #4a4f60;
+  --color-primary: #7c3aed;
+  --color-primary-hover: #6d28d9;
+  --color-primary-focus: #5b21b6;
   --color-ink: #18191a;
   --color-ink-muted: #3e3e44;
   --color-ink-subtle: #62666d;
@@ -703,31 +703,4 @@ input:disabled, input[readonly] {
 .divider {
   border-top: 1px solid var(--color-hairline);
   margin: var(--spacing-md) 0;
-}
-
-/* ── Accent picker ─────────────────────────────────────────────────────── */
-.swatch-btn {
-  width: 28px;
-  height: 28px;
-  border-radius: var(--rounded-md);
-  border: 1px solid var(--color-hairline-strong);
-  cursor: pointer;
-  padding: 0;
-  transition: transform .12s ease, box-shadow .12s ease;
-}
-.swatch-btn:hover {
-  transform: scale(1.08);
-}
-.swatch-btn.active {
-  box-shadow: 0 0 0 2px var(--color-canvas), 0 0 0 4px var(--color-primary);
-}
-
-input[type="color"] {
-  width: 32px;
-  height: 32px;
-  border: 1px solid var(--color-hairline-strong);
-  border-radius: var(--rounded-md);
-  background: transparent;
-  padding: 0;
-  cursor: pointer;
 }

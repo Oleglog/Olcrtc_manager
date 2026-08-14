@@ -61,7 +61,6 @@ function getTheme() {
 function setTheme(theme) {
   localStorage.setItem('olcrtc_theme', theme);
   document.documentElement.setAttribute('data-theme', theme);
-  applyAccent();
 }
 
 function toggleTheme() {
@@ -69,103 +68,6 @@ function toggleTheme() {
   const next = current === 'dark' ? 'light' : 'dark';
   setTheme(next);
   return next;
-}
-
-// ── Accent color helper ───────────────────────────────────────────────────────
-// Neutral gray is the default; a user-picked accent (any color) is stored in
-// localStorage and applied as --color-primary* so every primary-colored UI
-// (buttons, links, sidebar highlight) follows it.
-const ACCENT_DEFAULTS = {
-  dark: { base: '#5f657a', hover: '#6f778d', focus: '#4a4f60' },
-  light: { base: '#5f657a', hover: '#54596b', focus: '#4a4f60' },
-};
-
-function getStoredAccent() {
-  return localStorage.getItem('olcrtc_accent'); // 'null' = default
-}
-
-function setStoredAccent(value) {
-  if (!value) localStorage.removeItem('olcrtc_accent');
-  else localStorage.setItem('olcrtc_accent', value);
-}
-
-// Derive darker hover/focus variants of an arbitrary hex color.
-function accentVariants(hex) {
-  const n = parseInt(hex.slice(1), 16);
-  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
-  const shade = (factor) => '#' + [r, g, b].map(c => {
-    const v = Math.round(c * factor);
-    return v.toString(16).padStart(2, '0');
-  }).join('');
-  return { base: hex, hover: shade(0.8), focus: shade(0.62) };
-}
-
-// Active accent = stored custom color, else theme default (neutral).
-function resolveAccent(theme) {
-  const stored = getStoredAccent();
-  if (!stored || stored === 'null') return ACCENT_DEFAULTS[theme] || ACCENT_DEFAULTS.dark;
-  try { return accentVariants(stored); } catch { return ACCENT_DEFAULTS[theme] || ACCENT_DEFAULTS.dark; }
-}
-
-function applyAccent() {
-  const v = resolveAccent(getTheme());
-  const root = document.documentElement.style;
-  root.setProperty('--color-primary', v.base);
-  root.setProperty('--color-primary-hover', v.hover);
-  root.setProperty('--color-primary-focus', v.focus);
-}
-
-// Accent presets shown in Settings (including a neutral default).
-const ACCENT_PRESETS = [
-  { label: 'Нейтральный', color: null },
-  { label: 'Сиренево-фиолетовый', color: '#7c3aed' },
-  { label: 'Синий', color: '#2563eb' },
-  { label: 'Бирюзовый', color: '#0d9488' },
-  { label: 'Зелёный', color: '#16a34a' },
-  { label: 'Янтарный', color: '#d97706' },
-  { label: 'Красный', color: '#dc2626' },
-  { label: 'Розовый', color: '#db2777' },
-];
-
-// Build the accent picker block for the Settings page.
-function renderAccentPicker() {
-  const block = el('div', '');
-  block.innerHTML = '<h3 class="font-semibold mb-2 inline-flex items-center gap-2">' + icon('sliders', 16) + '<span>Акцентный цвет</span></h3>';
-  block.appendChild(el('div', 'text-sm text-gray-400 mb-3', 'Цвет кнопок, ссылок и подсветки. По умолчанию — нейтральный.'));
-
-  const swatches = el('div', 'flex gap-2 flex-wrap mb-3');
-  ACCENT_PRESETS.forEach(p => {
-    const sw = el('button', 'swatch-btn' + (getStoredAccent() === p.color ? ' active' : ''));
-    sw.style.background = p.color || ACCENT_DEFAULTS[getTheme()].base;
-    sw.title = p.label;
-    sw.setAttribute('aria-label', p.label);
-    sw.onclick = () => {
-      setStoredAccent(p.color);
-      applyAccent();
-      swatches.querySelectorAll('.swatch-btn').forEach(b => b.classList.remove('active'));
-      sw.classList.add('active');
-    };
-    swatches.appendChild(sw);
-  });
-
-  const customRow = el('div', 'flex items-center gap-2');
-  const customInp = el('input', '');
-  customInp.type = 'color';
-  customInp.value = '#7c3aed';
-  customInp.setAttribute('aria-label', 'Свой цвет');
-  customInp.title = 'Выбрать любой цвет';
-  customInp.oninput = () => {
-    setStoredAccent(customInp.value);
-    applyAccent();
-    swatches.querySelectorAll('.swatch-btn').forEach(b => b.classList.remove('active'));
-  };
-  const customLbl = el('span', 'text-sm text-gray-400', 'Любой цвет');
-  customRow.appendChild(customInp);
-  customRow.appendChild(customLbl);
-
-  block.appendChild(swatches);
-  block.appendChild(customRow);
-  return block;
 }
 
 // ── DOM helpers ──────────────────────────────────────────────────────────────
@@ -1028,7 +930,7 @@ function renderSubRow(sub, instances, sys) {
   left.innerHTML = `
     <div class="font-medium">${sub.name} <span class="text-gray-500">[${sub.slug}]</span></div>
     <div class="text-gray-400 text-xs mt-1 copyable truncate" title="${subURL}">${subURL}</div>
-    <div class="text-gray-500 text-xs mt-1 copyable truncate" title="${openURL}">Ссылка для импорта в приложение: ${openURL}</div>
+    <div class="text-gray-500 text-xs mt-1 copyable truncate" title="${openURL}">Обычная ссылка: ${openURL}</div>
   `;
   const right = el('div', 'flex gap-1.5 flex-wrap');
   const viewBtn = el('button', 'btn btn-secondary btn-sm');
@@ -1336,9 +1238,6 @@ async function renderSettings(app) {
     <div class="text-sm text-gray-300">Подписки: через Admin UI <span class="copyable">/sub/&lt;slug&gt;</span></div>
     <div class="text-xs text-gray-500">Legacy sub port: ${sys.sub_port || '-'}</div>`;
   card.appendChild(portBlock);
-
-  // Accent color
-  card.appendChild(renderAccentPicker());
 
   // Server Updates
   const updateBlock = el('div', '');
@@ -2711,6 +2610,14 @@ async function showManageSubInstancesModal(sub, instances) {
   list.appendChild(el('div', 'text-sm text-gray-400', 'Загрузка...'));
   div.appendChild(list);
 
+  const manualTitle = el('div', 'font-medium text-sm mb-2', 'Добавить URI вручную');
+  const manualInp = el('textarea', 'w-full mb-1');
+  manualInp.rows = 3;
+  manualInp.placeholder = 'olcrtc://...\nПо одному URI на строку';
+  div.appendChild(manualTitle);
+  div.appendChild(manualInp);
+  div.appendChild(el('div', 'text-xs text-gray-500 mb-4', 'Можно добавить несколько URI сразу — по одному на строку.'));
+
   const btnRow = el('div', 'flex gap-2 justify-end');
   const cancelBtn = el('button', 'btn btn-secondary');
   cancelBtn.textContent = 'Отмена';
@@ -2840,6 +2747,14 @@ async function showManageSubInstancesModal(sub, instances) {
     looseChoices.forEach(choice => {
       if (!choice.checkbox.checked) removals.push(choice.entry);
     });
+
+    const manualURIs = [...new Set(manualInp.value.split(/\r?\n/).map(uri => uri.trim()).filter(Boolean))];
+    const invalidURI = manualURIs.find(uri => !uri.toLowerCase().startsWith('olcrtc://'));
+    if (invalidURI) {
+      showToast('Ручной URI должен начинаться с olcrtc://', 'error');
+      return;
+    }
+    manualURIs.forEach(rawURI => additions.push({ rawURI, sourceInstanceID: null }));
 
     if (removals.length === 0 && additions.length === 0) {
       showToast('Изменений нет');
