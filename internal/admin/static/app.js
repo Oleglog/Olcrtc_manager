@@ -241,13 +241,64 @@ function render() {
   }
   if (path === '/login') {
     renderLogin(app);
-  } else if (path === '/settings') {
-    renderSettings(app);
   } else {
-    renderDashboard(app);
+    // Default '/' opens System; deeper sections are separate viewed blocks.
+    const section = path === '/' ? 'system' : path.replace(/^\//, '') || 'system';
+    if (section === 'settings') {
+      renderSettings(app);
+    } else {
+      renderDashboard(app, section);
+    }
   }
 }
 window.addEventListener('popstate', render);
+
+// Shared layout: vertical sidebar (horizontal tabs on narrow screens) + content.
+function renderShell(activeSection) {
+  const sections = [
+    { id: 'system', label: 'Система', icon: 'shield' },
+    { id: 'instances', label: 'Инстансы', icon: 'cloud' },
+    { id: 'subscriptions', label: 'Подписки', icon: 'tag' },
+    { id: 'settings', label: 'Настройки', icon: 'settings' },
+  ];
+
+  const shell = el('div', 'app-shell');
+  const sidebar = el('nav', 'sidebar');
+
+  const brand = el('div', 'sidebar-brand');
+  brand.innerHTML = icon('shield', 18) + '<span>olcRTC Admin</span>';
+  sidebar.appendChild(brand);
+
+  sections.forEach((s) => {
+    const link = el('button', 'sidebar-link' + (s.id === activeSection ? ' sidebar-link-active' : ''));
+    link.innerHTML = icon(s.icon, 16) + '<span>' + s.label + '</span>';
+    link.setAttribute('aria-label', s.label);
+    link.onclick = () => route('/' + s.id);
+    sidebar.appendChild(link);
+  });
+
+  const footer = el('div', 'sidebar-footer');
+  const themeBtn = el('button', 'sidebar-link');
+  themeBtn.setAttribute('aria-label', 'Сменить тему');
+  themeBtn.innerHTML = (getTheme() === 'dark' ? icon('sun') : icon('moon')) + '<span>Тема</span>';
+  themeBtn.onclick = () => {
+    toggleTheme();
+    themeBtn.innerHTML = (getTheme() === 'dark' ? icon('sun') : icon('moon')) + '<span>Тема</span>';
+  };
+  themeBtn.title = 'Сменить тему (светлая/тёмная)';
+  const logoutBtn = el('button', 'sidebar-link');
+  logoutBtn.setAttribute('aria-label', 'Выход');
+  logoutBtn.innerHTML = icon('log-out') + '<span>Выход</span>';
+  logoutBtn.onclick = () => { creds = null; localStorage.removeItem('olcrtc_creds'); route('/login'); };
+  footer.appendChild(themeBtn);
+  footer.appendChild(logoutBtn);
+  sidebar.appendChild(footer);
+
+  const main = el('main', 'sidebar-main');
+  shell.appendChild(sidebar);
+  shell.appendChild(main);
+  return { shell, main };
+}
 
 // ── Login ────────────────────────────────────────────────────────────────────
 function renderLogin(app) {
@@ -314,36 +365,9 @@ function renderLogin(app) {
 }
 
 // ── Dashboard ────────────────────────────────────────────────────────────────
-async function renderDashboard(app) {
-  const wrap = el('div', 'max-w-6xl mx-auto p-4 md:p-6');
-
-  // Header
-  const header = el('div', 'flex items-center justify-between mb-6 flex-wrap gap-2');
-  const titleWrap = el('div', 'flex items-center gap-2');
-  titleWrap.innerHTML = '<span style="color: var(--color-primary)">' + icon('shield', 22) + '</span><h1 class="text-xl md:text-2xl font-semibold">olcRTC Admin</h1>';
-  header.appendChild(titleWrap);
-  const nav = el('div', 'flex gap-2');
-  const themeBtn = el('button', 'btn btn-secondary btn-sm');
-  themeBtn.setAttribute('aria-label', 'Переключить тему');
-  const currentTheme = getTheme();
-  themeBtn.innerHTML = currentTheme === 'dark' ? icon('sun') + '<span class="hidden sm:inline">Светлая</span>' : icon('moon') + '<span class="hidden sm:inline">Тёмная</span>';
-  themeBtn.onclick = () => {
-    const newTheme = toggleTheme();
-    themeBtn.innerHTML = newTheme === 'dark' ? icon('sun') + '<span class="hidden sm:inline">Светлая</span>' : icon('moon') + '<span class="hidden sm:inline">Тёмная</span>';
-  };
-  const settingsBtn = el('button', 'btn btn-secondary btn-sm');
-  settingsBtn.setAttribute('aria-label', 'Настройки');
-  settingsBtn.innerHTML = icon('settings') + '<span class="hidden sm:inline">Настройки</span>';
-  settingsBtn.onclick = () => route('/settings');
-  const logoutBtn = el('button', 'btn btn-secondary btn-sm');
-  logoutBtn.setAttribute('aria-label', 'Выход');
-  logoutBtn.innerHTML = icon('log-out') + '<span class="hidden sm:inline">Выход</span>';
-  logoutBtn.onclick = () => { creds = null; localStorage.removeItem('olcrtc_creds'); route('/login'); };
-  nav.appendChild(themeBtn);
-  nav.appendChild(settingsBtn);
-  nav.appendChild(logoutBtn);
-  header.appendChild(nav);
-  wrap.appendChild(header);
+async function renderDashboard(app, section) {
+  const frame = renderShell(section);
+  const main = frame.main;
 
   let sys = {};
   let instances = [];
@@ -373,8 +397,22 @@ async function renderDashboard(app) {
     }
   }
 
-  // System card
-  const sysCard = el('div', 'card p-4 mb-6');
+  const wrap = el('div', 'max-w-6xl mx-auto');
+  if (section === 'instances') {
+    wrap.appendChild(renderInstancesBlock(instances, instanceMemberships));
+  } else if (section === 'subscriptions') {
+    wrap.appendChild(renderSubscriptionsBlock(subs, subsError, instances, sys));
+  } else {
+    wrap.appendChild(renderSystemBlock(sys));
+  }
+  main.appendChild(wrap);
+
+  app.appendChild(frame.shell);
+  startUsagePolling();
+}
+
+function renderSystemBlock(sys) {
+  const sysCard = el('div', 'card p-4');
   sysCard.innerHTML = `
     <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
       <div><div class="text-gray-500 text-xs uppercase tracking-wider mb-0.5">IP</div><div class="copyable">${sys.public_ip || '-'}</div></div>
@@ -388,9 +426,10 @@ async function renderDashboard(app) {
       <div><div class="text-gray-500 text-xs uppercase tracking-wider mb-0.5">Версия</div><div>${sys.version || '-'}</div></div>
     </div>`;
   sysCard.querySelector('#active-peer-count').textContent = String(Number(sys.active_peers) || 0);
-  wrap.appendChild(sysCard);
+  return sysCard;
+}
 
-  // Instances
+function renderInstancesBlock(instances, instanceMemberships) {
   const instSection = el('div', 'mb-8');
   const instHeader = el('div', 'flex items-center justify-between mb-4');
   instHeader.innerHTML = '<h2 class="text-lg font-semibold">Инстансы</h2>';
@@ -408,10 +447,11 @@ async function renderDashboard(app) {
   } else {
     instSection.appendChild(renderInstanceGroups(instances, instanceMemberships));
   }
-  wrap.appendChild(instSection);
+  return instSection;
+}
 
-  // Subscriptions
-  const subSection = el('div', 'card p-4 mb-6');
+function renderSubscriptionsBlock(subs, subsError, instances, sys) {
+  const subSection = el('div', 'card p-4');
   const subHeader = el('div', 'flex items-center justify-between mb-4');
   subHeader.innerHTML = '<h2 class="text-lg font-semibold">Подписки</h2>';
   const subActions = el('div', 'flex gap-2 flex-wrap');
@@ -451,10 +491,7 @@ async function renderDashboard(app) {
     subs.forEach(sub => subList.appendChild(renderSubRow(sub, instances, sys)));
   }
   subSection.appendChild(subList);
-  wrap.appendChild(subSection);
-
-  app.appendChild(wrap);
-  startUsagePolling();
+  return subSection;
 }
 
 function stopUsagePolling() {
@@ -1144,15 +1181,9 @@ function createJitsiPresetPanel(roomInput, bridgeModeInput, transportInput) {
 
 // ── Settings page ────────────────────────────────────────────────────────────
 async function renderSettings(app) {
-  const wrap = el('div', 'max-w-2xl mx-auto p-4 md:p-6');
-
-  const header = el('div', 'flex items-center justify-between mb-6');
-  header.innerHTML = '<h1 class="text-xl md:text-2xl font-semibold">Настройки</h1>';
-  const backBtn = el('button', 'btn btn-secondary btn-sm');
-  backBtn.innerHTML = icon('arrow-left') + '<span>Назад</span>';
-  backBtn.onclick = () => route('/');
-  header.appendChild(backBtn);
-  wrap.appendChild(header);
+  const frame = renderShell('settings');
+  const main = frame.main;
+  const wrap = el('div', 'max-w-2xl mx-auto');
 
   let sys = {};
   try { sys = await api('/system/status'); } catch (e) {}
@@ -1681,7 +1712,8 @@ async function renderSettings(app) {
   card.appendChild(mirrorBlock);
 
   wrap.appendChild(card);
-  app.appendChild(wrap);
+  main.appendChild(wrap);
+  app.appendChild(frame.shell);
 }
 
 function showTokenModal(tok) {
