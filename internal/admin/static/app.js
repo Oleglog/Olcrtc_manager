@@ -706,6 +706,7 @@ function renderInstanceCard(inst, context = {}) {
   const card = el('div', 'card card-hover instance-card p-4 flex flex-col gap-3');
   const displayName = context.displayName || inst.name || inst.label;
   const displayURI = withInstanceName(inst.uri, displayName);
+  const displaySpecURI = inst.spec_uri ? withInstanceName(inst.spec_uri, displayName) : '';
 
   // Header: status + label
   const head = el('div', 'flex items-center justify-between gap-2');
@@ -794,6 +795,24 @@ function renderInstanceCard(inst, context = {}) {
     navigator.clipboard.writeText(displayURI);
     showToast('URI скопирован');
   };
+  const specUriBtn = el('button', 'btn btn-secondary btn-sm');
+  specUriBtn.setAttribute('aria-label', 'Копировать URI (spec)');
+  specUriBtn.innerHTML = icon('copy') + '<span>Spec URI</span>';
+  specUriBtn.title = 'Формат по спецификации uri.md (для сторонних клиентов)';
+  specUriBtn.onclick = async () => {
+    if (displaySpecURI) {
+      navigator.clipboard.writeText(displaySpecURI);
+      showToast('Spec URI скопирован');
+    } else {
+      try {
+        const res = await api('/instances/' + inst.id + '/spec-uri');
+        navigator.clipboard.writeText(withInstanceName(res.uri, displayName));
+        showToast('Spec URI скопирован');
+      } catch (e) {
+        showToast('Ошибка: ' + e.message, 'error');
+      }
+    }
+  };
   const qrBtn = el('button', 'btn btn-secondary btn-sm');
   qrBtn.setAttribute('aria-label', 'Показать QR-код');
   qrBtn.innerHTML = icon('qr-code') + '<span>QR</span>';
@@ -866,6 +885,7 @@ function renderInstanceCard(inst, context = {}) {
     });
   };
   actions.appendChild(uriBtn);
+  actions.appendChild(specUriBtn);
   actions.appendChild(qrBtn);
   actions.appendChild(pingBtn);
   actions.appendChild(cfgBtn);

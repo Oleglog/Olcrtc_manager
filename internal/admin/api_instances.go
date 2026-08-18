@@ -40,6 +40,7 @@ type Instance struct {
 	Status                  string `json:"status"`
 	Uptime                  string `json:"uptime"`
 	URI                     string `json:"uri"`
+	SpecURI                 string `json:"spec_uri"`
 	SubscriptionURI         string `json:"subscription_uri"`
 	SocksProxy              string `json:"socks_proxy"`
 	WarpProxy               string `json:"warp_proxy"`
@@ -101,6 +102,12 @@ func (s *Server) handleInstances(w http.ResponseWriter, r *http.Request) {
 	case "uri":
 		if r.Method == http.MethodGet {
 			s.getInstanceURI(w, id)
+		} else {
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		}
+	case "spec-uri":
+		if r.Method == http.MethodGet {
+			s.getInstanceSpecURI(w, id)
 		} else {
 			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		}
@@ -511,6 +518,13 @@ func (s *Server) getInstanceURI(w http.ResponseWriter, id int) {
 	writeJSON(w, http.StatusOK, map[string]string{"uri": uri})
 }
 
+func (s *Server) getInstanceSpecURI(w http.ResponseWriter, id int) {
+	envPath := InstanceEnvPath(s.cfg.ConfigDir, id)
+	vals := ReadInstanceEnv(envPath)
+	uri := s.buildSpecURIWith(vals)
+	writeJSON(w, http.StatusOK, map[string]string{"uri": uri})
+}
+
 func (s *Server) getInstanceQR(w http.ResponseWriter, id int) {
 	// Return a QR-oriented URI. Unlike the short copy URI, this may include
 	// auth.token so Android can import a complete wbstream profile from one QR.
@@ -717,6 +731,7 @@ func (s *Server) buildInstance(id int) Instance {
 		Status:                  status,
 		Uptime:                  uptime,
 		URI:                     s.buildURIWith(vals, clientID),
+		SpecURI:                 s.buildSpecURIWith(vals),
 		SubscriptionURI:         s.buildURIWith(vals, clientID),
 		SocksProxy:              vals["OLCRTC_SOCKS_PROXY"],
 		WarpProxy:               vals["OLCRTC_WARP_PROXY"],
@@ -823,6 +838,53 @@ func (s *Server) buildURIWith(vals map[string]string, clientID string) string {
 	}
 	uri += "#" + name
 	return uri
+}
+
+func (s *Server) buildSpecURIWith(vals map[string]string) string {
+	carrier := vals["OLCRTC_CARRIER"]
+	if carrier == "" {
+		carrier = vals["OLCRTC_PROVIDER"]
+	}
+	room := vals["OLCRTC_ROOM_ID"]
+	key := vals["OLCRTC_KEY"]
+	transport := vals["OLCRTC_TRANSPORT"]
+	if transport == "" {
+		transport = "datachannel"
+	}
+
+	var payload string
+	switch transport {
+	case "vp8channel":
+		var params []string
+		if fps := vals["OLCRTC_VP8_FPS"]; fps != "" && fps != "60" {
+			params = append(params, "vp8-fps="+fps)
+		}
+		if batch := vals["OLCRTC_VP8_BATCH"]; batch != "" && batch != "8" {
+			params = append(params, "vp8-batch="+batch)
+		}
+		if len(params) > 0 {
+			payload = "<" + strings.Join(params, "&") + ">"
+		}
+	case "seichannel":
+		var params []string
+		if fps := vals["OLCRTC_SEI_FPS"]; fps != "" && fps != "60" {
+			params = append(params, "fps="+fps)
+		}
+		if batch := vals["OLCRTC_SEI_BATCH"]; batch != "" && batch != "8" {
+			params = append(params, "batch="+batch)
+		}
+		if frag := vals["OLCRTC_SEI_FRAG"]; frag != "" && frag != "900" {
+			params = append(params, "frag="+frag)
+		}
+		if ack := vals["OLCRTC_SEI_ACK"]; ack != "" && ack != "2000" {
+			params = append(params, "ack-ms="+ack)
+		}
+		if len(params) > 0 {
+			payload = "<" + strings.Join(params, "&") + ">"
+		}
+	}
+
+	return fmt.Sprintf("olcrtc://%s?%s%s@%s#%s", carrier, transport, payload, room, key)
 }
 
 func (s *Server) pingInstance(w http.ResponseWriter, id int) {
