@@ -11,7 +11,11 @@
 
 set -euo pipefail
 
-INSTALLER_VERSION="1.9.64"
+REPO="Oleglog/Olcrtc_manager"
+# Fallback release used only when the latest tag cannot be resolved from GitHub.
+INSTALLER_VERSION="1.9.74"
+RELEASE_TAG=""
+RELEASE_VERSION=""
 CARRIER_DEFAULT="jitsi"
 TRANSPORT_DEFAULT="vp8channel"
 DNS_DEFAULT="8.8.8.8:53"
@@ -93,11 +97,40 @@ detect_arch() {
     esac
 }
 
+# ELF magic check via coreutils only: `file` is absent on minimal VPS images, and
+# skipping the check there let HTML error pages be installed as binaries.
+is_elf() {
+    [ "$(head -c 4 "$1" | od -An -tx1 | tr -d ' \n')" = "7f454c46" ]
+}
+
+# Resolves the newest published master release. The tag used to be pinned to
+# INSTALLER_VERSION, so every fresh install got that old version regardless of what
+# had been released since.
+resolve_release_tag() {
+    [ -n "$RELEASE_TAG" ] && return 0
+    local tag=""
+    # /releases/latest redirects to the real tag and does not consume API rate limit.
+    tag="$(curl -fsSLI -o /dev/null -w '%{url_effective}' --max-time 15 \
+        "https://github.com/${REPO}/releases/latest" 2>/dev/null |
+        sed -n 's#.*/tag/\(server-v[0-9][0-9.]*\)$#\1#p' || true)"
+    if [ -z "$tag" ]; then
+        tag="$(curl -fsSL --max-time 15 -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null |
+            sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\(server-v[0-9][0-9.]*\)".*/\1/p' | head -1 || true)"
+    fi
+    if [ -z "$tag" ]; then
+        tag="server-v${INSTALLER_VERSION}"
+        echo "[!] Не удалось определить последний релиз, используется ${tag}" >&2
+    fi
+    RELEASE_TAG="$tag"
+    RELEASE_VERSION="${tag#server-v}"
+    return 0
+}
+
 download_release() {
     local name="$1" dest="$2"
-    local repo="Oleglog/Olcrtc_manager"
-    local tag="server-v${INSTALLER_VERSION}"
-    local url="https://github.com/${repo}/releases/download/${tag}/${name}"
+    resolve_release_tag
+    local url="https://github.com/${REPO}/releases/download/${RELEASE_TAG}/${name}"
 
     # Refuse Windows binaries on Linux installs
     if [[ "$name" == *.exe ]] || [[ "$name" == *-windows-* ]]; then
@@ -106,20 +139,12 @@ download_release() {
     fi
 
     if [ -f "$dest" ]; then rm -f "$dest"; fi
-    if curl -fsSL --max-time 30 "$url" -o "$dest.tmp"; then
-        # Verify downloaded file is a Linux ELF binary
-        if command -v file >/dev/null 2>&1; then
-            local ftype
-            ftype="$(file -b "$dest.tmp")"
-            case "$ftype" in
-                ELF*)
-                    ;;
-                *)
-                    echo "[!] Downloaded file is not a Linux binary (type: $ftype): $name" >&2
-                    rm -f "$dest.tmp"
-                    return 1
-                    ;;
-            esac
+    # Binaries are ~30 MB: a 30s cap aborted downloads on slow links.
+    if curl -fsSL --retry 2 --retry-delay 3 --max-time 300 "$url" -o "$dest.tmp"; then
+        if ! is_elf "$dest.tmp"; then
+            echo "[!] Downloaded file is not a Linux binary: $name ($(head -c 120 "$dest.tmp" | tr -c '[:print:]' '.'))" >&2
+            rm -f "$dest.tmp"
+            return 1
         fi
         # Sanity check: file must not be empty and should have reasonable size
         local size
@@ -167,6 +192,10 @@ do_uninstall() {
     rm -rf "$STATE_DIR"
     rm -rf /var/lib/olcrtc/admin-tls
 
+    # Panel update leftovers survive in /tmp and made a reinstall inherit the old
+    # progress state (the UI then reported the previous run's error).
+    rm -f /tmp/olcrtc-update-state.json /tmp/olcrtc-update.sh /tmp/olcrtc-update.log
+
     echo "[*] olcRTC полностью удалён."
 }
 
@@ -179,6 +208,8 @@ do_update() {
         echo "[!] Unsupported architecture: $arch" >&2; exit 1
     fi
     echo "    Detected architecture: $arch"
+    resolve_release_tag
+    echo "    Target release: $RELEASE_TAG"
 
     local tmpdir
     tmpdir="$(mktemp -d)"
@@ -297,6 +328,11 @@ if is_installed; then
     systemctl is-active olcrtc-server.service >/dev/null 2>&1 && echo "  olcrtc-server: running" || echo "  olcrtc-server: not running"
     systemctl is-active olcrtc-admin.service >/dev/null 2>&1 && echo "  olcrtc-admin:  running" || echo "  olcrtc-admin:  not running"
     echo ""
+    resolve_release_tag
+    echo "  Последний релиз: $RELEASE_TAG"
+    echo "  Обновить до него одной командой:"
+    echo "    curl -fsSL https://raw.githubusercontent.com/${REPO}/master/server-install/olcrtc-setup.sh | sudo bash -s -- --update"
+    echo ""
     echo "  Дополнительные действия:"
     echo "    --update          Обновить бинарники"
     echo "    --regenerate      Пересоздать Room ID"
@@ -336,6 +372,10 @@ echo "              ✓"
 # ── 2. Download olcrtc ───────────────────────────────────────────────────────
 echo "  [2/7] Скачивание olcrtc binary..."
 TMPDIR="$(mktemp -d)"
+resolve_release_tag
+echo "        Релиз: $RELEASE_TAG"
+# A previous install may have left a finished/failed update state behind.
+rm -f /tmp/olcrtc-update-state.json
 if ! download_release "olcrtc-linux-${ARCH}" "$TMPDIR/olcrtc"; then
     echo "  [!] Не удалось скачать olcrtc binary. Проверьте соединение." >&2
     rm -rf "$TMPDIR"
