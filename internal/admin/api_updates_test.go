@@ -1,6 +1,9 @@
 package admin
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseReleaseTag(t *testing.T) {
 	tests := []struct {
@@ -63,5 +66,46 @@ func TestReleaseInfoFromTag(t *testing.T) {
 	}
 	if release.Branch != "latency-tuning" || release.Version != "v1.9.53" || !release.Prerelease {
 		t.Fatalf("release = %+v", release)
+	}
+}
+
+// TestBuildUpdateScriptVerifiesWithoutFileTool guards the issue #44/#46 fix: the
+// binary check must not depend on `file`, which is missing on minimal VPS images
+// and made the updater report "Повреждённый бинарник сервера" for good downloads.
+func TestBuildUpdateScriptVerifiesWithoutFileTool(t *testing.T) {
+	script := buildUpdateScript(
+		"1.9.74",
+		"amd64",
+		"https://github.com/Oleglog/Olcrtc_manager/releases/download/server-v1.9.74",
+		[]string{"olcrtc-server@1.service"},
+	)
+
+	for _, banned := range []string{`file "$TMPDIR`, `grep -q "ELF"`} {
+		if strings.Contains(script, banned) {
+			t.Errorf("script still uses %q", banned)
+		}
+	}
+
+	for _, want := range []string{
+		"is_elf()",
+		"7f454c46",
+		`if ! is_elf "$TMPDIR/olcrtc"; then`,
+		`if ! is_elf "$TMPDIR/olcrtc-admin"; then`,
+		`"target_version":"1.9.74"`,
+		"/releases/download/server-v1.9.74/olcrtc-linux-amd64",
+		"/releases/download/server-v1.9.74/olcrtc-admin-linux-amd64",
+		"systemctl stop olcrtc-server@1.service || true",
+		"systemctl start olcrtc-server@1.service || true",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("script is missing %q", want)
+		}
+	}
+
+	if !strings.HasPrefix(script, "#!/bin/bash\n") {
+		t.Errorf("script does not start with a bash shebang: %.20q", script)
+	}
+	if strings.Contains(script, "%!") {
+		t.Error("script has an unresolved format verb")
 	}
 }

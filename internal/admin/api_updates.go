@@ -18,7 +18,7 @@ import (
 )
 
 // Version is set via ldflags at build time.
-var Version = "1.9.72"
+var Version = "1.9.74"
 
 // ReleaseBranch identifies the release channel used to build the admin binary.
 // Stable builds use master; branch builds override it via ldflags.
@@ -250,125 +250,7 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Generate update script
-	version := target.Version
-	repoURL := target.DownloadURL
-
-	additionalStartCmds := ""
-	for _, svc := range additionalServices {
-		additionalStartCmds += fmt.Sprintf("systemctl start %s || true\n", svc)
-	}
-
-	script := fmt.Sprintf(`#!/bin/bash
-# olcRTC auto-update script - runs independently of admin service
-exec > /tmp/olcrtc-update.log 2>&1
-set -x
-
-STATE_FILE=/tmp/olcrtc-update-state.json
-
-write_state() {
-    local phase="$1"
-    local message="$2"
-    local percent="$3"
-    local now
-    now=$(date +%%s)
-    cat > "$STATE_FILE" <<EOF
-{"phase":"$phase","message":"$message","percent":$percent,"target_version":"%s","updated_at":$now}
-EOF
-}
-
-fail_state() {
-    local message="$1"
-    local now
-    now=$(date +%%s)
-    cat > "$STATE_FILE" <<EOF
-{"phase":"error","message":"$message","percent":0,"target_version":"%s","updated_at":$now}
-EOF
-}
-
-echo "=== olcRTC Update Started at $(date) ==="
-echo "Updating to version: %s"
-echo "Architecture: %s"
-
-write_state "starting" "Подготовка обновления..." 2
-
-TMPDIR=$(mktemp -d)
-trap "rm -rf $TMPDIR" EXIT
-
-write_state "downloading_server" "Скачивание сервера..." 10
-echo "Downloading olcrtc binary..."
-if ! curl -fsSL --max-time 60 "%s/olcrtc-linux-%s" -o "$TMPDIR/olcrtc"; then
-    echo "ERROR: Failed to download olcrtc binary"
-    fail_state "Не удалось скачать сервер"
-    systemctl start olcrtc-admin.service || true
-    exit 1
-fi
-
-write_state "downloading_admin" "Скачивание админки..." 25
-echo "Downloading olcrtc-admin binary..."
-if ! curl -fsSL --max-time 60 "%s/olcrtc-admin-linux-%s" -o "$TMPDIR/olcrtc-admin"; then
-    echo "ERROR: Failed to download olcrtc-admin binary"
-    fail_state "Не удалось скачать админку"
-    systemctl start olcrtc-admin.service || true
-    exit 1
-fi
-
-write_state "verifying" "Проверка бинарников..." 35
-# Verify binaries are valid ELF files
-if ! file "$TMPDIR/olcrtc" | grep -q "ELF"; then
-    echo "ERROR: olcrtc binary is not a valid ELF file"
-    fail_state "Повреждённый бинарник сервера"
-    systemctl start olcrtc-admin.service || true
-    exit 1
-fi
-
-if ! file "$TMPDIR/olcrtc-admin" | grep -q "ELF"; then
-    echo "ERROR: olcrtc-admin binary is not a valid ELF file"
-    fail_state "Повреждённый бинарник админки"
-    systemctl start olcrtc-admin.service || true
-    exit 1
-fi
-
-chmod +x "$TMPDIR/olcrtc" "$TMPDIR/olcrtc-admin"
-
-write_state "stopping" "Остановка сервисов..." 45
-echo "Stopping services..."
-systemctl stop olcrtc-admin.service || true
-systemctl stop olcrtc-server.service || true
-%s
-
-sleep 3
-
-write_state "replacing" "Замена бинарников..." 60
-echo "Replacing binaries..."
-install -m 0755 "$TMPDIR/olcrtc" /usr/local/bin/olcrtc
-install -m 0755 "$TMPDIR/olcrtc-admin" /usr/local/bin/olcrtc-admin
-
-echo "Reloading systemd..."
-systemctl daemon-reload
-
-write_state "starting_server" "Запуск сервера..." 75
-echo "Starting services..."
-systemctl start olcrtc-server.service
-sleep 2
-
-write_state "starting_admin" "Запуск админки..." 88
-systemctl start olcrtc-admin.service
-sleep 1
-%s
-
-write_state "completed" "Обновление завершено" 100
-echo "=== Update Completed at $(date) ==="
-`,
-		version,
-		version,
-		version,
-		arch,
-		repoURL, arch,
-		repoURL, arch,
-		buildStopCommands(additionalServices),
-		additionalStartCmds,
-	)
+	script := buildUpdateScript(target.Version, arch, target.DownloadURL, additionalServices)
 
 	scriptPath := "/tmp/olcrtc-update.sh"
 	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
@@ -381,12 +263,16 @@ echo "=== Update Completed at $(date) ==="
 	}
 
 	// Seed initial state so frontend sees progress immediately, before script runs.
-	initial := fmt.Sprintf(`{"phase":"queued","message":"Запуск процесса обновления...","percent":1,"target_version":%q,"updated_at":%d}`, version, time.Now().Unix())
+	startedAt := time.Now().Unix()
+	initial := fmt.Sprintf(`{"phase":"queued","message":"Запуск процесса обновления...","percent":1,"target_version":%q,"updated_at":%d}`, target.Version, startedAt)
 	_ = os.WriteFile(updateStateFile, []byte(initial), 0644)
 
-	// Send response BEFORE starting update
-	writeJSON(w, http.StatusOK, map[string]string{
-		"message": "Обновление запущено. Сервер перезапустится через 1-2 минуты.",
+	// Send response BEFORE starting update. started_at is echoed back so the frontend
+	// can discard a state file left over by an earlier run instead of reporting its
+	// error as if it belonged to this update.
+	writeJSON(w, http.StatusOK, map[string]any{
+		"message":    "Обновление запущено. Сервер перезапустится через 1-2 минуты.",
+		"started_at": startedAt,
 	})
 
 	// Start update script in a separate transient systemd unit
@@ -427,6 +313,137 @@ echo "=== Update Completed at $(date) ==="
 
 		logger.Info("Update script started via systemd-run, will continue after admin stops")
 	}()
+}
+
+// buildUpdateScript renders the detached bash script that downloads, verifies and
+// installs the release binaries. Kept out of handleUpdate so the generated script
+// stays unit-testable.
+func buildUpdateScript(version, arch, downloadURL string, additionalServices []string) string {
+	additionalStartCmds := ""
+	for _, svc := range additionalServices {
+		additionalStartCmds += fmt.Sprintf("systemctl start %s || true\n", svc)
+	}
+
+	return fmt.Sprintf(`#!/bin/bash
+# olcRTC auto-update script - runs independently of admin service
+exec > /tmp/olcrtc-update.log 2>&1
+set -x
+
+STATE_FILE=/tmp/olcrtc-update-state.json
+
+write_state() {
+    local phase="$1"
+    local message="$2"
+    local percent="$3"
+    local now
+    now=$(date +%%s)
+    cat > "$STATE_FILE" <<EOF
+{"phase":"$phase","message":"$message","percent":$percent,"target_version":"%s","updated_at":$now}
+EOF
+}
+
+fail_state() {
+    local message="$1"
+    local now
+    now=$(date +%%s)
+    cat > "$STATE_FILE" <<EOF
+{"phase":"error","message":"$message","percent":0,"target_version":"%s","updated_at":$now}
+EOF
+}
+
+# ELF magic check via coreutils. The "file" tool is absent on minimal VPS images,
+# and there the old "file | grep ELF" check aborted perfectly good updates.
+is_elf() {
+    [ "$(head -c 4 "$1" | od -An -tx1 | tr -d ' \n')" = "7f454c46" ]
+}
+
+describe_download() {
+    echo "size=$(wc -c < "$1") head=$(head -c 120 "$1" | tr -c '[:print:]' '.')"
+}
+
+echo "=== olcRTC Update Started at $(date) ==="
+echo "Updating to version: %s"
+echo "Architecture: %s"
+
+write_state "starting" "Подготовка обновления..." 2
+
+TMPDIR=$(mktemp -d)
+trap "rm -rf $TMPDIR" EXIT
+
+write_state "downloading_server" "Скачивание сервера..." 10
+echo "Downloading olcrtc binary..."
+if ! curl -fsSL --retry 2 --retry-delay 3 --max-time 300 "%s/olcrtc-linux-%s" -o "$TMPDIR/olcrtc"; then
+    echo "ERROR: Failed to download olcrtc binary"
+    fail_state "Не удалось скачать сервер"
+    systemctl start olcrtc-admin.service || true
+    exit 1
+fi
+
+write_state "downloading_admin" "Скачивание админки..." 25
+echo "Downloading olcrtc-admin binary..."
+if ! curl -fsSL --retry 2 --retry-delay 3 --max-time 300 "%s/olcrtc-admin-linux-%s" -o "$TMPDIR/olcrtc-admin"; then
+    echo "ERROR: Failed to download olcrtc-admin binary"
+    fail_state "Не удалось скачать админку"
+    systemctl start olcrtc-admin.service || true
+    exit 1
+fi
+
+write_state "verifying" "Проверка бинарников..." 35
+# Verify binaries are valid ELF files
+if ! is_elf "$TMPDIR/olcrtc"; then
+    echo "ERROR: olcrtc is not an ELF binary: $(describe_download "$TMPDIR/olcrtc")"
+    fail_state "Скачан не Linux-бинарник сервера (лог: /tmp/olcrtc-update.log)"
+    systemctl start olcrtc-admin.service || true
+    exit 1
+fi
+
+if ! is_elf "$TMPDIR/olcrtc-admin"; then
+    echo "ERROR: olcrtc-admin is not an ELF binary: $(describe_download "$TMPDIR/olcrtc-admin")"
+    fail_state "Скачан не Linux-бинарник админки (лог: /tmp/olcrtc-update.log)"
+    systemctl start olcrtc-admin.service || true
+    exit 1
+fi
+
+chmod +x "$TMPDIR/olcrtc" "$TMPDIR/olcrtc-admin"
+
+write_state "stopping" "Остановка сервисов..." 45
+echo "Stopping services..."
+systemctl stop olcrtc-admin.service || true
+systemctl stop olcrtc-server.service || true
+%s
+
+sleep 3
+
+write_state "replacing" "Замена бинарников..." 60
+echo "Replacing binaries..."
+install -m 0755 "$TMPDIR/olcrtc" /usr/local/bin/olcrtc
+install -m 0755 "$TMPDIR/olcrtc-admin" /usr/local/bin/olcrtc-admin
+
+echo "Reloading systemd..."
+systemctl daemon-reload
+
+write_state "starting_server" "Запуск сервера..." 75
+echo "Starting services..."
+systemctl start olcrtc-server.service
+sleep 2
+
+write_state "starting_admin" "Запуск админки..." 88
+systemctl start olcrtc-admin.service
+sleep 1
+%s
+
+write_state "completed" "Обновление завершено" 100
+echo "=== Update Completed at $(date) ==="
+`,
+		version,
+		version,
+		version,
+		arch,
+		downloadURL, arch,
+		downloadURL, arch,
+		buildStopCommands(additionalServices),
+		additionalStartCmds,
+	)
 }
 
 func buildStopCommands(services []string) string {
