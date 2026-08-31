@@ -1344,12 +1344,11 @@ async function renderSettings(app) {
       confirmText: isDowngrade ? 'Откатить' : 'Установить',
     });
     if (!ok) return;
-    showUpdateOverlay(target.version, target.branch);
-    try {
-      await api('/system/update', { method: 'POST', body: JSON.stringify({ tag: target.tag, branch: target.branch, version: target.version }) });
-    } catch (e) {
-      // expected during admin restart
-    }
+    // The overlay only starts polling after the POST went through: /tmp holds the
+    // previous run's state until the server reseeds it, so polling earlier would
+    // surface an old "error" phase and kill this update's progress view.
+    showUpdateOverlay(target.version, target.branch, () =>
+      api('/system/update', { method: 'POST', body: JSON.stringify({ tag: target.tag, branch: target.branch, version: target.version }) }));
   };
 
   selectorRow.appendChild(selectorLabel);
@@ -2946,7 +2945,10 @@ function phaseToStepIndex(phase) {
   return -1;
 }
 
-function showUpdateOverlay(targetVersion, targetBranch) {
+// kick sends the actual update request. Polling must not start before it settles:
+// /tmp/olcrtc-update-state.json outlives previous runs, so an older "error" phase
+// would otherwise be picked up instantly and stop tracking this update.
+function showUpdateOverlay(targetVersion, targetBranch, kick) {
   const existing = document.getElementById('update-overlay');
   if (existing) existing.remove();
 
@@ -3023,6 +3025,11 @@ function showUpdateOverlay(targetVersion, targetBranch) {
   let lastPercent = 1;
   let adminWentDown = false;
   let finishing = false;
+  let pollInterval = null;
+  // Server-side timestamp of this run, taken from the update response. Comparing it
+  // with state.updated_at (also server-side) filters out leftovers without relying
+  // on the browser clock matching the server clock.
+  let minUpdatedAt = 0;
 
   function applyStepIndex(activeIdx) {
     UPDATE_STEPS.forEach((step, idx) => {
@@ -3121,6 +3128,10 @@ function showUpdateOverlay(targetVersion, targetBranch) {
       if (res.ok) {
         progressData = await res.json();
         adminReachable = true;
+        if (progressData && minUpdatedAt && typeof progressData.updated_at === 'number' && progressData.updated_at < minUpdatedAt) {
+          // State file still describes an earlier update — treat it as no data.
+          progressData = null;
+        }
       }
     } catch (e) {
       adminWentDown = true;
@@ -3178,9 +3189,26 @@ function showUpdateOverlay(targetVersion, targetBranch) {
     }
   }
 
-  // Initial poll immediately, then every 1.5s
-  pollOnce();
-  const pollInterval = setInterval(pollOnce, 1500);
+  function startPolling() {
+    if (pollInterval) return;
+    pollOnce();
+    pollInterval = setInterval(pollOnce, 1500);
+  }
+
+  if (typeof kick === 'function') {
+    Promise.resolve().then(kick).then((res) => {
+      if (res && typeof res.started_at === 'number') minUpdatedAt = res.started_at;
+    }).catch((e) => {
+      // The request can be cut short while the admin restarts — the update itself
+      // may well be running, so fall back to polling without a stale-state filter.
+      console.error('Запрос обновления завершился ошибкой', e);
+    }).then(startPolling);
+    // Watchdog: a request that never settles must not leave the overlay frozen
+    // without the polling loop (and its own timeout).
+    setTimeout(startPolling, 15000);
+  } else {
+    startPolling();
+  }
 }
 
 // ── Init ─────────────────────────────────────────────────────────────────────
