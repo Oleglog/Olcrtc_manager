@@ -71,6 +71,15 @@ function toggleTheme() {
 }
 
 // ── DOM helpers ──────────────────────────────────────────────────────────────
+// Issue #52: the supported carrier/transport matrix lives in one place so the
+// create and edit modals cannot drift apart. Mirrors carrier_compat.go and
+// OlcrtcProfile.supports() on Android.
+function compatibleTransports(carrier) {
+  if (carrier === 'telemost' || carrier === 'wbstream') return ['vp8channel'];
+  if (carrier === 'jitsi') return ['datachannel'];
+  return ['vp8channel', 'datachannel'];
+}
+
 function el(type, cls, text) {
   const e = document.createElement(type);
   if (cls) e.className = cls;
@@ -2021,7 +2030,10 @@ function showCreateInstanceModal() {
   const connGrid = el('div', 'grid grid-cols-1 md:grid-cols-2 gap-3');
 
   const carrierField = makeSelectField('Провайдер', icon('tag', 14), 'jitsi', ['jitsi', 'telemost', 'wbstream']);
-  const transportField = makeSelectField('Транспорт', icon('wifi', 14), 'datachannel', ['datachannel', 'vp8channel', 'seichannel', 'videochannel']);
+  // Issue #52: seichannel/videochannel are dead on this project; datachannel
+  // works only with jitsi. Compatible options per carrier:
+  // telemost/wbstream -> vp8channel, jitsi -> datachannel.
+  const transportField = makeSelectField('Транспорт', icon('wifi', 14), 'datachannel', compatibleTransports('jitsi'));
   const nameField = makeInputField('Имя', icon('tag', 14), 'jitsi_olcrtc', { placeholder: 'имя инстанса' });
   const roomIDField = makeInputField('Room ID', icon('tag', 14), '', { placeholder: 'jitsi: https://meet.small-dm.ru/yourroom · wbstream: создать на stream.wb.ru' });
   const authTokenField = makeInputField('Auth token', icon('shield', 14), '', { placeholder: 'wbstream account/moderator token, optional' });
@@ -2112,44 +2124,36 @@ function showCreateInstanceModal() {
   div.appendChild(netSec);
 
   function getTransportOptionsForCreate(carrier) {
-    // Всегда возвращаем все транспорты
-    return ['datachannel', 'vp8channel', 'seichannel', 'videochannel'];
+    // Issue #52: only supported combinations are selectable.
+    return compatibleTransports(carrier);
   }
 
   function isTransportCompatibleForCreate(carrier, transport) {
-    if (carrier === 'jitsi') {
-      return true;
-    } else if (carrier === 'telemost') {
-      return transport === 'vp8channel' || transport === 'videochannel';
-    } else if (carrier === 'wbstream') {
-      return transport === 'vp8channel' || transport === 'seichannel' || transport === 'videochannel';
-    }
-    return true;
+    return compatibleTransports(carrier).includes(transport);
   }
 
   function updateVisibility() {
     const t = transportField.input.value;
     const c = carrierField.input.value;
 
-    // Update available transports with warnings
-    const allTransports = getTransportOptionsForCreate(c);
+    // Keep the transport select in sync with the carrier matrix.
+    const allowed = compatibleTransports(c);
     const currentTransport = transportField.input.value;
 
-    // Rebuild transport select with warnings
+    // Rebuild transport select with the carrier's options only.
     transportField.input.innerHTML = '';
-    allTransports.forEach(tr => {
+    allowed.forEach(tr => {
       const opt = el('option', '', tr);
       opt.value = tr;
-      if (!isTransportCompatibleForCreate(c, tr)) {
-        opt.textContent = tr + ' ⚠️ (несовместим)';
-        opt.style.color = '#f59e0b';
-      }
       transportField.input.appendChild(opt);
     });
 
-    // Restore selection
-    if (allTransports.includes(currentTransport)) {
+    // Restore selection when still compatible, else default to the first option.
+    if (allowed.includes(currentTransport)) {
       transportField.input.value = currentTransport;
+    } else {
+      transportField.input.value = allowed[0] || '';
+      showToast('Транспорт переключён на ' + (allowed[0] || '-') + ' — единственный совместимый с ' + c, 'error');
     }
 
     const finalTransport = transportField.input.value;
@@ -2411,44 +2415,34 @@ function showConfigModal(inst) {
   const jitsiPresets = createJitsiPresetPanel(roomIDField.input, bridgeModeField.input, transportField.input);
   div.appendChild(jitsiPresets);
 
-  // Conditional visibility
+  // Conditional visibility (issue #52: only supported combos selectable).
   function getTransportOptions(carrier) {
-    // Всегда возвращаем все транспорты, но помечаем несовместимые
-    return ['datachannel', 'vp8channel', 'seichannel', 'videochannel'];
+    return compatibleTransports(carrier);
   }
 
   function isTransportCompatible(carrier, transport) {
-    // Проверка совместимости carrier/transport
-    if (carrier === 'jitsi') {
-      return true; // jitsi поддерживает все транспорты
-    } else if (carrier === 'telemost') {
-      return transport === 'vp8channel' || transport === 'videochannel';
-    } else if (carrier === 'wbstream') {
-      return transport === 'vp8channel' || transport === 'seichannel' || transport === 'videochannel';
-    }
-    return true;
+    return compatibleTransports(carrier).includes(transport);
   }
 
   function updateTransportOptions() {
     const c = carrierField.input.value;
     const currentTransport = transportField.input.value;
+    const allowed = compatibleTransports(c);
 
-    // Rebuild transport select options with warnings
+    // Rebuild transport select with the carrier's options only.
     transportField.input.innerHTML = '';
-    const allTransports = ['datachannel', 'vp8channel', 'seichannel', 'videochannel'];
-    allTransports.forEach(t => {
+    allowed.forEach(t => {
       const opt = el('option', '', t);
       opt.value = t;
-      if (!isTransportCompatible(c, t)) {
-        opt.textContent = t + ' ⚠️ (несовместим)';
-        opt.style.color = '#f59e0b';
-      }
       transportField.input.appendChild(opt);
     });
 
-    // Restore current selection
-    if (allTransports.includes(currentTransport)) {
+    // Restore current selection when still compatible, else default.
+    if (allowed.includes(currentTransport)) {
       transportField.input.value = currentTransport;
+    } else {
+      transportField.input.value = allowed[0] || '';
+      showToast('Транспорт переключён на ' + (allowed[0] || '-') + ' — единственный совместимый с ' + c, 'error');
     }
 
     // Auto-rename instance when carrier changes

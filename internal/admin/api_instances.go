@@ -277,6 +277,10 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
 		name = fmt.Sprintf("%s_olcrtc_%d", carrier, newID+1)
 	}
 	roomID = strings.TrimSpace(roomID)
+	if !isCarrierTransportCompatible(carrier, transport) {
+		http.Error(w, "incompatible carrier and transport: "+carrier+"+"+transport, http.StatusBadRequest)
+		return
+	}
 	if carrier == "wbstream" && (roomID == "" || roomID == "any") {
 		http.Error(w, "wbstream requires a Room ID", http.StatusBadRequest)
 		return
@@ -388,14 +392,28 @@ func (s *Server) updateInstanceConfig(w http.ResponseWriter, r *http.Request, id
 
 	// Validate that wbstream has a non-empty Room ID. WB Stream no longer
 	// auto-creates rooms; the server would otherwise refuse to start with
-	// ErrRoomIDRequired.
+	// ErrRoomIDRequired. Legacy instances created before the issue #52 matrix
+	// (seichannel/videochannel) keep working untouched; the check below only
+	// rejects transitions between stored and requested incompatible combos.
 	effective := ReadInstanceEnv(envPath)
+	stored := ReadInstanceEnv(envPath)
 	for k, v := range updates {
 		effective[k] = v
 	}
 	carrier := effective["OLCRTC_CARRIER"]
 	if carrier == "" {
 		carrier = effective["OLCRTC_PROVIDER"]
+	}
+	transport := effective["OLCRTC_TRANSPORT"]
+	storedCarrier := stored["OLCRTC_CARRIER"]
+	if storedCarrier == "" {
+		storedCarrier = stored["OLCRTC_PROVIDER"]
+	}
+	storedTransport := stored["OLCRTC_TRANSPORT"]
+	storedCompatible := isCarrierTransportCompatible(storedCarrier, storedTransport)
+	if !isCarrierTransportCompatible(carrier, transport) && (storedCompatible || carrier != storedCarrier || transport != storedTransport) {
+		http.Error(w, "incompatible carrier and transport: "+carrier+"+"+transport, http.StatusBadRequest)
+		return
 	}
 	room := effective["OLCRTC_ROOM_ID"]
 	if carrier == "wbstream" && (room == "" || room == "any") {

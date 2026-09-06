@@ -43,6 +43,9 @@ var (
 	errRoomIDRequired       = errors.New("roomID is required")
 	errClientIDRequired     = errors.New("clientID is required")
 	errKeyHexRequired       = errors.New("keyHex is required")
+	errTransportRequired      = errors.New("transport is required")
+	errUnsupportedTransport   = errors.New("unsupported transport: want vp8channel or datachannel")
+	errIncompatibleCombo      = errors.New("incompatible carrier and transport")
 	errNotRunning           = errors.New("olcRTC is not running")
 	errStoppedBeforeReady   = errors.New("olcRTC stopped before becoming ready")
 	errStartTimedOut        = errors.New("olcRTC start timed out")
@@ -113,12 +116,18 @@ func SetProviders() {
 }
 
 // SetTransport selects the transport used by Start.
-// Supported values: vp8channel and datachannel.
-func SetTransport(transport string) {
+// Supported values: vp8channel and datachannel. Unknown names are rejected
+// instead of silently falling back, so a typo cannot start the wrong stack.
+func SetTransport(transport string) error {
+	normalized := normalizeTransport(transport)
+	if normalized == "" {
+		return errUnsupportedTransport
+	}
 	mu.Lock()
 	defer mu.Unlock()
 	ensureDefaultConfigLocked()
-	defaults.transport = normalizeTransport(transport)
+	defaults.transport = normalized
+	return nil
 }
 
 // SetDNS selects the DNS server used by the tunnel.
@@ -223,7 +232,13 @@ func Check(
 
 	carrierName = normalizeCarrier(carrierName)
 	transportName = normalizeTransport(transportName)
+	if transportName == "" {
+		return 0, errUnsupportedTransport
+	}
 	if err := validateStartArgs(carrierName, roomID, clientID, keyHex); err != nil {
+		return 0, err
+	}
+	if err := validateCarrierTransport(carrierName, transportName); err != nil {
 		return 0, err
 	}
 
@@ -307,8 +322,14 @@ func Ping(
 
 	carrierName = normalizeCarrier(carrierName)
 	transportName = normalizeTransport(transportName)
+	if transportName == "" {
+		return 0, errUnsupportedTransport
+	}
 
 	if err := validateStartArgs(carrierName, roomID, clientID, keyHex); err != nil {
+		return 0, err
+	}
+	if err := validateCarrierTransport(carrierName, transportName); err != nil {
 		return 0, err
 	}
 
@@ -555,14 +576,24 @@ func startWithConfig(
 
 	registerDefaults()
 	carrierName = normalizeCarrier(carrierName)
-	if transportName != "" {
-		cfg.transport = normalizeTransport(transportName)
-	}
-
 	if cancel != nil {
 		return errAlreadyRunning
 	}
+	if transportName != "" {
+		transportName = normalizeTransport(transportName)
+		if transportName == "" {
+			return errUnsupportedTransport
+		}
+		cfg.transport = transportName
+	}
+	if cfg.transport == "" {
+		return errTransportRequired
+	}
+
 	if err := validateStartArgs(carrierName, roomID, clientID, keyHex); err != nil {
+		return err
+	}
+	if err := validateCarrierTransport(carrierName, cfg.transport); err != nil {
 		return err
 	}
 
@@ -739,13 +770,17 @@ func livenessConfig(cfg mobileConfig) control.Config {
 }
 
 func normalizeTransport(value string) string {
+	// Issue #52: unknown names used to silently become vp8channel, hiding a
+	// misconfiguration that then fails as an incompatible carrier combo.
+	// Keep the legacy aliases, but surface anything else as an explicit
+	// error at the call site instead of guessing.
 	switch value {
 	case dataTransport, "data", "dc":
 		return dataTransport
 	case defaultTransport, "vp8":
 		return defaultTransport
 	default:
-		return defaultTransport
+		return ""
 	}
 }
 
@@ -769,6 +804,25 @@ func validateStartArgs(carrierName, roomID, clientID, keyHex string) error {
 	default:
 		return nil
 	}
+}
+
+// validateCarrierTransport enforces the issue #52 product matrix:
+// telemost/wbstream work only over vp8channel, jitsi only over datachannel.
+// seichannel/videochannel are dead on this project and rejected everywhere.
+func validateCarrierTransport(carrierName, transportName string) error {
+	switch carrierName {
+	case "telemost", carrierWBStream:
+		if transportName != defaultTransport {
+			return fmt.Errorf("%w: %s+%s", errIncompatibleCombo, carrierName, transportName)
+		}
+	case "jitsi":
+		if transportName != dataTransport {
+			return fmt.Errorf("%w: %s+%s", errIncompatibleCombo, carrierName, transportName)
+		}
+	default:
+		return fmt.Errorf("%w: unknown carrier %q", errIncompatibleCombo, carrierName)
+	}
+	return nil
 }
 
 func buildRoomURL(_ string, roomID string) string {

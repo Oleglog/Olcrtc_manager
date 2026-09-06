@@ -83,7 +83,9 @@ func TestProtectorAndLogging(t *testing.T) {
 func TestDefaultsAndSetters(t *testing.T) {
 	resetMobileGlobals(t)
 
-	SetTransport("dc")
+	if err := SetTransport("dc"); err != nil {
+		t.Fatalf("SetTransport(dc) = %v", err)
+	}
 	SetDNS("9.9.9.9:53")
 	SetVP8Options(-1, 999)
 	SetLivenessOptions(2500, 750, -1)
@@ -106,6 +108,10 @@ func TestDefaultsAndSetters(t *testing.T) {
 	if logger.IsVerbose() {
 		t.Fatal("SetDebug(false) did not disable verbose")
 	}
+
+	if err := SetTransport("seichannel"); !errors.Is(err, errUnsupportedTransport) {
+		t.Fatalf("SetTransport(seichannel) = %v, want errUnsupportedTransport", err)
+	}
 }
 
 func TestNormalizeBuildRoomAndClamp(t *testing.T) {
@@ -115,7 +121,9 @@ func TestNormalizeBuildRoomAndClamp(t *testing.T) {
 		"dc":          dataTransport,
 		"vp8channel":  defaultTransport,
 		"vp8":         defaultTransport,
-		"bad":         defaultTransport,
+		"bad":         "",
+		"seichannel":  "",
+		"":            "",
 	}
 	for in, want := range tests {
 		if got := normalizeTransport(in); got != want {
@@ -160,6 +168,42 @@ func TestStartValidation(t *testing.T) {
 	mu.Unlock()
 	if err := startWithConfig("jitsi", dataTransport, testRoomID, "client", "key", 1080, "", "", mobileConfig{}); !errors.Is(err, errAlreadyRunning) { //nolint:lll // long test description
 		t.Fatalf("startWithConfig(running) = %v", err)
+	}
+	resetMobileGlobals(t)
+}
+
+func TestCarrierTransportValidation(t *testing.T) {
+	resetMobileGlobals(t)
+
+	compatible := [][2]string{
+		{"telemost", defaultTransport},
+		{"wbstream", defaultTransport},
+		{"jitsi", dataTransport},
+	}
+	for _, combo := range compatible {
+		if err := validateCarrierTransport(combo[0], combo[1]); err != nil {
+			t.Fatalf("validateCarrierTransport(%q, %q) = %v", combo[0], combo[1], err)
+		}
+	}
+
+	incompatible := [][2]string{
+		{"telemost", dataTransport},
+		{"wbstream", dataTransport},
+		{"jitsi", defaultTransport},
+		{"telemost", "seichannel"},
+		{"unknown", defaultTransport},
+	}
+	for _, combo := range incompatible {
+		if err := validateCarrierTransport(combo[0], combo[1]); !errors.Is(err, errIncompatibleCombo) {
+			t.Fatalf("validateCarrierTransport(%q, %q) = %v, want errIncompatibleCombo", combo[0], combo[1], err)
+		}
+	}
+
+	if err := startWithConfig("telemost", dataTransport, testRoomID, "client", "key", 1080, "", "", mobileConfig{}); !errors.Is(err, errIncompatibleCombo) {
+		t.Fatalf("startWithConfig(telemost+datachannel) = %v", err)
+	}
+	if err := startWithConfig("jitsi", "seichannel", testRoomID, "client", "key", 1080, "", "", mobileConfig{}); !errors.Is(err, errUnsupportedTransport) {
+		t.Fatalf("startWithConfig(jitsi+seichannel) = %v", err)
 	}
 	resetMobileGlobals(t)
 }
