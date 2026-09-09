@@ -634,12 +634,6 @@ func (p *streamTransport) writerLoop() {
 			// bytes queued. Coalescing back-to-back frames here only adds up
 			// to one frameInterval of latency per message for zero wire
 			// savings — the batcher drains the queue non-blockingly below.
-			ticksSinceKeepalive++
-			if ticksSinceKeepalive >= forceKeepaliveEvery {
-				ticksSinceKeepalive = 0
-				hdr := p.epochHeader()
-				p.writeTrackSample(hdr[:])
-			}
 			p.writeTrackSample(p.batchSample(frame, p.perTickBytes))
 			idleTicks = 0
 		case <-ticker.C:
