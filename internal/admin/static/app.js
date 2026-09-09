@@ -1265,28 +1265,85 @@ function createJitsiPresetPanel(roomInput, bridgeModeInput, transportInput) {
 }
 
 // ── Settings page ────────────────────────────────────────────────────────────
+let activeSettingsTab = localStorage.getItem('olcrtc_settings_tab') || 'network';
+
 async function renderSettings(app) {
   const frame = renderShell('settings');
   const main = frame.main;
-  const wrap = el('div', 'max-w-2xl mx-auto');
+  const wrap = el('div', 'max-w-3xl mx-auto');
 
   let sys = {};
   try { sys = await api('/system/status'); } catch (e) {}
   let wbAutomation = {};
   try { wbAutomation = await api('/wb-automation/components'); } catch (e) {}
 
-  const card = el('div', 'card p-5 space-y-6');
+  // Top Title
+  const header = el('div', 'flex items-center justify-between mb-4');
+  header.innerHTML = '<h2 class="text-xl font-bold" style="color:var(--color-ink);">Настройки сервера</h2>';
+  wrap.appendChild(header);
 
-  // Domain
-  const domBlock = el('div', '');
-  domBlock.innerHTML = '<h3 class="font-semibold mb-2 inline-flex items-center gap-2">' + icon('shield', 16) + '<span>Домен</span></h3>';
-  const domCurrent = el('div', 'text-sm text-gray-400 mb-2', sys.domain ? 'Текущий: ' + sys.domain : 'Текущий: (не привязан)');
+  // Tabs Bar
+  const tabBar = el('div', 'tab-bar');
+  const tabs = [
+    { id: 'network', label: 'Сеть и домены', icon: 'wifi' },
+    { id: 'updates', label: 'Обновления и логи', icon: 'download' },
+    { id: 'security', label: 'Безопасность', icon: 'key' },
+    { id: 'integrations', label: 'Интеграции', icon: 'sliders-horizontal' },
+  ];
+
+  const panes = {};
+  const tabButtons = {};
+
+  function switchTab(targetId) {
+    activeSettingsTab = targetId;
+    localStorage.setItem('olcrtc_settings_tab', targetId);
+    tabs.forEach(t => {
+      const btn = tabButtons[t.id];
+      const pane = panes[t.id];
+      if (btn) {
+        if (t.id === targetId) btn.classList.add('tab-btn-active');
+        else btn.classList.remove('tab-btn-active');
+      }
+      if (pane) {
+        pane.style.display = t.id === targetId ? 'flex' : 'none';
+      }
+    });
+  }
+
+  tabs.forEach(t => {
+    const btn = el('button', 'tab-btn' + (t.id === activeSettingsTab ? ' tab-btn-active' : ''));
+    btn.innerHTML = icon(t.icon, 16) + '<span>' + t.label + '</span>';
+    btn.onclick = () => switchTab(t.id);
+    tabButtons[t.id] = btn;
+    tabBar.appendChild(btn);
+  });
+  wrap.appendChild(tabBar);
+
+  // --- Pane 1: Network & Domains ---
+  const paneNetwork = el('div', 'flex flex-col gap-4');
+  paneNetwork.style.display = activeSettingsTab === 'network' ? 'flex' : 'none';
+  panes['network'] = paneNetwork;
+
+  // Domain Card
+  const domCard = el('div', 'card p-5 flex flex-col gap-3');
+  domCard.innerHTML = `
+    <div class="flex items-center gap-2">
+      ${icon('shield', 18)}
+      <h3 class="font-bold text-base" style="color:var(--color-ink);">Основной домен сервера (TLS)</h3>
+    </div>
+    <div class="text-xs" style="color:var(--color-ink-subtle);">
+      Привязка домена для автоматического получения и продления SSL-сертификата Let's Encrypt (порты 80/443).
+    </div>
+  `;
+  const domCurrent = el('div', 'text-sm mb-1', sys.domain ? 'Текущий домен: ' + sys.domain : 'Текущий домен: (не привязан, self-signed)');
+  domCurrent.style.color = sys.domain ? 'var(--color-primary)' : 'var(--color-ink-muted)';
+  domCurrent.style.fontWeight = '500';
   const domInp = el('input', '');
   domInp.placeholder = 'sub.example.com';
   domInp.setAttribute('aria-label', 'Домен');
-  const domRow = el('div', 'flex gap-2 mt-2 flex-wrap');
+  const domRow = el('div', 'flex gap-2 flex-wrap items-center mt-1');
   const domBtn = el('button', 'btn btn-primary');
-  domBtn.textContent = 'Привязать';
+  domBtn.textContent = 'Привязать домен';
   domBtn.onclick = async () => {
     await withLoading(domBtn, async () => {
       try {
@@ -1302,7 +1359,7 @@ async function renderSettings(app) {
   domRow.appendChild(domBtn);
   if (sys.domain) {
     const unbindBtn = el('button', 'btn btn-danger');
-    unbindBtn.textContent = 'Отвязать';
+    unbindBtn.textContent = 'Отвязать домен';
     unbindBtn.onclick = async () => {
       const ok = await showConfirm({ title: 'Отвязать домен?', message: 'Сервер вернётся к self-signed сертификату после перезапуска.', danger: true });
       if (!ok) return;
@@ -1311,38 +1368,117 @@ async function renderSettings(app) {
     };
     domRow.appendChild(unbindBtn);
   }
-  domBlock.appendChild(domCurrent);
-  domBlock.appendChild(domInp);
-  domBlock.appendChild(domRow);
-  card.appendChild(domBlock);
+  domCard.appendChild(domCurrent);
+  domCard.appendChild(domInp);
+  domCard.appendChild(domRow);
+  paneNetwork.appendChild(domCard);
 
-  // Ports
-  const portBlock = el('div', '');
-  portBlock.innerHTML = `<h3 class="font-semibold mb-2 inline-flex items-center gap-2">${icon('wifi', 16)}<span>Порты</span></h3>
-    <div class="text-sm text-gray-300">Admin UI: <span class="copyable">${sys.admin_port || '-'}</span></div>
-    <div class="text-sm text-gray-300">Подписки: через Admin UI <span class="copyable">/sub/&lt;slug&gt;</span></div>
-    <div class="text-xs text-gray-500">Legacy sub port: ${sys.sub_port || '-'}</div>`;
-  card.appendChild(portBlock);
+  // Subscription URL Card
+  const subUrlCard = el('div', 'card p-5 flex flex-col gap-3');
+  subUrlCard.innerHTML = `
+    <div class="flex items-center gap-2">
+      ${icon('tag', 18)}
+      <h3 class="font-bold text-base" style="color:var(--color-ink);">Публичный URL подписок</h3>
+    </div>
+    <div class="text-xs" style="color:var(--color-ink-subtle);">
+      Укажите FreeDNS или внешний домен (например, https://your-domain.mooo.com). Ссылки подписок для клиентов будут формироваться с этим адресом.
+    </div>
+  `;
+  const subUrlCurrent = el('div', 'text-sm mb-1', sys.subscription_public_url ? 'Текущий URL: ' + sys.subscription_public_url : 'Текущий: используется базовый URL админки');
+  subUrlCurrent.style.color = sys.subscription_public_url ? 'var(--color-primary)' : 'var(--color-ink-muted)';
+  subUrlCurrent.style.fontWeight = '500';
+  const subUrlInp = el('input', '');
+  subUrlInp.placeholder = 'https://your-domain.mooo.com';
+  subUrlInp.value = sys.subscription_public_url || '';
+  subUrlInp.setAttribute('aria-label', 'Публичный URL подписок');
+  const subUrlRow = el('div', 'flex gap-2 flex-wrap items-center mt-1');
+  const subUrlBtn = el('button', 'btn btn-primary');
+  subUrlBtn.textContent = 'Сохранить URL подписок';
+  subUrlBtn.onclick = async () => {
+    await withLoading(subUrlBtn, async () => {
+      try {
+        const res = await api('/system/subscription-url', { method: 'POST', body: JSON.stringify({ public_url: subUrlInp.value }) });
+        showToast(res.message || 'URL подписок сохранён');
+        render();
+      } catch (e) {
+        try { const err = JSON.parse(e.message); showToast(err.message || e.message, 'error'); }
+        catch { showToast(e.message, 'error'); }
+      }
+    });
+  };
+  subUrlRow.appendChild(subUrlBtn);
+  if (sys.subscription_public_url) {
+    const resetSubUrlBtn = el('button', 'btn btn-secondary');
+    resetSubUrlBtn.textContent = 'Сбросить';
+    resetSubUrlBtn.onclick = async () => {
+      await api('/system/subscription-url', { method: 'DELETE' });
+      render();
+    };
+    subUrlRow.appendChild(resetSubUrlBtn);
+  }
+  subUrlCard.appendChild(subUrlCurrent);
+  subUrlCard.appendChild(subUrlInp);
+  subUrlCard.appendChild(subUrlRow);
+  paneNetwork.appendChild(subUrlCard);
 
-  // Server Updates
-  const updateBlock = el('div', '');
-  updateBlock.innerHTML = '<h3 class="font-semibold mb-2 inline-flex items-center gap-2">' + icon('download', 16) + '<span>Обновления</span></h3>';
-  const versionInfo = el('div', 'text-sm mb-3');
+  // Ports Card
+  const portCard = el('div', 'card p-5 flex flex-col gap-3');
+  portCard.innerHTML = `
+    <div class="flex items-center gap-2">
+      ${icon('wifi', 18)}
+      <h3 class="font-bold text-base" style="color:var(--color-ink);">Порты и маршрутизация</h3>
+    </div>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-1">
+      <div class="metric-card">
+        <div class="text-xs uppercase font-semibold tracking-wider" style="color:var(--color-ink-subtle);">Admin UI</div>
+        <div class="text-sm font-semibold copyable mt-1" style="color:var(--color-ink);">${sys.admin_port || '-'}</div>
+      </div>
+      <div class="metric-card">
+        <div class="text-xs uppercase font-semibold tracking-wider" style="color:var(--color-ink-subtle);">Подписки</div>
+        <div class="text-sm font-semibold copyable mt-1" style="color:var(--color-ink);">/sub/&lt;slug&gt;</div>
+      </div>
+      <div class="metric-card">
+        <div class="text-xs uppercase font-semibold tracking-wider" style="color:var(--color-ink-subtle);">Legacy sub port</div>
+        <div class="text-sm font-semibold copyable mt-1" style="color:var(--color-ink);">${sys.sub_port || '-'}</div>
+      </div>
+    </div>
+  `;
+  paneNetwork.appendChild(portCard);
+  wrap.appendChild(paneNetwork);
+
+  // --- Pane 2: Updates & Logs ---
+  const paneUpdates = el('div', 'flex flex-col gap-4');
+  paneUpdates.style.display = activeSettingsTab === 'updates' ? 'flex' : 'none';
+  panes['updates'] = paneUpdates;
+
+  // Server Updates Card
+  const updateCard = el('div', 'card p-5 flex flex-col gap-3');
+  updateCard.innerHTML = `
+    <div class="flex items-center gap-2">
+      ${icon('download', 18)}
+      <h3 class="font-bold text-base" style="color:var(--color-ink);">Обновления сервера</h3>
+    </div>
+  `;
   const currentSysVersion = (sys.version || '').toString();
   const currentSysBranch = (sys.release_branch || 'master').toString();
-  versionInfo.innerHTML = '<div class="text-gray-300">Текущая версия: <span class="copyable">' + (currentSysVersion || '-') + '</span></div>' +
-    '<div class="text-gray-300">Текущая ветка: <span class="copyable">' + currentSysBranch + '</span></div>';
-  updateBlock.appendChild(versionInfo);
+  const versionInfo = el('div', 'flex items-center gap-4 text-sm');
+  versionInfo.innerHTML = `
+    <div>Версия: <span class="font-mono font-semibold" style="color:var(--color-primary);">${currentSysVersion || '-'}</span></div>
+    <div>Ветка: <span class="font-mono font-semibold" style="color:var(--color-ink);">${currentSysBranch}</span></div>
+  `;
+  updateCard.appendChild(versionInfo);
 
-  const updateRow = el('div', 'flex gap-2 flex-wrap items-center');
+  const updateRow = el('div', 'flex gap-2 flex-wrap items-center mt-1');
   const checkBtn = el('button', 'btn btn-secondary');
   checkBtn.innerHTML = icon('refresh-cw') + '<span>Проверить обновления</span>';
+  updateRow.appendChild(checkBtn);
+  updateCard.appendChild(updateRow);
 
-  const branchRow = el('div', 'flex gap-2 flex-wrap items-center mt-3');
-  const branchLabel = el('span', 'text-sm text-gray-300');
-  branchLabel.textContent = 'Ветка бинарников:';
-  const branchSelect = el('select', 'bg-gray-800 text-white text-sm border border-gray-700 rounded px-2 py-1');
-  branchSelect.style.cssText = 'min-width:180px;';
+  const branchRow = el('div', 'flex gap-2 flex-wrap items-center mt-2');
+  const branchLabel = el('span', 'text-sm font-medium', 'Ветка бинарников:');
+  branchLabel.style.color = 'var(--color-ink-muted)';
+  const branchSelect = el('select', '');
+  branchSelect.style.cssText = 'max-width:240px;';
   branchSelect.setAttribute('aria-label', 'Ветка бинарников');
   const releaseBranchStorageKey = 'olcrtc-release-branch';
   let preferredBranch = 'master';
@@ -1355,23 +1491,20 @@ async function renderSettings(app) {
   branchSelect.value = preferredBranch;
   branchRow.appendChild(branchLabel);
   branchRow.appendChild(branchSelect);
+  updateCard.appendChild(branchRow);
 
-  // Version selector + install button row (rendered after releases load)
-  const selectorRow = el('div', 'flex gap-2 flex-wrap items-center mt-3');
+  // Version selector + install button row
+  const selectorRow = el('div', 'flex gap-2 flex-wrap items-center mt-2');
   selectorRow.style.display = 'none';
-  const selectorLabel = el('span', 'text-sm text-gray-300');
-  selectorLabel.textContent = 'Установить версию:';
-  const versionSelect = el('select', 'bg-gray-800 text-white text-sm border border-gray-700 rounded px-2 py-1');
-  versionSelect.style.cssText = 'min-width:160px;';
+  const selectorLabel = el('span', 'text-sm font-medium', 'Установить версию:');
+  selectorLabel.style.color = 'var(--color-ink-muted)';
+  const versionSelect = el('select', '');
+  versionSelect.style.cssText = 'max-width:240px;';
   const installBtn = el('button', 'btn btn-primary');
   let availableReleases = [];
 
   function normVer(v) { return ('' + (v || '')).replace(/^v/, ''); }
-
-  function selectedRelease() {
-    return availableReleases.find((release) => release.tag === versionSelect.value);
-  }
-
+  function selectedRelease() { return availableReleases.find((release) => release.tag === versionSelect.value); }
   function refreshInstallBtn() {
     const target = selectedRelease();
     const isCurrent = !!target && target.branch === currentSysBranch && normVer(target.version) === normVer(currentSysVersion);
@@ -1398,9 +1531,7 @@ async function renderSettings(app) {
     } catch (e) {
       console.error('Не удалось проверить активные подключения перед обновлением', e);
     }
-    const busyWarning = activePeers > 0
-      ? 'Сейчас активно подключений: ' + activePeers + '. Они будут оборваны. '
-      : '';
+    const busyWarning = activePeers > 0 ? 'Сейчас активно подключений: ' + activePeers + '. Они будут оборваны. ' : '';
     const ok = await showConfirm({
       title: isDowngrade ? 'Откатить версию?' : 'Обновить сервер?',
       message: busyWarning + (isDowngrade ? 'Будет установлена более старая версия ' : 'Будет установлена версия ') + target.version +
@@ -1409,9 +1540,6 @@ async function renderSettings(app) {
       confirmText: isDowngrade ? 'Откатить' : 'Установить',
     });
     if (!ok) return;
-    // The overlay only starts polling after the POST went through: /tmp holds the
-    // previous run's state until the server reseeds it, so polling earlier would
-    // surface an old "error" phase and kill this update's progress view.
     showUpdateOverlay(target.version, target.branch, () =>
       api('/system/update', { method: 'POST', body: JSON.stringify({ tag: target.tag, branch: target.branch, version: target.version }) }));
   };
@@ -1419,6 +1547,7 @@ async function renderSettings(app) {
   selectorRow.appendChild(selectorLabel);
   selectorRow.appendChild(versionSelect);
   selectorRow.appendChild(installBtn);
+  updateCard.appendChild(selectorRow);
 
   function renderVersionsForBranch() {
     const branch = branchSelect.value;
@@ -1518,33 +1647,109 @@ async function renderSettings(app) {
     });
   };
 
-  updateRow.appendChild(checkBtn);
-  updateBlock.appendChild(updateRow);
-  updateBlock.appendChild(branchRow);
-  updateBlock.appendChild(selectorRow);
-  card.appendChild(updateBlock);
+  paneUpdates.appendChild(updateCard);
   loadReleasesIntoSelect();
 
-  // WB Stream browser automation
-  const wbBlock = el('div', 'pt-2 border-t border-white/10');
-  wbBlock.innerHTML = '<h3 class="font-semibold mb-2 inline-flex items-center gap-2">' + icon('video', 16) + '<span>WB Stream · автоматизация браузера</span></h3>';
-  const wbStatus = el('div', 'text-sm text-gray-300 mb-2');
+  // Logs Card
+  const logsCard = el('div', 'card p-5 flex flex-col gap-3');
+  logsCard.innerHTML = `
+    <div class="flex items-center gap-2">
+      ${icon('sliders-horizontal', 18)}
+      <h3 class="font-bold text-base" style="color:var(--color-ink);">Системные логи</h3>
+    </div>
+    <div class="text-xs" style="color:var(--color-ink-subtle);">
+      Просмотр журналов journalctl systemd для отладки туннелей и веб-сервера.
+    </div>
+  `;
+  const logsWrap = el('div', 'flex gap-2 flex-wrap mt-1');
+  ['olcrtc-server', 'olcrtc-admin'].forEach(svc => {
+    const btn = el('button', 'btn btn-secondary btn-sm');
+    btn.innerHTML = icon('eye', 14) + '<span>' + svc + '</span>';
+    btn.onclick = () => showLogsModal(svc);
+    logsWrap.appendChild(btn);
+  });
+  logsCard.appendChild(logsWrap);
+  paneUpdates.appendChild(logsCard);
+  wrap.appendChild(paneUpdates);
+
+  // --- Pane 3: Security ---
+  const paneSecurity = el('div', 'flex flex-col gap-4');
+  paneSecurity.style.display = activeSettingsTab === 'security' ? 'flex' : 'none';
+  panes['security'] = paneSecurity;
+
+  const secCard = el('div', 'card p-5 flex flex-col gap-3');
+  secCard.innerHTML = `
+    <div class="flex items-center gap-2">
+      ${icon('key', 18)}
+      <h3 class="font-bold text-base" style="color:var(--color-ink);">Учётная запись администратора</h3>
+    </div>
+    <div class="text-xs" style="color:var(--color-ink-subtle);">
+      Смена логина и пароля для входа в панель управления OlCRTC Admin.
+    </div>
+  `;
+  const secGrid = el('div', 'grid grid-cols-1 md:grid-cols-2 gap-3 mt-1');
+  const userField = makeInputField('Логин', icon('tag', 14), creds ? creds.username : 'admin', {});
+  const passField = makeInputField('Пароль', icon('lock', 14), creds ? creds.password : '', { placeholder: 'Новый пароль' });
+  passField.input.type = 'password';
+  secGrid.appendChild(userField.field);
+  secGrid.appendChild(passField.field);
+  secCard.appendChild(secGrid);
+
+  const secRow = el('div', 'flex gap-2 mt-1');
+  const changeCredsBtn = el('button', 'btn btn-primary');
+  changeCredsBtn.textContent = 'Сохранить новый пароль';
+  changeCredsBtn.onclick = async () => {
+    const u = userField.input.value.trim();
+    const p = passField.input.value.trim();
+    if (!u || !p) { showToast('Логин и пароль обязательны', 'error'); return; }
+    await withLoading(changeCredsBtn, async () => {
+      try {
+        await api('/auth/change-credentials', { method: 'POST', body: JSON.stringify({ username: u, password: p }) });
+        creds = { username: u, password: p };
+        localStorage.setItem('olcrtc_creds', JSON.stringify(creds));
+        showToast('Логин/пароль успешно обновлены');
+      } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
+    });
+  };
+  secRow.appendChild(changeCredsBtn);
+  secCard.appendChild(secRow);
+  paneSecurity.appendChild(secCard);
+  wrap.appendChild(paneSecurity);
+
+  // --- Pane 4: Integrations ---
+  const paneIntegrations = el('div', 'flex flex-col gap-4');
+  paneIntegrations.style.display = activeSettingsTab === 'integrations' ? 'flex' : 'none';
+  panes['integrations'] = paneIntegrations;
+
+  // WB Stream Card
+  const wbCard = el('div', 'card p-5 flex flex-col gap-3');
+  wbCard.innerHTML = `
+    <div class="flex items-center gap-2">
+      ${icon('video', 18)}
+      <h3 class="font-bold text-base" style="color:var(--color-ink);">WB Stream · Автоматизация браузера</h3>
+    </div>
+    <div class="text-xs" style="color:var(--color-ink-subtle);">
+      Удалённый Chromium на VPS (Playwright, noVNC) запускается только на время входа для автоматического получения токенов.
+    </div>
+  `;
+  const wbStatus = el('div', 'text-sm font-medium mt-1');
   wbStatus.textContent = !wbAutomation.supported
-    ? 'Эта платформа не поддерживается'
+    ? 'Платформа не поддерживается'
     : (wbAutomation.installed ? 'Компоненты установлены' : 'Компоненты не установлены');
-  wbBlock.appendChild(wbStatus);
-  wbBlock.appendChild(el('div', 'text-xs text-gray-500 mb-3', 'Удалённый Chromium запускается на VPS только на время входа. Поддерживаются Ubuntu/Debian x86_64.'));
+  wbStatus.style.color = wbAutomation.installed ? 'var(--color-success)' : 'var(--color-ink-subtle)';
+  wbCard.appendChild(wbStatus);
 
   if (wbAutomation.token_expires_at) {
     const expiry = new Date(wbAutomation.token_expires_at * 1000);
-    const tokenLine = el('div', 'text-sm mb-3 ' + (wbAutomation.token_expired ? 'text-red-300' : 'text-emerald-300'));
+    const tokenLine = el('div', 'text-xs font-semibold');
+    tokenLine.style.color = wbAutomation.token_expired ? 'var(--color-error)' : 'var(--color-success)';
     tokenLine.textContent = wbAutomation.token_expired
       ? 'Общий WB-токен истёк: ' + expiry.toLocaleString()
       : 'Общий WB-токен действует до: ' + expiry.toLocaleString();
-    wbBlock.appendChild(tokenLine);
+    wbCard.appendChild(tokenLine);
   }
 
-  const wbButtons = el('div', 'flex gap-2 flex-wrap mb-3');
+  const wbButtons = el('div', 'flex gap-2 flex-wrap mt-1');
   if (!wbAutomation.installed && wbAutomation.supported) {
     const installWBBtn = el('button', 'btn btn-primary');
     installWBBtn.textContent = 'Установить компоненты';
@@ -1562,7 +1767,7 @@ async function renderSettings(app) {
     };
     wbButtons.appendChild(installWBBtn);
   } else if (!wbAutomation.installed) {
-    wbButtons.appendChild(el('div', 'text-xs text-amber-300', 'Нужна Ubuntu/Debian x86_64.'));
+    wbButtons.appendChild(el('div', 'text-xs text-amber-400', 'Нужна Ubuntu/Debian x86_64.'));
   } else {
     if (wbAutomation.supported) {
       const refreshWBBtn = el('button', 'btn btn-primary');
@@ -1587,11 +1792,15 @@ async function renderSettings(app) {
     };
     wbButtons.appendChild(removeWBBtn);
   }
-  wbBlock.appendChild(wbButtons);
+  wbCard.appendChild(wbButtons);
 
+  // Proxy Block
+  const proxyHeader = el('div', 'text-xs font-semibold uppercase tracking-wider mt-3', 'Прокси для сессий WB');
+  proxyHeader.style.color = 'var(--color-ink-subtle)';
+  wbCard.appendChild(proxyHeader);
   const proxyGrid = el('div', 'grid grid-cols-1 md:grid-cols-3 gap-2');
   const proxyServer = el('input', '');
-  proxyServer.placeholder = 'socks5://host:port, http:// или https://';
+  proxyServer.placeholder = 'socks5://host:port';
   proxyServer.value = wbAutomation.proxy_server || '';
   proxyServer.setAttribute('aria-label', 'WB browser proxy');
   const proxyUser = el('input', '');
@@ -1599,12 +1808,14 @@ async function renderSettings(app) {
   proxyUser.value = wbAutomation.proxy_username || '';
   const proxyPass = el('input', '');
   proxyPass.type = 'password';
-  proxyPass.placeholder = wbAutomation.proxy_has_password ? '•••• (оставьте пустым, чтобы сохранить)' : 'Пароль прокси';
+  proxyPass.placeholder = wbAutomation.proxy_has_password ? '•••• (сохранён)' : 'Пароль прокси';
   proxyGrid.appendChild(proxyServer);
   proxyGrid.appendChild(proxyUser);
   proxyGrid.appendChild(proxyPass);
-  wbBlock.appendChild(proxyGrid);
-  const saveProxyBtn = el('button', 'btn btn-secondary mt-2');
+  wbCard.appendChild(proxyGrid);
+
+  const proxyBtns = el('div', 'flex gap-2 flex-wrap mt-1');
+  const saveProxyBtn = el('button', 'btn btn-secondary');
   saveProxyBtn.textContent = 'Сохранить прокси WB';
   saveProxyBtn.onclick = async () => {
     await withLoading(saveProxyBtn, async () => {
@@ -1618,10 +1829,10 @@ async function renderSettings(app) {
       } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
     });
   };
-  wbBlock.appendChild(saveProxyBtn);
+  proxyBtns.appendChild(saveProxyBtn);
   if (wbAutomation.proxy_server) {
-    const clearProxyBtn = el('button', 'btn btn-secondary mt-2 ml-2');
-    clearProxyBtn.textContent = 'Сбросить прокси WB';
+    const clearProxyBtn = el('button', 'btn btn-ghost');
+    clearProxyBtn.textContent = 'Сбросить прокси';
     clearProxyBtn.onclick = async () => {
       await withLoading(clearProxyBtn, async () => {
         try {
@@ -1634,122 +1845,46 @@ async function renderSettings(app) {
         } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
       });
     };
-    wbBlock.appendChild(clearProxyBtn);
+    proxyBtns.appendChild(clearProxyBtn);
   }
-  card.appendChild(wbBlock);
+  wbCard.appendChild(proxyBtns);
+  paneIntegrations.appendChild(wbCard);
 
-  // Security
-  const secBlock = el('div', '');
-  secBlock.innerHTML = '<h3 class="font-semibold mb-2 inline-flex items-center gap-2">' + icon('key', 16) + '<span>Безопасность</span></h3>';
-  const secGrid = el('div', 'grid grid-cols-1 md:grid-cols-2 gap-3 mb-3');
-  const userField = makeInputField('Логин', icon('tag', 14), creds ? creds.username : 'admin', {});
-  const passField = makeInputField('Пароль', icon('lock', 14), creds ? creds.password : '', { placeholder: 'Новый пароль' });
-  passField.input.type = 'password';
-  secGrid.appendChild(userField.field);
-  secGrid.appendChild(passField.field);
-  secBlock.appendChild(secGrid);
-  const changeCredsBtn = el('button', 'btn btn-secondary');
-  changeCredsBtn.textContent = 'Сменить логин/пароль';
-  changeCredsBtn.onclick = async () => {
-    const u = userField.input.value.trim();
-    const p = passField.input.value.trim();
-    if (!u || !p) { showToast('Логин и пароль обязательны', 'error'); return; }
-    await withLoading(changeCredsBtn, async () => {
-      try {
-        await api('/auth/change-credentials', { method: 'POST', body: JSON.stringify({ username: u, password: p }) });
-        creds = { username: u, password: p };
-        localStorage.setItem('olcrtc_creds', JSON.stringify(creds));
-        showToast('Логин/пароль обновлены');
-      } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
-    });
-  };
-  secBlock.appendChild(changeCredsBtn);
-  card.appendChild(secBlock);
-
-  // Logs
-  const logBlock = el('div', '');
-  logBlock.innerHTML = '<h3 class="font-semibold mb-2 inline-flex items-center gap-2">' + icon('sliders-horizontal', 16) + '<span>Логи</span></h3>';
-  const logsWrap = el('div', 'flex gap-2 mb-2 flex-wrap');
-  ['olcrtc-server', 'olcrtc-admin'].forEach(svc => {
-    const btn = el('button', 'btn btn-secondary btn-sm');
-    btn.textContent = svc;
-    btn.onclick = () => showLogsModal(svc);
-    logsWrap.appendChild(btn);
-  });
-  logBlock.appendChild(logsWrap);
-  card.appendChild(logBlock);
-
-
-  // Subscription public URL
-  const subUrlBlock = el('div', 'pt-2 border-t border-white/10');
-  subUrlBlock.innerHTML = '<h3 class="font-semibold mb-2 inline-flex items-center gap-2">' + icon('rss', 16) + '<span>Домен подписок</span></h3>';
-  subUrlBlock.appendChild(el('div', 'text-sm text-gray-400 mb-2', sys.subscription_public_url ? 'Текущий: ' + sys.subscription_public_url : 'Текущий: используется URL админки'));
-  subUrlBlock.appendChild(el('div', 'text-xs text-gray-500 mb-2', 'Укажите FreeDNS/свой домен, например https://your-domain.mooo.com. Ссылки подписок будут генерироваться от него.'));
-  const subUrlInp = el('input', '');
-  subUrlInp.placeholder = 'https://your-domain.mooo.com';
-  subUrlInp.value = sys.subscription_public_url || '';
-  subUrlInp.setAttribute('aria-label', 'Публичный URL подписок');
-  const subUrlRow = el('div', 'flex gap-2 mt-2 flex-wrap');
-  const subUrlBtn = el('button', 'btn btn-primary');
-  subUrlBtn.textContent = 'Сохранить URL подписок';
-  subUrlBtn.onclick = async () => {
-    await withLoading(subUrlBtn, async () => {
-      try {
-        const res = await api('/system/subscription-url', { method: 'POST', body: JSON.stringify({ public_url: subUrlInp.value }) });
-        showToast(res.message || 'URL подписок сохранён');
-        render();
-      } catch (e) {
-        try { const err = JSON.parse(e.message); showToast(err.message || e.message, 'error'); }
-        catch { showToast(e.message, 'error'); }
-      }
-    });
-  };
-  subUrlRow.appendChild(subUrlBtn);
-  if (sys.subscription_public_url) {
-    const resetSubUrlBtn = el('button', 'btn btn-secondary');
-    resetSubUrlBtn.textContent = 'Сбросить';
-    resetSubUrlBtn.onclick = async () => {
-      await api('/system/subscription-url', { method: 'DELETE' });
-      render();
-    };
-    subUrlRow.appendChild(resetSubUrlBtn);
-  }
-  subUrlBlock.appendChild(subUrlInp);
-  subUrlBlock.appendChild(subUrlRow);
-  card.appendChild(subUrlBlock);
-
-  // Yandex Disk mirror (encrypted fallback)
-  const mirrorBlock = el('div', 'pt-2 border-t border-white/10');
-  mirrorBlock.innerHTML = '<h3 class="font-semibold mb-2 inline-flex items-center gap-2">' + icon('cloud', 16) + '<span>Yandex Disk mirror (encrypted fallback)</span></h3>';
-  mirrorBlock.appendChild(el('div', 'text-xs text-gray-500 mb-2', 'Сервер шифрует подписку AES-256-GCM и заливает на Yandex Disk. Клиент с выключенным туннелем скачивает mirror и расшифровывает.'));
-  const mirrorRow = el('div', 'flex flex-col gap-2 mt-2');
-
-  const enabledLabel = el('label', 'inline-flex items-center gap-2 text-sm');
+  // Yandex Disk Mirror Card
+  const mirrorCard = el('div', 'card p-5 flex flex-col gap-3');
+  mirrorCard.innerHTML = `
+    <div class="flex items-center gap-2">
+      ${icon('cloud', 18)}
+      <h3 class="font-bold text-base" style="color:var(--color-ink);">Яндекс.Диск Mirror (зашифрованный резерв)</h3>
+    </div>
+    <div class="text-xs" style="color:var(--color-ink-subtle);">
+      Сервер шифрует подписку по AES-256-GCM и загружает на Яндекс.Диск. Клиент с выключенным туннелем скачивает зеркало и безопасно расшифровывает.
+    </div>
+  `;
+  const enabledLabel = el('label', 'inline-flex items-center gap-2 text-sm font-medium mt-1 cursor-pointer');
   const enabledInp = el('input', '');
   enabledInp.type = 'checkbox';
   enabledInp.checked = !!sys.mirror_enabled;
   enabledLabel.appendChild(enabledInp);
-  enabledLabel.appendChild(el('span', '', 'Включить mirror'));
-  mirrorRow.appendChild(enabledLabel);
+  enabledLabel.appendChild(el('span', '', 'Включить автоматическую синхронизацию mirror'));
+  mirrorCard.appendChild(enabledLabel);
 
-  const tokenInp = el('input', 'w-full');
+  const tokenInp = el('input', 'mt-1');
   tokenInp.type = 'password';
   tokenInp.setAttribute('aria-label', 'Yandex OAuth токен');
-  tokenInp.placeholder = sys.mirror_token_present ? (sys.mirror_token_masked || '••••') : 'вставьте OAuth токен приложения Yandex';
+  tokenInp.placeholder = sys.mirror_token_present ? (sys.mirror_token_masked || '••••') : 'OAuth токен приложения Яндекс.Диск';
   if (sys.mirror_token_present) tokenInp.value = sys.mirror_token_masked || '••••';
-  mirrorRow.appendChild(tokenInp);
-  mirrorRow.appendChild(el('div', 'text-xs text-gray-500 mt-1', 'OAuth токен Yandex Disk. Не меняйте поле •••• если не хотите перезаписать токен.'));
+  mirrorCard.appendChild(tokenInp);
 
   const baseInp = el('input', '');
   baseInp.placeholder = '/olcrtc/subscriptions';
   baseInp.value = sys.mirror_base_path || '';
   baseInp.setAttribute('aria-label', 'Base path на Yandex Disk');
-  mirrorRow.appendChild(el('div', 'text-xs text-gray-500 mt-1', 'Путь на Yandex Disk, куда кладутся файлы подписок.'));
-  mirrorRow.appendChild(baseInp);
+  mirrorCard.appendChild(baseInp);
 
-  const mirrorBtns = el('div', 'flex gap-2 mt-2 flex-wrap');
+  const mirrorBtns = el('div', 'flex gap-2 flex-wrap items-center mt-2');
   const testBtn = el('button', 'btn btn-secondary');
-  testBtn.textContent = 'Тест upload';
+  testBtn.textContent = 'Тест загрузки';
   testBtn.onclick = async () => {
     await withLoading(testBtn, async () => {
       try {
@@ -1764,10 +1899,10 @@ async function renderSettings(app) {
       }
     });
   };
-  const saveBtn = el('button', 'btn btn-primary');
-  saveBtn.textContent = 'Сохранить mirror';
-  saveBtn.onclick = async () => {
-    await withLoading(saveBtn, async () => {
+  const saveMirrorBtn = el('button', 'btn btn-primary');
+  saveMirrorBtn.textContent = 'Сохранить mirror';
+  saveMirrorBtn.onclick = async () => {
+    await withLoading(saveMirrorBtn, async () => {
       try {
         const res = await api('/system/mirror-config', {
           method: 'POST',
@@ -1780,7 +1915,7 @@ async function renderSettings(app) {
         });
         showToast(res.message || 'Настройки зеркала сохранены', 'success');
         if (res.restarting) {
-          showToast('olcrtc-server автоматически перезапускается (~10 сек)', 'success');
+          showToast('olcrtc-server перезапускается (~10 сек)', 'success');
         }
         render();
       } catch (e) {
@@ -1790,12 +1925,11 @@ async function renderSettings(app) {
     });
   };
   mirrorBtns.appendChild(testBtn);
-  mirrorBtns.appendChild(saveBtn);
-  mirrorRow.appendChild(mirrorBtns);
-  mirrorBlock.appendChild(mirrorRow);
-  card.appendChild(mirrorBlock);
+  mirrorBtns.appendChild(saveMirrorBtn);
+  mirrorCard.appendChild(mirrorBtns);
+  paneIntegrations.appendChild(mirrorCard);
+  wrap.appendChild(paneIntegrations);
 
-  wrap.appendChild(card);
   main.appendChild(wrap);
   app.appendChild(frame.shell);
 }

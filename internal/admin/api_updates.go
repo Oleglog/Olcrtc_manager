@@ -18,7 +18,7 @@ import (
 )
 
 // Version is set via ldflags at build time.
-var Version = "1.9.80"
+var Version = "2.0.0"
 
 // ReleaseBranch identifies the release channel used to build the admin binary.
 // Stable builds use master; branch builds override it via ldflags.

@@ -747,6 +747,48 @@ input:disabled, input[readonly] {
   }
 }
 
+/* ── Tabs & Sub-navigation ─────────────────────────────────────────────── */
+.tab-bar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: var(--rounded-md);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-ink-muted);
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-hairline);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all .15s ease-in-out;
+}
+
+.tab-btn:hover {
+  background: var(--color-surface-2);
+  color: var(--color-ink);
+  border-color: var(--color-hairline-strong);
+}
+
+.tab-btn-active {
+  background: var(--color-lavender-subtle);
+  color: var(--color-primary);
+  border-color: var(--color-lavender-border);
+  font-weight: 600;
+}
+
+.tab-btn-active svg {
+  color: var(--color-primary);
+}
+
 /* ── Utility ────────────────────────────────────────────────────────────── */
 .copyable {
   font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
