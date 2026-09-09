@@ -139,6 +139,26 @@ function icon(name, sz) {
   return '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + body + '</svg>';
 }
 
+function renderBrandLogo(sz) {
+  const s = sz || 26;
+  const iconSz = Math.round(s * 0.68);
+  const fontSz = Math.max(16, Math.round(s * 0.62));
+  return '<div class="brand-logo" style="display:inline-flex;align-items:center;gap:10px;text-decoration:none;user-select:none;">' +
+    '<div class="brand-icon-box" style="width:' + s + 'px;height:' + s + 'px;display:flex;align-items:center;justify-content:center;border-radius:8px;background:var(--color-lavender-subtle);border:1px solid var(--color-lavender-border);color:var(--color-primary);flex-shrink:0;">' +
+      '<svg width="' + iconSz + '" height="' + iconSz + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">' +
+        '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>' +
+        '<circle cx="12" cy="11" r="3" fill="currentColor" fill-opacity="0.35"/>' +
+      '</svg>' +
+    '</div>' +
+    '<div style="display:flex;align-items:baseline;gap:6px;">' +
+      '<span style="font-size:' + fontSz + 'px;font-weight:800;letter-spacing:-0.5px;line-height:1;">' +
+        '<span style="color:var(--color-ink);">OlC</span><span style="color:var(--color-primary);">RTC</span>' +
+      '</span>' +
+      '<span class="brand-badge" style="font-size:9px;font-weight:700;padding:2px 5px;border-radius:4px;background:var(--color-lavender-subtle);color:var(--color-primary);border:1px solid var(--color-lavender-border);letter-spacing:0.5px;line-height:1;">ADMIN</span>' +
+    '</div>' +
+  '</div>';
+}
+
 function fmtStatusDot(st) {
   const map = { running: 'status-running', active: 'status-running', failed: 'status-failed' };
   return map[st] || 'status-inactive';
@@ -275,7 +295,7 @@ function renderShell(activeSection) {
   const sidebar = el('nav', 'sidebar');
 
   const brand = el('div', 'sidebar-brand');
-  brand.innerHTML = icon('shield', 18) + '<span>olcRTC Admin</span>';
+  brand.innerHTML = renderBrandLogo(26);
   sidebar.appendChild(brand);
 
   sections.forEach((s) => {
@@ -311,14 +331,12 @@ function renderShell(activeSection) {
 
 // ── Login ────────────────────────────────────────────────────────────────────
 function renderLogin(app) {
-  const box = el('div', 'flex items-center justify-center min-h-screen p-4');
-  const card = el('div', 'card p-8 w-full max-w-sm');
-  const title = el('h1', 'text-2xl font-bold text-center mb-2');
-  title.textContent = 'olcRTC Admin';
-  const subtitle = el('p', 'text-center text-gray-400 text-sm mb-6');
-  subtitle.textContent = 'Введите логин и пароль';
-  card.appendChild(title);
-  card.appendChild(subtitle);
+  const box = el('div', 'flex items-center justify-center min-h-screen p-4 login-page');
+  const card = el('div', 'card p-8 w-full max-w-sm login-card');
+  
+  const logoWrap = el('div', 'flex flex-col items-center mb-6');
+  logoWrap.innerHTML = '<div class="mb-2">' + renderBrandLogo(36) + '</div><div class="text-xs font-medium" style="color:var(--color-ink-subtle);">Панель управления сервером</div>';
+  card.appendChild(logoWrap);
 
   const userInp = el('input', 'mb-3');
   userInp.type = 'text';
@@ -334,7 +352,7 @@ function renderLogin(app) {
   const btn = el('button', 'btn btn-primary w-full');
   btn.textContent = 'Войти';
 
-  const err = el('div', 'text-rose-400 text-sm mt-2 hidden');
+  const err = el('div', 'text-rose-400 text-sm mt-2 hidden text-center');
 
   async function submit() {
     err.classList.add('hidden');
@@ -421,21 +439,59 @@ async function renderDashboard(app, section) {
 }
 
 function renderSystemBlock(sys) {
-  const sysCard = el('div', 'card p-4');
-  sysCard.innerHTML = `
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-      <div><div class="text-gray-500 text-xs uppercase tracking-wider mb-0.5">IP</div><div class="copyable">${sys.public_ip || '-'}</div></div>
-      <div><div class="text-gray-500 text-xs uppercase tracking-wider mb-0.5">OS</div><div>${sys.os || '-'}</div></div>
-      <div><div class="text-gray-500 text-xs uppercase tracking-wider mb-0.5">Uptime</div><div>${sys.uptime || '-'}</div></div>
-      <div><div class="text-gray-500 text-xs uppercase tracking-wider mb-0.5">TLS</div><div>${sys.tls_mode || '-'} ${sys.domain ? '('+sys.domain+')' : ''}</div></div>
-      <div><div class="text-gray-500 text-xs uppercase tracking-wider mb-0.5">Admin port</div><div>${sys.admin_port || '-'}</div></div>
-      <div><div class="text-gray-500 text-xs uppercase tracking-wider mb-0.5">Подписки</div><div>${sys.sub_enabled ? (sys.sub_running ? 'работают (Admin)' : 'ошибка запуска') : 'выкл'}</div></div>
-      <div><div class="text-gray-500 text-xs uppercase tracking-wider mb-0.5">Инстансы</div><div>${sys.instances_running || 0}/${sys.instances_total || 0}</div></div>
-      <div><div class="text-gray-500 text-xs uppercase tracking-wider mb-0.5">Активные подключения</div><div id="active-peer-count">0</div></div>
-      <div><div class="text-gray-500 text-xs uppercase tracking-wider mb-0.5">Версия</div><div>${sys.version || '-'}</div></div>
-    </div>`;
-  sysCard.querySelector('#active-peer-count').textContent = String(Number(sys.active_peers) || 0);
-  return sysCard;
+  const container = el('div', 'flex flex-col gap-4');
+
+  const banner = el('div', 'card p-5 flex flex-wrap items-center justify-between gap-4');
+  banner.innerHTML = `
+    <div class="flex items-center gap-3.5">
+      <div class="w-11 h-11 rounded-lg flex items-center justify-center flex-shrink-0" style="background:var(--color-lavender-subtle);color:var(--color-primary);border:1px solid var(--color-lavender-border);">
+        ${icon('shield', 24)}
+      </div>
+      <div>
+        <div class="flex items-center gap-2">
+          <h2 class="text-base font-bold" style="color:var(--color-ink);">Сервер OlCRTC</h2>
+          <span class="badge badge-emerald">онлайн</span>
+        </div>
+        <div class="text-xs mt-0.5" style="color:var(--color-ink-subtle);">Версия <span class="font-mono">${sys.version || '-'}</span> · ОС: ${sys.os || '-'}</div>
+      </div>
+    </div>
+    <div class="flex items-center gap-4">
+      <div class="text-right">
+        <div class="text-xs uppercase tracking-wider font-semibold" style="color:var(--color-ink-subtle);">Аптайм</div>
+        <div class="text-sm font-semibold" style="color:var(--color-ink);">${sys.uptime || '-'}</div>
+      </div>
+    </div>
+  `;
+  container.appendChild(banner);
+
+  const grid = el('div', 'grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3');
+  const items = [
+    { label: 'Активные пиры', val: String(Number(sys.active_peers) || 0), id: 'active-peer-count', highlight: true },
+    { label: 'Инстансы', val: (sys.instances_running || 0) + ' / ' + (sys.instances_total || 0) },
+    { label: 'Публичный IP', val: sys.public_ip || '-', copy: true },
+    { label: 'TLS / Домен', val: (sys.tls_mode || '-') + (sys.domain ? ' (' + sys.domain + ')' : '') },
+    { label: 'Порт админки', val: sys.admin_port || '-' },
+    { label: 'Подписки', val: sys.sub_enabled ? (sys.sub_running ? 'Включены' : 'Сбой') : 'Выключены' },
+  ];
+
+  items.forEach(it => {
+    const tile = el('div', 'metric-card flex flex-col justify-between');
+    const lbl = el('div', 'text-xs uppercase tracking-wider mb-1 font-semibold');
+    lbl.style.color = 'var(--color-ink-subtle)';
+    lbl.textContent = it.label;
+
+    const val = el('div', 'text-sm font-semibold truncate' + (it.copy ? ' copyable' : ''));
+    val.style.color = it.highlight ? 'var(--color-primary)' : 'var(--color-ink)';
+    if (it.id) val.id = it.id;
+    val.textContent = it.val;
+
+    tile.appendChild(lbl);
+    tile.appendChild(val);
+    grid.appendChild(tile);
+  });
+
+  container.appendChild(grid);
+  return container;
 }
 
 function renderInstancesBlock(instances, instanceMemberships) {
