@@ -54,6 +54,11 @@ carrier="${OLCRTC_CARRIER:-${OLCRTC_PROVIDER:-}}"
 [ "$carrier" = "jazz" ] && carrier="jitsi"
 [ "$carrier" = "salutejazz" ] && carrier="jitsi"
 
+if [ "$carrier" = "openflux" ]; then
+    echo "Starting openflux exit node for document: ${OLCRTC_ROOM_ID}"
+    exec /usr/local/bin/openflux --exit-node --url "${OLCRTC_ROOM_ID}" --transport "${OLCRTC_TRANSPORT:-vyandex}"
+fi
+
 if [ -z "$carrier" ] || [ -z "${OLCRTC_ROOM_ID:-}" ] || [ -z "${OLCRTC_KEY:-}" ]; then
     echo "olcrtc-launcher: missing required env (OLCRTC_CARRIER / OLCRTC_ROOM_ID / OLCRTC_KEY)" >&2
     exit 64

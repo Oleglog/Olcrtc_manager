@@ -795,6 +795,19 @@ func (s *Server) buildCompactURIWith(vals map[string]string, clientID string) st
 		name = fmt.Sprintf("%s_olcrtc", carrier)
 	}
 	transport := vals["OLCRTC_TRANSPORT"]
+
+	if carrier == "openflux" {
+		uri := fmt.Sprintf("openflux://yandex?url=%s", url.QueryEscape(room))
+		if transport != "" && transport != "auto" {
+			uri += "&t=" + url.QueryEscape(transport)
+		}
+		if dns := strings.TrimSpace(vals["OLCRTC_DNS"]); dns != "" && dns != "77.88.8.8:53" {
+			uri += "&d=" + url.QueryEscape(dns)
+		}
+		uri += "#" + url.QueryEscape(name)
+		return uri
+	}
+
 	vp8Fps := vals["OLCRTC_VP8_FPS"]
 	vp8Batch := vals["OLCRTC_VP8_BATCH"]
 
@@ -835,6 +848,16 @@ func (s *Server) buildURIWith(vals map[string]string, clientID string) string {
 		name = fmt.Sprintf("%s_olcrtc", carrier)
 	}
 	transport := vals["OLCRTC_TRANSPORT"]
+
+	if carrier == "openflux" {
+		uri := fmt.Sprintf("openflux://yandex?url=%s", url.QueryEscape(room))
+		if transport != "" && transport != "auto" {
+			uri += "&transport=" + url.QueryEscape(transport)
+		}
+		uri += "#" + name
+		return uri
+	}
+
 	vp8Fps := vals["OLCRTC_VP8_FPS"]
 	vp8Batch := vals["OLCRTC_VP8_BATCH"]
 

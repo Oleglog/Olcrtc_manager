@@ -19,6 +19,8 @@ func isCarrierTransportCompatible(carrier, transport string) bool {
 		return transport == "vp8channel"
 	case "jitsi":
 		return transport == "datachannel"
+	case "openflux":
+		return transport == "vyandex" || transport == "yandex" || transport == "auto"
 	default:
 		return false
 	}
@@ -32,6 +34,8 @@ func compatibleTransports(carrier string) []string {
 		return []string{"vp8channel"}
 	case "jitsi":
 		return []string{"datachannel"}
+	case "openflux":
+		return []string{"vyandex", "yandex", "auto"}
 	default:
 		return []string{"vp8channel", "datachannel"}
 	}

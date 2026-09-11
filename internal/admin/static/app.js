@@ -77,6 +77,7 @@ function toggleTheme() {
 function compatibleTransports(carrier) {
   if (carrier === 'telemost' || carrier === 'wbstream') return ['vp8channel'];
   if (carrier === 'jitsi') return ['datachannel'];
+  if (carrier === 'openflux') return ['vyandex', 'yandex', 'auto'];
   return ['vp8channel', 'datachannel'];
 }
 
@@ -2219,7 +2220,7 @@ function showCreateInstanceModal() {
   connectionSec.appendChild(connTitle);
   const connGrid = el('div', 'grid grid-cols-1 md:grid-cols-2 gap-3');
 
-  const carrierField = makeSelectField('Провайдер', icon('tag', 14), 'jitsi', ['jitsi', 'telemost', 'wbstream']);
+  const carrierField = makeSelectField('Провайдер', icon('tag', 14), 'jitsi', ['jitsi', 'telemost', 'wbstream', 'openflux']);
   // Issue #52: seichannel/videochannel are dead on this project; datachannel
   // works only with jitsi. Compatible options per carrier:
   // telemost/wbstream -> vp8channel, jitsi -> datachannel.
@@ -2425,7 +2426,7 @@ function showConfigModal(inst) {
   connectionSec.appendChild(connTitle);
   const connGrid = el('div', 'grid grid-cols-1 md:grid-cols-2 gap-3');
 
-  const carrierField = makeSelectField('Провайдер', icon('tag', 14), inst.carrier || 'jitsi', ['jitsi', 'telemost', 'wbstream']);
+  const carrierField = makeSelectField('Провайдер', icon('tag', 14), inst.carrier || 'jitsi', ['jitsi', 'telemost', 'wbstream', 'openflux']);
   const transportField = makeSelectField('Транспорт', icon('wifi', 14), inst.transport || 'vp8channel', getTransportOptions(inst.carrier || 'jitsi'));
   const nameField = makeInputField('Имя', icon('tag', 14), inst.name || '', { placeholder: 'имя инстанса' });
   const roomIDField = makeInputField('Room ID', icon('tag', 14), inst.room_id || '', { placeholder: 'jitsi: https://meet.small-dm.ru/yourroom · wbstream: создать на stream.wb.ru' });
