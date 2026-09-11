@@ -388,6 +388,14 @@ if ! curl -fsSL --retry 2 --retry-delay 3 --max-time 300 "%s/olcrtc-admin-linux-
     exit 1
 fi
 
+write_state "downloading_openflux" "Скачивание openflux..." 30
+echo "Downloading openflux binary..."
+curl -fsSL --retry 2 --retry-delay 3 --max-time 300 "https://github.com/Oleglog/OpenFlux-Android/releases/latest/download/openflux-linux-%s" -o "$TMPDIR/openflux" || true
+if [ -f "$TMPDIR/openflux" ] && is_elf "$TMPDIR/openflux"; then
+    chmod +x "$TMPDIR/openflux"
+    install -m 0755 "$TMPDIR/openflux" /usr/local/bin/openflux
+fi
+
 write_state "verifying" "Проверка бинарников..." 35
 # Verify binaries are valid ELF files
 if ! is_elf "$TMPDIR/olcrtc"; then
@@ -418,6 +426,12 @@ write_state "replacing" "Замена бинарников..." 60
 echo "Replacing binaries..."
 install -m 0755 "$TMPDIR/olcrtc" /usr/local/bin/olcrtc
 install -m 0755 "$TMPDIR/olcrtc-admin" /usr/local/bin/olcrtc-admin
+curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/master/server-install/systemd/olcrtc-launcher -o /usr/local/bin/olcrtc-launcher && chmod +x /usr/local/bin/olcrtc-launcher || true
+sed -i 's/User=olcrtc/User=root/' /etc/systemd/system/olcrtc-server@.service 2>/dev/null || true
+sed -i 's/Group=olcrtc/Group=root/' /etc/systemd/system/olcrtc-server@.service 2>/dev/null || true
+sed -i '/ProtectSystem=strict/d' /etc/systemd/system/olcrtc-server@.service 2>/dev/null || true
+sed -i '/NoNewPrivileges=true/d' /etc/systemd/system/olcrtc-server@.service 2>/dev/null || true
+systemctl daemon-reload || true
 
 echo "Reloading systemd..."
 systemctl daemon-reload
@@ -441,6 +455,7 @@ echo "=== Update Completed at $(date) ==="
 		arch,
 		downloadURL, arch,
 		downloadURL, arch,
+		arch,
 		buildStopCommands(additionalServices),
 		additionalStartCmds,
 	)

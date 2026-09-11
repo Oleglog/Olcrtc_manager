@@ -56,7 +56,16 @@ carrier="${OLCRTC_CARRIER:-${OLCRTC_PROVIDER:-}}"
 
 if [ "$carrier" = "openflux" ]; then
     echo "Starting openflux exit node for document: ${OLCRTC_ROOM_ID}"
-    exec /usr/local/bin/openflux --exit-node --url "${OLCRTC_ROOM_ID}" --transport "${OLCRTC_TRANSPORT:-vyandex}"
+    iptables -C OUTPUT -p tcp --tcp-flags RST RST -j DROP 2>/dev/null || iptables -A OUTPUT -p tcp --tcp-flags RST RST -j DROP 2>/dev/null || true
+    OPENFLUX_BIN="/usr/local/bin/openflux"
+    if [ ! -x "$OPENFLUX_BIN" ]; then
+        if [ -x "/usr/bin/openflux" ]; then
+            OPENFLUX_BIN="/usr/bin/openflux"
+        elif [ -x "./openflux" ]; then
+            OPENFLUX_BIN="./openflux"
+        fi
+    fi
+    exec "$OPENFLUX_BIN" --exit-node --url "${OLCRTC_ROOM_ID}" --transport "${OLCRTC_TRANSPORT:-vyandex}"
 fi
 
 if [ -z "$carrier" ] || [ -z "${OLCRTC_ROOM_ID:-}" ] || [ -z "${OLCRTC_KEY:-}" ]; then
