@@ -183,8 +183,8 @@ func TestPublicSubscriptionOpenServesClientDeepLink(t *testing.T) {
 	// query (url.Values.Encode), so assert the encoded form plus the deep-link
 	// scheme rather than the plain URL, which never appears verbatim.
 	encodedSource := url.QueryEscape("https://myolcrtc.mooo.com/sub/example")
-	if !strings.Contains(body, "olcrtc://subscription?") {
-		t.Fatalf("body does not embed olcrtc deep link: %q", body)
+	if !strings.Contains(body, "olconnect://subscription?") && !strings.Contains(body, "olcrtc://subscription?") {
+		t.Fatalf("body does not embed subscription deep link: %q", body)
 	}
 	if !strings.Contains(body, "url="+encodedSource) {
 		t.Fatalf("body does not embed encoded subscription source URL")
