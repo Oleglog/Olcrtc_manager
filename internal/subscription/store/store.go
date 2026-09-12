@@ -219,7 +219,7 @@ func (s *Store) AddInstance(slug, rawURI string) (*model.Instance, error) {
 // AddInstanceWithSource adds an olcrtc:// URI and optionally links it to an
 // Admin UI instance. Instance ID zero is the main Admin UI instance.
 func (s *Store) AddInstanceWithSource(slug, rawURI string, sourceInstanceID *int) (*model.Instance, error) {
-	if !strings.HasPrefix(rawURI, "olcrtc://") {
+	if !strings.HasPrefix(rawURI, "olcrtc://") && !strings.HasPrefix(rawURI, "openflux://") {
 		return nil, ErrInvalidURI
 	}
 	rawURI = ensureCoreParam(rawURI)
@@ -299,7 +299,7 @@ func (s *Store) RefreshLinkedInstances(uris map[int]string) ([]string, error) {
 
 	changed := make(map[string]struct{})
 	for sourceID, rawURI := range uris {
-		if sourceID < 0 || !strings.HasPrefix(rawURI, "olcrtc://") {
+		if sourceID < 0 || (!strings.HasPrefix(rawURI, "olcrtc://") && !strings.HasPrefix(rawURI, "openflux://")) {
 			continue
 		}
 		rows, err := tx.Query(`SELECT DISTINCT s.slug
@@ -580,6 +580,9 @@ func extractLabel(uri string) string {
 // the cheap prefix guard in AddInstanceWithSource, so here we only inspect the
 // query (between '?' and the first '#' after it).
 func ensureCoreParam(rawURI string) string {
+	if !strings.HasPrefix(rawURI, "olcrtc://") {
+		return rawURI
+	}
 	quest := strings.IndexByte(rawURI, '?')
 	hash := strings.IndexByte(rawURI, '#')
 	if quest < 0 {

@@ -521,7 +521,7 @@ func (s *Server) addInstance(w http.ResponseWriter, r *http.Request, slug string
 		return
 	}
 	if errors.Is(err, store.ErrInvalidURI) {
-		http.Error(w, "Bad Request: URI must start with olcrtc://", http.StatusBadRequest)
+		http.Error(w, "Bad Request: URI must start with olcrtc:// or openflux://", http.StatusBadRequest)
 		return
 	}
 	if err != nil {
@@ -778,7 +778,13 @@ func nameSubscriptionURIs(subscriptionName string, uris []string) []string {
 
 func uriProvider(raw string) string {
 	parsed, err := url.Parse(raw)
-	if err != nil || !strings.EqualFold(parsed.Scheme, "olcrtc") || parsed.User == nil {
+	if err != nil {
+		return "olcrtc"
+	}
+	if strings.EqualFold(parsed.Scheme, "openflux") {
+		return "openflux"
+	}
+	if !strings.EqualFold(parsed.Scheme, "olcrtc") || parsed.User == nil {
 		return "olcrtc"
 	}
 	provider := cleanInstanceNamePart(strings.ToLower(parsed.User.Username()))

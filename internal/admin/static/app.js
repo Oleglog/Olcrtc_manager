@@ -730,6 +730,7 @@ function buildInstanceAliases(instances, subscriptionName, entries = []) {
 function uriProvider(rawURI) {
   try {
     const parsed = new URL(rawURI);
+    if (parsed.protocol.toLowerCase() === 'openflux:') return 'openflux';
     if (parsed.protocol.toLowerCase() !== 'olcrtc:' || !parsed.username) return 'olcrtc';
     return cleanInstanceNamePart(decodeURIComponent(parsed.username)).toLowerCase() || 'olcrtc';
   } catch {
@@ -2980,9 +2981,9 @@ async function showManageSubInstancesModal(sub, instances) {
     });
 
     const manualURIs = [...new Set(manualInp.value.split(/\r?\n/).map(uri => uri.trim()).filter(Boolean))];
-    const invalidURI = manualURIs.find(uri => !uri.toLowerCase().startsWith('olcrtc://'));
+    const invalidURI = manualURIs.find(uri => !uri.toLowerCase().startsWith('olcrtc://') && !uri.toLowerCase().startsWith('openflux://'));
     if (invalidURI) {
-      showToast('Ручной URI должен начинаться с olcrtc://', 'error');
+      showToast('Ручной URI должен начинаться с olcrtc:// или openflux://', 'error');
       return;
     }
     manualURIs.forEach(rawURI => additions.push({ rawURI, sourceInstanceID: null }));
