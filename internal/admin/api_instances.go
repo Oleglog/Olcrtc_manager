@@ -819,7 +819,7 @@ func (s *Server) buildCompactURIWith(vals map[string]string, clientID string) st
 	vp8Fps := vals["OLCRTC_VP8_FPS"]
 	vp8Batch := vals["OLCRTC_VP8_BATCH"]
 
-	uri := fmt.Sprintf("olcrtc://%s@r/%s?k=%s", carrier, url.PathEscape(room), url.QueryEscape(key))
+	uri := fmt.Sprintf("olconnect://%s@r/%s?k=%s", carrier, url.PathEscape(room), url.QueryEscape(key))
 	if transport != "" && transport != "datachannel" {
 		uri += "&t=" + url.QueryEscape(transport)
 		if transport == "vp8channel" {
@@ -872,7 +872,7 @@ func (s *Server) buildURIWith(vals map[string]string, clientID string) string {
 	vp8Fps := vals["OLCRTC_VP8_FPS"]
 	vp8Batch := vals["OLCRTC_VP8_BATCH"]
 
-	uri := fmt.Sprintf("olcrtc://%s@room/%s?key=%s", carrier, room, key)
+	uri := fmt.Sprintf("olconnect://%s@room/%s?key=%s", carrier, room, key)
 	if transport != "" && transport != "datachannel" {
 		uri += "&transport=" + url.QueryEscape(transport)
 		if transport == "vp8channel" {

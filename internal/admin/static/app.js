@@ -1,4 +1,4 @@
-// olcRTC Admin SPA
+// OlConnect Manager SPA
 (function() {
 'use strict';
 
@@ -153,9 +153,9 @@ function renderBrandLogo(sz) {
     '</div>' +
     '<div style="display:flex;align-items:baseline;gap:6px;">' +
       '<span style="font-size:' + fontSz + 'px;font-weight:800;letter-spacing:-0.5px;line-height:1;">' +
-        '<span style="color:var(--color-ink);">OlC</span><span style="color:var(--color-primary);">RTC</span>' +
+        '<span style="color:var(--color-ink);">Ol</span><span style="color:var(--color-primary);">Connect</span>' +
       '</span>' +
-      '<span class="brand-badge" style="font-size:9px;font-weight:700;padding:2px 5px;border-radius:4px;background:var(--color-lavender-subtle);color:var(--color-primary);border:1px solid var(--color-lavender-border);letter-spacing:0.5px;line-height:1;">ADMIN</span>' +
+      '<span class="brand-badge" style="font-size:9px;font-weight:700;padding:2px 5px;border-radius:4px;background:var(--color-lavender-subtle);color:var(--color-primary);border:1px solid var(--color-lavender-border);letter-spacing:0.5px;line-height:1;">MANAGER</span>' +
     '</div>' +
   '</div>';
 }
@@ -1094,7 +1094,7 @@ function buildSubscriptionBundle(sub, subURL, mirror) {
   return JSON.stringify({
     type: 'olcrtc-sub',
     v: 2,
-    n: sub.name || 'olcRTC subscription',
+    n: sub.name || 'OlConnect subscription',
     s: sub.slug,
     u: subURL,
     m: mirror && mirror.url && mirror.key ? [{ t: mirror.type || 'yandex_disk', u: mirror.url, e: true, a: 'AES-256-GCM' }] : [],
@@ -1108,12 +1108,12 @@ function buildSubscriptionBootstrapLink(sub, subURL, mirror) {
   if (!mirror || !mirror.url || !mirror.key) throw new Error('Yandex mirror не содержит URL или ключ');
   const query = new URLSearchParams({
     url: subURL,
-    name: sub.name || 'olcRTC subscription',
+    name: sub.name || 'OlConnect subscription',
     mirror_type: mirror.type || 'yandex_disk',
     mirror_url: mirror.url,
     mirror_key: mirror.key,
   });
-  return 'olcrtc://subscription?' + query.toString();
+  return 'olconnect://subscription?' + query.toString();
 }
 
 async function gzipBytes(text) {
@@ -1686,7 +1686,7 @@ async function renderSettings(app) {
       <h3 class="font-bold text-base" style="color:var(--color-ink);">Учётная запись администратора</h3>
     </div>
     <div class="text-xs" style="color:var(--color-ink-subtle);">
-      Смена логина и пароля для входа в панель управления OlCRTC Admin.
+      Смена логина и пароля для входа в панель управления OlConnect Manager.
     </div>
   `;
   const secGrid = el('div', 'grid grid-cols-1 md:grid-cols-2 gap-3 mt-1');

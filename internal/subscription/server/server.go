@@ -207,7 +207,7 @@ func subscriptionOpenHTML(deepLink string) []byte {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Открыть в olcRTC</title>
+<title>Открыть в OlConnect</title>
 <style>
   html,body{margin:0;height:100%;background:#0e1113;color:#dce5ea;
     font:16px/1.5 -apple-system,Segoe UI,Roboto,Arial,sans-serif}
@@ -224,10 +224,10 @@ func subscriptionOpenHTML(deepLink string) []byte {
 </head>
 <body>
 <div class="wrap"><div class="box">
-  <h1>Открыть подписку в olcRTC</h1>
+  <h1>Открыть подписку в OlConnect</h1>
   <p>Нажмите кнопку ниже. Если приложение не установлено — скачайте его и попробуйте снова.</p>
   <a class="btn" href="__LINK__">Открыть в приложении</a>
-  <p class="hint">Если ничего не произошло — откройте ссылку из этого браузера в olcRTC вручную.</p>
+  <p class="hint">Если ничего не произошло — откройте ссылку из этого браузера в OlConnect вручную.</p>
 </div></div>
 <script>
 (function(){
@@ -320,7 +320,7 @@ func (s *Server) handleSubOpen(w http.ResponseWriter, r *http.Request) {
 		query.Set("mirror_key", m.Key)
 	}
 	deepLink := url.URL{
-		Scheme:   "olcrtc",
+		Scheme:   "olconnect",
 		Host:     "subscription",
 		RawQuery: query.Encode(),
 	}
@@ -521,7 +521,7 @@ func (s *Server) addInstance(w http.ResponseWriter, r *http.Request, slug string
 		return
 	}
 	if errors.Is(err, store.ErrInvalidURI) {
-		http.Error(w, "Bad Request: URI must start with olcrtc:// or openflux://", http.StatusBadRequest)
+		http.Error(w, "Bad Request: URI must start with olconnect://, olcrtc:// or openflux://", http.StatusBadRequest)
 		return
 	}
 	if err != nil {
@@ -779,17 +779,17 @@ func nameSubscriptionURIs(subscriptionName string, uris []string) []string {
 func uriProvider(raw string) string {
 	parsed, err := url.Parse(raw)
 	if err != nil {
-		return "olcrtc"
+		return "olconnect"
 	}
 	if strings.EqualFold(parsed.Scheme, "openflux") {
 		return "openflux"
 	}
-	if !strings.EqualFold(parsed.Scheme, "olcrtc") || parsed.User == nil {
-		return "olcrtc"
+	if (!strings.EqualFold(parsed.Scheme, "olconnect") && !strings.EqualFold(parsed.Scheme, "olcrtc")) || parsed.User == nil {
+		return "olconnect"
 	}
 	provider := cleanInstanceNamePart(strings.ToLower(parsed.User.Username()))
 	if provider == "" {
-		return "olcrtc"
+		return "olconnect"
 	}
 	return provider
 }

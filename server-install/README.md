@@ -1,4 +1,4 @@
-# olcRTC server — systemd installer
+# OlConnect Server & Manager — systemd installer
 
 > [**Русский**](#russian) ниже • Full English documentation continues below
 
