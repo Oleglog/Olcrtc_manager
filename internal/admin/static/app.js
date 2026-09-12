@@ -77,7 +77,7 @@ function toggleTheme() {
 function compatibleTransports(carrier) {
   if (carrier === 'telemost' || carrier === 'wbstream') return ['vp8channel'];
   if (carrier === 'jitsi') return ['datachannel'];
-  if (carrier === 'openflux') return ['vyandex', 'yandex', 'auto'];
+  if (carrier === 'openflux') return ['auto', 'vyandex', 'yandex'];
   return ['vp8channel', 'datachannel'];
 }
 
@@ -2357,6 +2357,16 @@ function showCreateInstanceModal() {
     wbAcquireBtn.classList.toggle('hidden', c !== 'wbstream');
     jitsiPresets.classList.toggle('hidden', c !== 'jitsi');
 
+    if (c === 'openflux') {
+      const lbl = roomIDField.field.querySelector('label');
+      if (lbl && lbl.lastChild) lbl.lastChild.textContent = ' Ссылка на документ (Yandex Docs)';
+      roomIDField.input.placeholder = 'https://disk.yandex.ru/i/... или https://docs.yandex.ru/...';
+    } else {
+      const lbl = roomIDField.field.querySelector('label');
+      if (lbl && lbl.lastChild) lbl.lastChild.textContent = ' Room ID';
+      roomIDField.input.placeholder = 'jitsi: https://meet.small-dm.ru/yourroom · wbstream: создать на stream.wb.ru';
+    }
+
     // Auto-rename
     const carriers = { jitsi: 'jitsi', telemost: 'telemost', wbstream: 'wbstream' };
     const cp = carriers[c] || c;
@@ -2382,6 +2392,10 @@ function showCreateInstanceModal() {
     const room = roomIDField.input.value.trim();
     if (carrier === 'wbstream' && !room) {
       showToast('Для wbstream нужно указать Room ID', 'error');
+      return;
+    }
+    if (carrier === 'openflux' && (!room || (!room.startsWith('http://') && !room.startsWith('https://')))) {
+      showToast('Для OpenFlux укажите полную ссылку на документ Yandex Docs (https://...)', 'error');
       return;
     }
     const body = {
@@ -2670,8 +2684,17 @@ function showConfigModal(inst) {
     jitsiBlock.classList.toggle('hidden', !(c === 'jitsi' && t === 'datachannel'));
     wbHint.classList.toggle('hidden', c !== 'wbstream');
     jitsiPresets.classList.toggle('hidden', c !== 'jitsi');
-    roomRotateBtn.disabled = (c === 'wbstream');
-    roomRotateBtn.title = (c === 'wbstream') ? 'WB Stream отключил автосоздание румы' : '';
+    roomRotateBtn.disabled = (c === 'wbstream' || c === 'openflux');
+    roomRotateBtn.title = (c === 'wbstream') ? 'WB Stream отключил автосоздание румы' : (c === 'openflux') ? 'Для OpenFlux используется постоянная ссылка на документ' : '';
+    if (c === 'openflux') {
+      const lbl = roomIDField.field.querySelector('label');
+      if (lbl && lbl.lastChild) lbl.lastChild.textContent = ' Ссылка на документ (Yandex Docs)';
+      roomIDField.input.placeholder = 'https://disk.yandex.ru/i/... или https://docs.yandex.ru/...';
+    } else {
+      const lbl = roomIDField.field.querySelector('label');
+      if (lbl && lbl.lastChild) lbl.lastChild.textContent = ' Room ID';
+      roomIDField.input.placeholder = 'jitsi: https://meet.small-dm.ru/yourroom · wbstream: создать на stream.wb.ru';
+    }
     // Show datachannel warning only for non-jitsi carriers
     dcWarn.classList.toggle('hidden', !(t === 'datachannel' && c !== 'jitsi'));
   }
@@ -2696,6 +2719,10 @@ function showConfigModal(inst) {
     const room = roomIDField.input.value.trim();
     if (carrier === 'wbstream' && !room) {
       showToast('Для wbstream нужно указать Room ID', 'error');
+      return;
+    }
+    if (carrier === 'openflux' && (!room || (!room.startsWith('http://') && !room.startsWith('https://')))) {
+      showToast('Для OpenFlux укажите полную ссылку на документ Yandex Docs (https://...)', 'error');
       return;
     }
     const body = {

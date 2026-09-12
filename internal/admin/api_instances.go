@@ -285,6 +285,10 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "wbstream requires a Room ID", http.StatusBadRequest)
 		return
 	}
+	if carrier == "openflux" && (roomID == "" || (!strings.HasPrefix(roomID, "http://") && !strings.HasPrefix(roomID, "https://"))) {
+		http.Error(w, "openflux requires a valid Document URL (https://...)", http.StatusBadRequest)
+		return
+	}
 	if err := os.MkdirAll(filepath.Dir(keyPath), 0755); err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
@@ -418,6 +422,10 @@ func (s *Server) updateInstanceConfig(w http.ResponseWriter, r *http.Request, id
 	room := effective["OLCRTC_ROOM_ID"]
 	if carrier == "wbstream" && (room == "" || room == "any") {
 		http.Error(w, "wbstream requires a Room ID — WB Stream no longer auto-creates rooms; create one at https://stream.wb.ru and paste it into Room ID", http.StatusBadRequest)
+		return
+	}
+	if carrier == "openflux" && (room == "" || (!strings.HasPrefix(room, "http://") && !strings.HasPrefix(room, "https://"))) {
+		http.Error(w, "openflux requires a valid Document URL (https://...)", http.StatusBadRequest)
 		return
 	}
 
@@ -852,9 +860,12 @@ func (s *Server) buildURIWith(vals map[string]string, clientID string) string {
 	if carrier == "openflux" {
 		uri := fmt.Sprintf("openflux://yandex?url=%s", url.QueryEscape(room))
 		if transport != "" && transport != "auto" {
-			uri += "&transport=" + url.QueryEscape(transport)
+			uri += "&t=" + url.QueryEscape(transport)
 		}
-		uri += "#" + name
+		if dns := strings.TrimSpace(vals["OLCRTC_DNS"]); dns != "" && dns != "77.88.8.8:53" {
+			uri += "&d=" + url.QueryEscape(dns)
+		}
+		uri += "#" + url.QueryEscape(name)
 		return uri
 	}
 

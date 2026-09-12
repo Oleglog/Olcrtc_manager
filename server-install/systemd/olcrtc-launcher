@@ -65,7 +65,13 @@ if [ "$carrier" = "openflux" ]; then
             OPENFLUX_BIN="./openflux"
         fi
     fi
-    exec "$OPENFLUX_BIN" --exit-node --url "${OLCRTC_ROOM_ID}" --transport "${OLCRTC_TRANSPORT:-vyandex}"
+    t="${OLCRTC_TRANSPORT:-yandex}"
+    [ "$t" = "auto" ] && t="yandex"
+    debug_flag=""
+    if [ -n "${OLCRTC_DEBUG:-}" ] && [ "$OLCRTC_DEBUG" != "0" ] && [ "$OLCRTC_DEBUG" != "false" ]; then
+        debug_flag="--debug"
+    fi
+    exec "$OPENFLUX_BIN" --exit-node --url "${OLCRTC_ROOM_ID}" --transport "$t" $debug_flag
 fi
 
 if [ -z "$carrier" ] || [ -z "${OLCRTC_ROOM_ID:-}" ] || [ -z "${OLCRTC_KEY:-}" ]; then
