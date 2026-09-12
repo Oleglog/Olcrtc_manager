@@ -20,7 +20,7 @@
 One-shot installer that drops an [olcrtc](https://github.com/openlibrecommunity/olcrtc)
 server and the **Admin Web UI** onto a Linux VPS as hardened `systemd`
 services. Binaries are not committed — they live in
-[GitHub Releases](https://github.com/Oleglog/Olcrtc_manager/releases) and the
+[GitHub Releases](https://github.com/Oleglog/OlConnect_manager/releases) and the
 installer pulls them on demand. Local builds via `./build-from-source.sh`
 are also supported.
 
@@ -81,7 +81,7 @@ operator clicks **Install components** in Admin UI settings.
 **Option A — one-liner** (recommended):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/master/server-install/olcrtc-setup.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Oleglog/OlConnect_manager/master/server-install/olcrtc-setup.sh | sudo bash
 ```
 
 **Option B — release tarball** (binaries inside, no GitHub access on the VPS
@@ -89,7 +89,7 @@ needed at install time):
 
 ```bash
 curl -fsSL -o /tmp/olcrtc.tgz \
-    https://github.com/Oleglog/Olcrtc_manager/releases/latest/download/olcrtc-server-installer.tgz
+    https://github.com/Oleglog/OlConnect_manager/releases/latest/download/olcrtc-server-installer.tgz
 tar -xzf /tmp/olcrtc.tgz -C /tmp
 sudo bash /tmp/olcrtc-server-installer-*/olcrtc-setup.sh
 ```
@@ -97,8 +97,8 @@ sudo bash /tmp/olcrtc-server-installer-*/olcrtc-setup.sh
 **Option C — build from source** (fully offline / reproducible):
 
 ```bash
-git clone https://github.com/Oleglog/Olcrtc_manager
-cd Olcrtc_manager
+git clone https://github.com/Oleglog/OlConnect_manager
+cd OlConnect_manager
 ./server-install/build-from-source.sh   # → server-install/bin/olcrtc-linux-{amd64,arm64}
 sudo bash server-install/olcrtc-setup.sh
 ```
@@ -480,7 +480,7 @@ Recommended (handles all instances, asks about subscription DB):
 sudo bash olcrtc-uninstall.sh
 
 # or one-liner:
-curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/master/server-install/olcrtc-uninstall.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Oleglog/OlConnect_manager/master/server-install/olcrtc-uninstall.sh | sudo bash
 ```
 
 Manual (main instance only):
@@ -547,7 +547,7 @@ UI) to allocate a fresh one.
 ### Самый быстрый путь
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/master/server-install/olcrtc-setup.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Oleglog/OlConnect_manager/master/server-install/olcrtc-setup.sh | sudo bash
 ```
 
 После установки скрипт напечатает URL Admin UI и креды (по умолчанию
@@ -632,7 +632,7 @@ tunnel-трафик** через локальный SOCKS5 (поверх Cloudfl
 ### Удаление
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/master/server-install/olcrtc-uninstall.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Oleglog/OlConnect_manager/master/server-install/olcrtc-uninstall.sh | sudo bash
 ```
 
 Или ручное удаление — см. английский раздел выше.

@@ -26,7 +26,7 @@
 На чистом Linux VPS (Ubuntu 20.04+, Debian 11+, Alma/Fedora):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/master/server-install/olcrtc-setup.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Oleglog/OlConnect_manager/master/server-install/olcrtc-setup.sh | sudo bash
 ```
 
 После установки откройте веб-панель: `https://<IP-вашего-VPS>:8443`.
@@ -36,7 +36,7 @@ curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/master/serve
 ### Полное удаление с сервера:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/master/server-install/olcrtc-uninstall.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Oleglog/OlConnect_manager/master/server-install/olcrtc-uninstall.sh | sudo bash
 ```
 
 ---
@@ -54,7 +54,7 @@ curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/master/serve
 
 ## Клиентские приложения
 
-- **Android**: официальный клиент [OlConnect на Android](https://github.com/Oleglog/Olcrtc_client). Поддерживает импорт через ссылки `olconnect://`, `olcrtc://`, `openflux://`, QR-коды, подписки и зеркала Яндекс.Диска.
+- **Android**: официальный клиент [OlConnect на Android](https://github.com/Oleglog/OlConnect). Поддерживает импорт через ссылки `olconnect://`, `olcrtc://`, `openflux://`, QR-коды, подписки и зеркала Яндекс.Диска.
 
 ---
 

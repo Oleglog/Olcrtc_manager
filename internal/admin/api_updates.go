@@ -122,7 +122,7 @@ func fetchLatestTag() (tag, url, source string, err error) {
 // HTML endpoint, not the API, so it is not subject to the 60 req/hour anonymous
 // API limit.
 func fetchLatestTagViaRedirect() (tagName, releaseURL string, err error) {
-	const url = "https://github.com/Oleglog/Olcrtc_manager/releases/latest"
+	const url = "https://github.com/Oleglog/OlConnect_manager/releases/latest"
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return "", "", err
@@ -148,7 +148,7 @@ func fetchLatestTagViaRedirect() (tagName, releaseURL string, err error) {
 	if loc == "" {
 		return "", "", fmt.Errorf("missing Location header")
 	}
-	// Expected: https://github.com/Oleglog/Olcrtc_manager/releases/tag/server-vX.Y.Z
+	// Expected: https://github.com/Oleglog/OlConnect_manager/releases/tag/server-vX.Y.Z
 	idx := strings.LastIndex(loc, "/tag/")
 	if idx < 0 {
 		return "", "", fmt.Errorf("unexpected Location: %s", loc)
@@ -165,7 +165,7 @@ func fetchLatestTagViaRedirect() (tagName, releaseURL string, err error) {
 }
 
 func fetchLatestTagViaAPI() (tagName, releaseURL string, err error) {
-	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/Oleglog/Olcrtc_manager/releases/latest", nil)
+	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/Oleglog/OlConnect_manager/releases/latest", nil)
 	if err != nil {
 		return "", "", err
 	}
@@ -426,7 +426,7 @@ write_state "replacing" "Замена бинарников..." 60
 echo "Replacing binaries..."
 install -m 0755 "$TMPDIR/olcrtc" /usr/local/bin/olcrtc
 install -m 0755 "$TMPDIR/olcrtc-admin" /usr/local/bin/olcrtc-admin
-curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/master/server-install/systemd/olcrtc-launcher -o /usr/local/bin/olcrtc-launcher && chmod +x /usr/local/bin/olcrtc-launcher || true
+curl -fsSL https://raw.githubusercontent.com/Oleglog/OlConnect_manager/master/server-install/systemd/olcrtc-launcher -o /usr/local/bin/olcrtc-launcher && chmod +x /usr/local/bin/olcrtc-launcher || true
 sed -i 's/User=olcrtc/User=root/' /etc/systemd/system/olcrtc-server.service /etc/systemd/system/olcrtc-server@.service 2>/dev/null || true
 sed -i 's/Group=olcrtc/Group=root/' /etc/systemd/system/olcrtc-server.service /etc/systemd/system/olcrtc-server@.service 2>/dev/null || true
 sed -i '/ProtectSystem=strict/d' /etc/systemd/system/olcrtc-server.service /etc/systemd/system/olcrtc-server@.service 2>/dev/null || true
@@ -555,7 +555,7 @@ func fetchReleases() ([]releaseInfo, string, error) {
 }
 
 func fetchReleasesViaAtom() ([]releaseInfo, error) {
-	const url = "https://github.com/Oleglog/Olcrtc_manager/releases.atom"
+	const url = "https://github.com/Oleglog/OlConnect_manager/releases.atom"
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -607,7 +607,7 @@ func fetchReleasesViaAtom() ([]releaseInfo, error) {
 }
 
 func fetchReleasesViaAPI() ([]releaseInfo, error) {
-	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/Oleglog/Olcrtc_manager/releases?per_page=30", nil)
+	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/Oleglog/OlConnect_manager/releases?per_page=30", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -707,7 +707,7 @@ func resolveReleaseTarget(tag, branch, version string) (releaseTarget, error) {
 		Tag:         tag,
 		Branch:      parsedBranch,
 		Version:     parsedVersion,
-		DownloadURL: "https://github.com/Oleglog/Olcrtc_manager/releases/download/" + tag,
+		DownloadURL: "https://github.com/Oleglog/OlConnect_manager/releases/download/" + tag,
 	}, nil
 }
 

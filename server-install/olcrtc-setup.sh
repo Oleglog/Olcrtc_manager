@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-REPO="Oleglog/Olcrtc_manager"
+REPO="Oleglog/OlConnect_manager"
 # Fallback release used only when the latest tag cannot be resolved from GitHub.
 INSTALLER_VERSION="1.9.74"
 RELEASE_TAG=""

@@ -34,7 +34,7 @@ func TestResolveReleaseTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if target.DownloadURL != "https://github.com/Oleglog/Olcrtc_manager/releases/download/server-latency-tuning-v1.9.53" {
+	if target.DownloadURL != "https://github.com/Oleglog/OlConnect_manager/releases/download/server-latency-tuning-v1.9.53" {
 		t.Fatalf("DownloadURL = %q", target.DownloadURL)
 	}
 
@@ -76,7 +76,7 @@ func TestBuildUpdateScriptVerifiesWithoutFileTool(t *testing.T) {
 	script := buildUpdateScript(
 		"1.9.74",
 		"amd64",
-		"https://github.com/Oleglog/Olcrtc_manager/releases/download/server-v1.9.74",
+		"https://github.com/Oleglog/OlConnect_manager/releases/download/server-v1.9.74",
 		[]string{"olcrtc-server@1.service"},
 	)
 
