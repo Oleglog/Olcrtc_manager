@@ -427,10 +427,13 @@ echo "Replacing binaries..."
 install -m 0755 "$TMPDIR/olcrtc" /usr/local/bin/olcrtc
 install -m 0755 "$TMPDIR/olcrtc-admin" /usr/local/bin/olcrtc-admin
 curl -fsSL https://raw.githubusercontent.com/Oleglog/Olcrtc_manager/master/server-install/systemd/olcrtc-launcher -o /usr/local/bin/olcrtc-launcher && chmod +x /usr/local/bin/olcrtc-launcher || true
-sed -i 's/User=olcrtc/User=root/' /etc/systemd/system/olcrtc-server@.service 2>/dev/null || true
-sed -i 's/Group=olcrtc/Group=root/' /etc/systemd/system/olcrtc-server@.service 2>/dev/null || true
-sed -i '/ProtectSystem=strict/d' /etc/systemd/system/olcrtc-server@.service 2>/dev/null || true
-sed -i '/NoNewPrivileges=true/d' /etc/systemd/system/olcrtc-server@.service 2>/dev/null || true
+sed -i 's/User=olcrtc/User=root/' /etc/systemd/system/olcrtc-server.service /etc/systemd/system/olcrtc-server@.service 2>/dev/null || true
+sed -i 's/Group=olcrtc/Group=root/' /etc/systemd/system/olcrtc-server.service /etc/systemd/system/olcrtc-server@.service 2>/dev/null || true
+sed -i '/ProtectSystem=strict/d' /etc/systemd/system/olcrtc-server.service /etc/systemd/system/olcrtc-server@.service 2>/dev/null || true
+sed -i '/NoNewPrivileges=true/d' /etc/systemd/system/olcrtc-server.service /etc/systemd/system/olcrtc-server@.service 2>/dev/null || true
+sed -i '/RestrictAddressFamilies/d' /etc/systemd/system/olcrtc-server.service /etc/systemd/system/olcrtc-server@.service 2>/dev/null || true
+grep -q AmbientCapabilities /etc/systemd/system/olcrtc-server.service 2>/dev/null || sed -i '/\[Service\]/a AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW\nCapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW' /etc/systemd/system/olcrtc-server.service 2>/dev/null || true
+grep -q AmbientCapabilities /etc/systemd/system/olcrtc-server@.service 2>/dev/null || sed -i '/\[Service\]/a AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW\nCapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW' /etc/systemd/system/olcrtc-server@.service 2>/dev/null || true
 systemctl daemon-reload || true
 
 echo "Reloading systemd..."
